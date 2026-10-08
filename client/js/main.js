@@ -527,7 +527,7 @@ function showHelp() {
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
     развалить целое направление.</p>
     <div class="lbl">Управление</div>
-    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
@@ -918,7 +918,8 @@ function bind() {
   $('#btnHelp').onclick = showHelp;
   $('#btnMenu').onclick = () => { if (!G.roomId || G.over || confirm('Выйти в меню?')) leaveToMenu() };
   $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML().replace('<p class="acts">', screenPanelHTML() + '<p class="acts">'); $('#modal').hidden = false } };
-  document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-scr]'); if (el) setScreen(el.dataset.scr, el.checked) });
+  document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-scr]'); if (!el) return; if (el.dataset.scr === 'trees') setTrees(el.checked); else setScreen(el.dataset.scr, el.checked) });
+  { const tb = document.querySelector('[data-z=trees]'); if (tb) tb.classList.toggle('on', !!SCREEN.trees) }
   $('#btnStrike').onclick = () => { G.mode = G.mode === 'air:strike' ? null : 'air:strike'; hint(G.mode ? 'Авиаудар: кликните по видимой цели. ПВО рядом с целью может сорвать удар.' : ''); renderTop() };
   $('#btnRecon').onclick = () => { G.mode = G.mode === 'air:recon' ? null : 'air:recon'; hint(G.mode ? 'Авиаразведка: кликните по району — откроется радиус 3 клетки.' : ''); renderTop() };
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
@@ -1022,6 +1023,7 @@ function bind() {
     const a = mapArea(), c = { x: (a.l + a.r) / 2, y: (a.t + a.b) / 2 };
     if (b.dataset.z === 'in') zoomAt(c, 1.45); else if (b.dataset.z === 'out') zoomAt(c, 1 / 1.45);
     else if (b.dataset.z === 'fit') camFit(); else if (b.dataset.z === 'types') { G.showTypes = !G.showTypes; b.classList.toggle('on', G.showTypes) }
+    else if (b.dataset.z === 'trees') setTrees(!SCREEN.trees)
     else if (b.dataset.z === 'sel') { const u = selUnit(); if (u) camTo(H.center(u.hex), Math.max(G.view.s, S_WORK())) }
   });
   window.addEventListener('keydown', e => {
@@ -1045,6 +1047,7 @@ function bind() {
     else if (e.key === 'h' || e.key === 'р') { G.showCmd = !G.showCmd; renderUI() }
     else if (e.key === 't' || e.key === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
     else if (e.key === 'f' || e.key === 'а') camFit();
+    else if (e.key === 'l' || e.key === 'д') setTrees(!SCREEN.trees);
     else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(H.center(selUnit().hex));
     else if (e.key === '?') showHelp();
   });

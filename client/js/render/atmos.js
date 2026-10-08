@@ -7,7 +7,7 @@
    Настройки экрана — в окне звука, хранятся в localStorage.
    ============================================================ */
 
-const SCREEN = { grain: true, vignette: true, shake: true, clouds: true };
+const SCREEN = { grain: true, vignette: true, shake: true, clouds: true, trees: true };
 try { Object.assign(SCREEN, JSON.parse(localStorage.getItem('ft.screen') || '{}')) } catch (e) { /* без настроек */ }
 function setScreen(k, v) {
   SCREEN[k] = v;
@@ -30,7 +30,7 @@ function applyScreenFX() {
 }
 function screenPanelHTML() {
   const ck = (k, n) => `<label class="snd"><span>${n}</span><input type="checkbox" data-scr="${k}" ${SCREEN[k] ? 'checked' : ''}></label>`;
-  return `<div class="lbl">Экран</div>${ck('grain', 'Зерно')}${ck('vignette', 'Виньетка')}${ck('shake', 'Дрожь от разрывов')}${ck('clouds', 'Облака и осадки')}`;
+  return `<div class="lbl">Экран</div>${ck('grain', 'Зерно')}${ck('vignette', 'Виньетка')}${ck('shake', 'Дрожь от разрывов')}${ck('clouds', 'Облака и осадки')}${ck('trees', 'Деревья вблизи (кроны в лесу)')}`;
 }
 
 /* ---------- огни городов ---------- */

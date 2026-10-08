@@ -82,7 +82,7 @@ function drawBase() {
   const brKey = (G.br || []).map(b => b.join(':')).join(',');
   /* в ключе нет ни положения камеры, ни масштаба: сдвиг гасится запасом,
      а масштаб — растягиванием готового слоя во время жеста */
-  const key = [CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
+  const key = [CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, SCREEN.trees ? 1 : 0, brKey, G.selRiv || ''].join('|');
   const needW = Math.ceil((CW + PAD * 2) * DPR), needH = Math.ceil((CH + PAD * 2) * DPR);
   if (!BASE || BASE.width !== needW || BASE.height !== needH) {
     BASE = document.createElement('canvas'); BASE.width = needW; BASE.height = needH; baseKey = ''; baseAt = null;
@@ -116,10 +116,13 @@ function renderBase(s) {
   const geo = mapGeo(G.mapId);
   cx.setTransform(DPR, 0, 0, DPR, 0, 0);
   /* стол штабной карты */
-  const bg = cx.createRadialGradient(CW / 2, CH / 2, 0, CW / 2, CH / 2, Math.max(CW, CH) * .75);
-  bg.addColorStop(0, '#0b1116'); bg.addColorStop(1, '#030507');
-  cx.fillStyle = bg; cx.fillRect(0, 0, CW, CH);
   const a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
+  /* стол виден, только если лист карты не закрывает холст целиком */
+  if (a.x > 0 || a.y > 0 || b.x < CW || b.y < CH) {
+    const bg = cx.createRadialGradient(CW / 2, CH / 2, 0, CW / 2, CH / 2, Math.max(CW, CH) * .75);
+    bg.addColorStop(0, '#0b1116'); bg.addColorStop(1, '#030507');
+    cx.fillStyle = bg; cx.fillRect(0, 0, CW, CH);
+  }
   /* Тень под листом карты. На приближении лист больше экрана в разы, а размытие
      по такому прямоугольнику стоит десятки миллисекунд — поэтому тень рисуем
      только когда край листа вообще виден, а подложку заливаем обрезанной. */
@@ -150,7 +153,8 @@ function renderBase(s) {
     /* при растягивании дорогое сглаживание не окупается — картинка всё равно мягкая */
     const upscale = lv.width < H.WW * s * DPR;
     cx.imageSmoothingEnabled = true;
-    cx.imageSmoothingQuality = upscale ? 'low' : 'high';
+    /* уровень пирамиды меньше вдвое — «medium» хватает, «high» дорог */
+    cx.imageSmoothingQuality = upscale ? 'low' : 'medium';
     const kx = lv.width / H.WW, ky = lv.height / H.WH;
     cx.drawImage(lv, x0 * kx, y0 * ky, (x1 - x0) * kx, (y1 - y0) * ky, x0, y0, x1 - x0, y1 - y0);
   }
@@ -212,9 +216,14 @@ function drawFrame(a, b, s) {
 }
 
 /* ---------- кроны деревьев: вблизи лес из отдельных крон с тенью ----------
-   Крона — готовый спрайт (тень, крона, блик) под свой радиус в пикселях;
-   пока карту двигают, кроны не рисуются — подложка дорисует их, как
-   только камера встанет. */
+   Крона — готовый спрайт (тень, крона, блик) под свой радиус в пикселях.
+   Деревья целой клетки сетки TREE_GRID (10×10 км) печём в отдельный холст
+   под ступень масштаба и дальше рисуем клетку одним drawImage. Раньше при
+   каждой перепечке подложки (сдвиг за запас, конец жеста зума) заново
+   рисовались все кроны в кадре — до 15–20 тысяч drawImage и 60–100 мс,
+   отсюда рывки. Порядок отрисовки прежний: клетки по строкам, внутри клетки
+   — в порядке TREES, поэтому картинка та же.
+   Отключаются в настройках экрана («Деревья вблизи») и кнопкой ♣. */
 const TREE_SPR = new Map();
 function treeSprite(rp) {
   let c = TREE_SPR.get(rp);
@@ -228,35 +237,80 @@ function treeSprite(rp) {
   g.fillStyle = gr; g.beginPath(); g.arc(o, o, rp, 0, 7); g.fill();
   g.strokeStyle = 'rgba(8,16,8,.6)'; g.lineWidth = Math.max(.6, rp * .08); g.stroke();
   c.off = o; c.R = R;
-  if (TREE_SPR.size > 40) TREE_SPR.clear();
+  if (TREE_SPR.size > 60) TREE_SPR.clear();
   TREE_SPR.set(rp, c);
   return c;
 }
+
+/* ступени масштаба для печёных клеток: через ~10 %, печём на верхнюю
+   границу ступени и на экран только уменьшаем — кроны не мылятся */
+const TREE_STEP = 1.1, TREE_PAD = 1.2;            /* запас клетки, км: кроны вылезают за её край */
+const TREE_CELLS = new Map();                     /* `${ступень}:${клетка}` → холст */
+let treeCellsFor = '', treeCellsPx = 0;
+const TREE_CELLS_MAXPX = 64e6;                    /* ~256 МБ RGBA — выше чистим старые ступени */
+function treeBucket(s) { return Math.ceil(Math.log(s) / Math.log(TREE_STEP) - 1e-9) }
+function treeCellCanvas(k, bk) {
+  const key = bk + ':' + k;
+  let c = TREE_CELLS.get(key);
+  if (c) { TREE_CELLS.delete(key); TREE_CELLS.set(key, c); return c }   /* свежесть для вытеснения */
+  const cell = TREE_GRID[k];
+  if (!cell) return null;
+  const sq = Math.pow(TREE_STEP, bk), ppk = sq * DPR;                  /* пикселей холста на км */
+  const x0 = (k % TG_W) * TG_CELL - TREE_PAD, y0 = ((k / TG_W) | 0) * TG_CELL - TREE_PAD;
+  const side = Math.ceil((TG_CELL + TREE_PAD * 2) * ppk);
+  c = document.createElement('canvas'); c.width = c.height = side;
+  const g = c.getContext('2d'), T = TREES;
+  let lastRp = -1, sp = null;
+  for (let n = 0; n < cell.length; n++) {
+    const i = cell[n], rp = Math.max(2, Math.round(T[i + 2] * sq * DPR));
+    if (rp !== lastRp) sp = treeSprite(lastRp = rp);
+    g.drawImage(sp, (T[i] - x0) * ppk - sp.off, (T[i + 1] - y0) * ppk - sp.off);
+  }
+  c.x0 = x0; c.y0 = y0; c.ppk = ppk;
+  TREE_CELLS.set(key, c); treeCellsPx += side * side;
+  /* вытесняем самые давние, пока не уложимся */
+  for (const [kk, v] of TREE_CELLS) {
+    if (treeCellsPx <= TREE_CELLS_MAXPX) break;
+    if (kk === key) continue;
+    TREE_CELLS.delete(kk); treeCellsPx -= v.width * v.height;
+  }
+  return c;
+}
+/** любая уже испечённая ступень этой клетки — пока идёт жест зума */
+function treeCellAny(k, bk) {
+  for (let d = 1; d < 12; d++) for (const b of [bk + d, bk - d]) { const c = TREE_CELLS.get(b + ':' + k); if (c) return c }
+  return null;
+}
 function drawTrees(s) {
-  if (!TREES || s < 6) return;
+  if (!TREES || !TREE_GRID || s < 6 || !SCREEN.trees) return;
+  const id = TER_ID + '|' + DPR;
+  if (treeCellsFor !== id) { TREE_CELLS.clear(); treeCellsPx = 0; treeCellsFor = id }
   const al = clamp((s - 6) / 1.5, 0, 1), a = s2w({ x: -20, y: -20 }), b = s2w({ x: CW + 20, y: CH + 20 });
-  const T = TREES, ox = CW / 2 - G.view.x * s, oy = CH / 2 - G.view.y * s;
+  const ox = CW / 2 - G.view.x * s, oy = CH / 2 - G.view.y * s;
+  const bk = treeBucket(s);
+  /* во время жеста новые ступени не печём: берём ближайшую готовую,
+     точную допечём, когда камера встанет (подложка всё равно перепечётся) */
+  const lazy = CAM.moving;
   cx.globalAlpha = al;
-  /* один и тот же радиус у соседних деревьев — держим спрайт под рукой,
-     чтобы не искать его в карте на каждое дерево */
-  let lastRp = -1, lastSp = null;
-  const put = i => {
-    const x = T[i], y = T[i + 1];
-    if (x < a.x || x > b.x || y < a.y || y > b.y) return;
-    const rp = Math.max(2, Math.round(T[i + 2] * s * DPR));
-    const sp = rp === lastRp ? lastSp : (lastSp = treeSprite(lastRp = rp));
-    cx.drawImage(sp, x * s + ox - sp.off / DPR, y * s + oy - sp.off / DPR, sp.width / DPR, sp.height / DPR);
-  };
-  if (TREE_GRID) {
-    /* только клетки, попавшие в кадр: перебор всех деревьев карты стоил дороже самой отрисовки */
-    const x0 = Math.max(0, a.x / TG_CELL | 0), x1 = Math.min(TG_W - 1, b.x / TG_CELL | 0);
-    const y0 = Math.max(0, a.y / TG_CELL | 0), y1 = Math.min(TG_H - 1, b.y / TG_CELL | 0);
-    for (let cy = y0; cy <= y1; cy++) for (let cx0 = x0; cx0 <= x1; cx0++) {
-      const cell = TREE_GRID[cy * TG_W + cx0];
-      if (cell) for (let k = 0; k < cell.length; k++) put(cell[k]);
-    }
-  } else for (let i = 0; i < T.length; i += 3) put(i);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
+  const pad = TREE_PAD + .6;
+  const x0 = Math.max(0, (a.x - pad) / TG_CELL | 0), x1 = Math.min(TG_W - 1, (b.x + pad) / TG_CELL | 0);
+  const y0 = Math.max(0, (a.y - pad) / TG_CELL | 0), y1 = Math.min(TG_H - 1, (b.y + pad) / TG_CELL | 0);
+  for (let cy = y0; cy <= y1; cy++) for (let cx0 = x0; cx0 <= x1; cx0++) {
+    const k = cy * TG_W + cx0;
+    if (!TREE_GRID[k]) continue;
+    const c = (lazy && (TREE_CELLS.get(bk + ':' + k) || treeCellAny(k, bk))) || treeCellCanvas(k, bk);
+    if (!c) continue;
+    const w = c.width / c.ppk * s;
+    cx.drawImage(c, c.x0 * s + ox, c.y0 * s + oy, w, w);
+  }
   cx.globalAlpha = 1;
+}
+/** вкл/выкл кроны (кнопка ♣ и настройки экрана) */
+function setTrees(on) {
+  setScreen('trees', !!on);
+  const b = document.querySelector('[data-z=trees]'); if (b) b.classList.toggle('on', !!on);
+  document.querySelectorAll('[data-scr=trees]').forEach(el => { el.checked = !!on });
 }
 
 /* ---------- реки ---------- */

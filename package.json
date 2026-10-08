@@ -6,9 +6,11 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node test/headless.js 1 && node test/e2e.js",
+    "test": "node scripts/sync-version.js --check && node test/headless.js 1 && node test/e2e.js",
     "test:headless": "node test/headless.js",
-    "test:e2e": "node test/e2e.js"
+    "test:e2e": "node test/e2e.js",
+    "version:sync": "node scripts/sync-version.js",
+    "version": "node scripts/sync-version.js && git add shared/world.js README.md"
   },
   "engines": { "node": ">=18" },
   "dependencies": { "ws": "^8.18.0" }

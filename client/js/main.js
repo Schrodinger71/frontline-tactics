@@ -412,7 +412,7 @@ function menuHTML() {
     <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div>`).join('')}</div>
     <div class="mgrid">${mode('both', 'Встречный бой', 'Силы равны. Кто удержит больше городов — у того перевес.')}${mode('attack', 'Наступление', 'Вы наступаете: бюджет больше на 35%. Противник окапывается.')}${mode('defense', 'Оборона', 'Вы держите рубеж: доход выше, противник сильнее и наступает.')}</div>
     <div class="mjoin"><span>Код партии:</span><input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false"><button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>
-    <div class="mfoot">Версия ${GAME_VERSION}. Рядом — «Линия» в реальном времени.</div></div>`;
+    <div class="mfoot">Версия ${GAME_VERSION}.</div></div>`;
 }
 function showMenu() { hideModal(); $('#menu').innerHTML = menuHTML(); $('#menu').classList.add('on') }
 function hideMenu() { $('#menu').classList.remove('on') }

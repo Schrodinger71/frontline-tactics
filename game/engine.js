@@ -80,7 +80,7 @@ class Game {
     this.recon = { n: new Set(), s: new Set() };
     this.weather = wxById('clear'); this.wxLeft = 3 + Math.floor(this.rnd() * 4);
     this.commanders = { n: this.makeCommander(), s: this.makeCommander() };
-    this.pts = this.mapDef.points.map(p => ({ ...p, hex: Hex.hexAt(p.x, p.y) }));
+    this.pts = this.mapDef.points.map(p => ({ ...p, hex: Hex.hexAt(p.x, p.y), home: p.owner }));
     for (const [side, x, y, lvl] of this.mapDef.forts || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.forts.set(h, lvl || 1) }
     for (const [side, x, y] of this.mapDef.obst || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.obst.set(h, side) }
     for (const [side, x, y] of this.mapDef.mines || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
@@ -89,6 +89,7 @@ class Game {
     this.income = { n: 0, s: 0 };
     this.cp = { n: W.CP.start, s: W.CP.start };
     this.barrage = { n: false, s: false };
+    this.counter = { n: false, s: false };
     this.stats = { n: this.newStats(), s: this.newStats() };
     this.history = [];
     this.limit = W.TURN_LIMIT;
@@ -150,9 +151,16 @@ class Game {
     for (const u of this.units) if (u.support && u.str > 0 && (truth || u.side === side || occ.get(u.hex) === u)) for (const h of Hex.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
     return {
       map: this.map, br: this.br, occ, mines: this.mines, forts: this.forts, obst: this.obst, support, side, smoke: this.smoke,
-      mud: !!this.weather.mud && this.weather.mud < .8, night: isNight(this.turn),
-      cmd: this.cmdHexes(side)
+      mud: !!this.weather.mud && this.weather.mud < .8, night: isNight(this.turn), acc: this.weather.acc || 1,
+      cmd: this.cmdHexes(side), counter: this.counterHexes(side)
     };
+  }
+  /** клетки «Контрудара»: исходные точки стороны и соседние с ними (если приказ отдан в этот ход) */
+  counterHexes(side) {
+    if (!this.counter || !this.counter[side]) return null;
+    const set = new Set();
+    for (const p of this.pts) if (p.home === side) for (const h of Hex.within(p.hex, 1)) set.add(h);
+    return set;
   }
   /** клетки под управлением штабов стороны */
   cmdHexes(side) {
@@ -283,6 +291,13 @@ class Game {
       if (!this.units.some(v => v.side === side && v.str > 0 && UT[v.k].bomb && !v.acted)) return { ok: false, error: 'нет готовой артиллерии' };
       this.barrage[side] = true;
       this.log(side, 'Артподготовка! Все стволы — по переднему краю.', 'hq');
+    } else if (k === 'counter') {
+      if (this.counter[side]) return { ok: false, error: 'контрудар уже объявлен' };
+      if (!this.pts.some(p => p.home === side && p.owner !== side)) return { ok: false, error: 'все исходные точки и так наши' };
+      this.counter[side] = true;
+      const zone = this.counterHexes(side);
+      for (const v of this.units) if (v.side === side && v.str > 0 && Hex.neighbors(v.hex).some(h => zone.has(h))) v.org = Math.min(100, v.org + 10);
+      this.log(side, 'Контрудар! Вернуть наши города — любой ценой.', 'hq');
     } else if (k === 'march') {
       if (u.march) return { ok: false, error: 'часть уже на марше' };
       if (u.acted) return { ok: false, error: 'часть уже действовала' };
@@ -339,8 +354,17 @@ class Game {
     for (const side of [N, S]) if (this.bots[side] && !this.ready[side]) this.botDeploy(side);
     if (!(this.ready.n && this.ready.s)) return;
     this.phase = 'battle';
-    this.active = this.role.s === 'attacker' ? S : N;
-    this.log('*', 'Расстановка окончена. Начало операции.', 'hq');
+    /* первым ходит наступающий; во встречном бою — по жребию (у первого хода заметное преимущество) */
+    this.first = this.role.s === 'attacker' ? S : this.role.n === 'attacker' || this.scen ? N : this.chance(.5) ? N : S;
+    this.active = this.first;
+    /* подготовленная оборона: обороняющийся встречает наступление в окопах, его точки укреплены */
+    for (const side of [N, S]) {
+      if (this.role[side] !== 'defender' || this.scen) continue;
+      for (const u of this.units) if (u.side === side) u.ent = Math.max(u.ent, 1);
+      for (const p of this.pts) if (p.owner === side) this.forts.set(p.hex, Math.max(this.forts.get(p.hex) || 0, 1));
+      this.log(side, 'Оборона подготовлена: части окопались, наши точки укреплены.', 'hq');
+    }
+    this.log('*', `Расстановка окончена. Начало операции — первым ходит ${W.SIDE_NAME[this.first]}.`, 'hq');
     this.startSide(this.active);
   }
 
@@ -353,9 +377,10 @@ class Game {
     this.updateSupply(side);
     const hqAlive = this.units.some(v => v.side === side && v.k === 'hq' && v.str > 0);
     this.cp[side] = Math.min(W.CP.max, this.cp[side] + W.CP.per + (hqAlive ? W.CP.hq : 0));
-    this.barrage[side] = false;
+    this.barrage[side] = false; this.counter[side] = false;
     for (const [h, s] of this.smoke) if (s === side) this.smoke.delete(h);
     const cmd = this.cmdHexes(side);
+    for (const u of this.units) if (u.side !== side) u.hb = 0;   /* «связан боем» — только в чужой ход */
     for (const u of this.units) {
       if (u.side !== side || u.str <= 0) continue;
       const T = UT[u.k];
@@ -413,7 +438,7 @@ class Game {
       } else u.dry = false;
     }
     this.ev({ e: 'endside', to: '*', side });
-    const next = oppOf(side), first = this.role.s === 'attacker' ? S : N;
+    const next = oppOf(side), first = this.first || N;
     if (next === first) this.endRound();
     if (this.over) return { ok: true };
     this.startSide(next);
@@ -488,7 +513,7 @@ class Game {
     this.log(u.side, `${p.n} — наши!`, 'g');
     if (was && p.city && !this.looted.has(p.id)) {
       this.looted.add(p.id);
-      const t = Math.round(30 + 20 * p.w);
+      const t = Math.round(20 + 15 * p.w);
       this.budget[u.side] += t; this.cp[u.side] = Math.min(W.CP.max, this.cp[u.side] + 1);
       this.log(u.side, `${p.n}: взяли склады противника — +${t} очков и командное очко.`, 'g');
     }
@@ -535,7 +560,7 @@ class Game {
     const la = Math.min(u.str, Math.round(o.expA * this.R(.6, 1.4)));
     let ld = Math.min(e.str, Math.round(o.expD * this.R(.6, 1.4)));
     u.acted = true; u.mp = T.mp > 5 && u.k !== 'rec' ? Math.min(u.mp, 1) : 0; u.ent = 0; u.revealed = this.turn;
-    e.revealed = this.turn; e.hitThisTurn = true;
+    e.revealed = this.turn; e.hitThisTurn = true; e.hb = (e.hb || 0) | Rules.ARMBIT[T.arm];
     this.ev({ e: 'fight', to: '*', a: u.id, d: e.id, ah: u.hex, dh: e.hex, la, ld, r: +o.r.toFixed(2) });
     this.say(u, 'attack', { lb: W.lc(UT[e.k].n) });
     let retreat = this.chance(o.retreat);
@@ -552,9 +577,9 @@ class Game {
     }
     this.loss(e, ld, u);
     this.loss(u, la, e);
-    u.org = Math.max(0, u.org - la * 4); u.xp = Math.min(1, u.xp + .06);
+    u.org = Math.max(0, u.org - la * 4); this.gainXp(u, .06);
     if (e.str > 0) {
-      e.org = Math.max(0, e.org - ld * 6 - (retreat ? 8 : 0)); e.xp = Math.min(1, e.xp + .05);
+      e.org = Math.max(0, e.org - ld * 6 - (retreat ? 8 : 0)); this.gainXp(e, .05);
       if (e.org < 15) retreat = true;
       if (e.hold && retreat) { retreat = false; e.org = Math.max(0, e.org - 10) }
       if (this.forts.get(e.hex) && e.org >= 40 && retreat && this.chance(.5)) { retreat = false; this.say(e, 'fortHold', {}) }
@@ -582,12 +607,21 @@ class Game {
     this.updateVision(u.side); this.updateVision(oppOf(u.side));
     return { ok: true, la, ld };
   }
+  /** опыт: на порогах 0,3 и 0,6 часть становится «обстрелянной» и «ветеранами» */
+  gainXp(u, d) {
+    const lv = x => x >= .6 ? 2 : x >= .3 ? 1 : 0, was = lv(u.xp);
+    u.xp = Math.min(1, u.xp + d);
+    if (u.str > 0 && lv(u.xp) > was) {
+      this.ev({ e: 'promote', to: u.side, id: u.id, hex: u.hex, lv: lv(u.xp) });
+      this.log(u.side, `«${u.cs}» ${lv(u.xp) >= 2 ? 'теперь ветераны' : 'обстреляны'} — бьют и держатся лучше.`, 'g');
+    }
+  }
   /** потери шагами; уничтожение; статистика */
   loss(u, n, by, how) {
     if (!(n > 0) || u.str <= 0) return;
     u.str = Math.max(0, u.str - n);
     u.hitThisTurn = true;
-    if (by && by.side !== u.side) by.xp = Math.min(1, by.xp + .02 * n);
+    if (by && by.side !== u.side && by.id) this.gainXp(by, .02 * n);
     if (u.str > 0) return;
     const st = this.stats[u.side], price = UT[u.k].price;
     st.lost[u.k] = (st.lost[u.k] || 0) + 1; st.lostV += price;
@@ -627,6 +661,9 @@ class Game {
     this.stats[e.side].routs++;
     this.ev({ e: 'move', to: '*', id: e.id, side: e.side, path: [from, best], k: e.k, retreat: 1 });
     this.say(e, 'retreat', {}, 'w');
+    /* отход под огнём: клетка в зоне контроля двух и больше частей противника */
+    const around = Hex.neighbors(best).filter(h => { const o = this.unitAt(h); return o && o.side !== e.side }).length;
+    if (around >= 2 && e.str > 0) { this.loss(e, 1, by); if (e.str > 0) this.log(e.side, `«${e.cs}»: отходили под перекрёстным огнём — потери.`, 'w') }
   }
 
   /* ---------- артиллерия, авиация ---------- */
@@ -646,7 +683,20 @@ class Game {
     if (T.bomb.area) for (const h of Hex.neighbors(hex)) { const x = this.unitAt(h); if (x && x.side !== u.side) this.hitByFire(ctx, T.bomb.pow * .45 * u.str / MAX_STR, x, u, { barrage: bar, sp: u.sp }) }
     u.acted = true; u.mp = 0; u.revealed = this.turn; u.reload = T.bomb.reload;
     this.say(u, 'fire', {});
+    this.counterBattery(u);
     return { ok: true };
+  }
+  /** контрбатарейная борьба: артиллерия противника, не стрелявшая в свой ход, отвечает по засечённой батарее */
+  counterBattery(u) {
+    if (u.str <= 0) return;
+    const art = this.units.filter(a => a.side !== u.side && a.str > 0 && a.support && UT[a.k].bomb && Hex.hexDist(a.hex, u.hex) <= UT[a.k].bomb.rng)
+      .sort((a, b) => UT[b.k].bomb.pow * b.str - UT[a.k].bomb.pow * a.str)[0];
+    if (!art) return;
+    art.support = false; art.revealed = this.turn;
+    this.ev({ e: 'counter', to: '*', hex: art.hex });
+    this.ev({ e: 'shell', to: '*', from: art.hex, hex: u.hex, k: art.k });
+    this.say(art, 'counter', {}, 'g');
+    this.hitByFire(this.ctxFor(art.side, true), UT[art.k].bomb.pow * .6 * art.str / MAX_STR, u, art, { th: UT[art.k].th });
   }
   hitByFire(ctx, pow, e, by, opt) {
     const b = Rules.bombardOdds(ctx, pow, e, opt);
@@ -713,7 +763,14 @@ class Game {
     if (task === 'dig') return this.digIn(u);
     const d = Hex.dirTo(u.hex, hex);
     if (d < 0 && !['mine', 'fort', 'obst'].includes(task)) return { ok: false, error: 'только у соседней клетки' };
-    if (task === 'bridge' || task === 'blow') {
+    if (task === 'repair') {
+      const key = Hex.edgeKey(u.hex, hex);
+      if (this.br.get(key) !== 'down') return { ok: false, error: 'здесь нет взорванного моста' };
+      if (Hex.neighbors(hex).concat([hex]).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'под огнём мост не восстановить' };
+      this.br.delete(key);
+      this.say(u, 'repaired', {}, 'g');
+      this.log(oppOf(u.side), `Противник восстановил мост, кв. ${W.sq(this.map.hexes[hex])}.`, 'w');
+    } else if (task === 'bridge' || task === 'blow') {
       const e = Rules.edgeOf(this.ctxFor(u.side, true), u.hex, d), key = Hex.edgeKey(u.hex, hex);
       if (!(e & Hex.RIV)) return { ok: false, error: 'между клетками нет реки' };
       if (task === 'bridge') {

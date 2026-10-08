@@ -23,9 +23,15 @@
    прикрывает клетки в своей дальности (support: сторона → Set клеток);
    противотанковый дивизион против танков обороняется втрое злее.
 
+   Рельеф: атака в гору (цель выше на 60 м) — ×0,88, на 140 м — ×0,8;
+   удар с высоты — ×1,1. Взаимодействие: если цель в этот ход уже
+   атаковала часть другого рода (пехота после танков и наоборот) —
+   атака ×1,15. Огонь в непогоду точнее не станет: множитель acc погоды.
+
    ctx — что известно о поле: { map, br (мосты: ключ → 'down' | 'pontoon'),
    occ (клетка → часть), mines (клетка → { side }), forts, obst, support, mud, night, side,
-   cmd (клетки под управлением штабов стороны) }.
+   cmd (клетки под управлением штабов стороны), acc (точность огня по погоде),
+   counter (клетки, где действует приказ «Контрудар») }.
    ============================================================ */
 (function (g) {
   const node = typeof module !== 'undefined' && module.exports;
@@ -151,8 +157,16 @@
       if (Hex.nb(def.hex, (Hex.dirTo(def.hex, att.hex) + 3) % 6) === h) opposite = true;
     }
     if (n) am(`охват (${n})`, Math.min(1.36, 1 + .12 * n));
+    if (ctx.counter && ctx.counter.has(def.hex)) am('контрудар', 1.3);
     if (opposite) am('удар с двух сторон', 1.2);
     if (ctx.night && !TA.th) am('ночь', .75);
+    /* рельеф: атаковать в гору тяжелее, с высоты — легче */
+    const dh = hx.h - ctx.map.hexes[att.hex].h;
+    if (dh > 60) am('атака в гору', dh > 140 ? .8 : .88);
+    else if (dh < -60) am('удар с высоты', 1.1);
+    /* взаимодействие родов войск: цель уже связана боем с частью другого рода */
+    const ARMB = { soft: 1, light: 2, hard: 4 }, hb = def.hb || 0;
+    if (hb && (hb & ~ARMB[TA.arm])) am('взаимодействие', 1.15);
     if (ctx.cmd && !ctx.cmd.has(att.hex)) am('вне штаба', .9);
     else if (ctx.cmd) am('штаб рядом', 1.1);
     const spA = att.sp === undefined ? 3 : att.sp, spD = def.sp === undefined ? 3 : def.sp;
@@ -196,6 +210,7 @@
     if (fort) m(`укрепления ${fort}`, 1 / (1 + .3 * fort));
     if (TD.arm === 'hard' && !(opt && opt.air)) m('броня', .6);
     if (ctx.night && !(opt && opt.th)) m('ночь', .8);
+    if (ctx.acc && ctx.acc < 1) m('погода', ctx.acc);
     if (opt && opt.barrage) m('артподготовка', 1.5);
     if (opt && opt.sp !== undefined && opt.sp < 3) m(`запасы ${opt.sp}/3`, SUPK.att[opt.sp]);
     if (ctx.smoke && ctx.smoke.has(def.hex)) m('цель в дыму', .7);
@@ -208,7 +223,8 @@
     const o = odds(ctx, amb, { ...mover, ent: 0, amb: 0 });
     return Math.min(3, o.expD * .55 * 1.4);
   }
-  const api = { edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, bombardOdds, ambushHit, terrainDef, TDEF, TCOST, TNAME };
+  const ARMBIT = { soft: 1, light: 2, hard: 4 };
+  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, bombardOdds, ambushHit, terrainDef, TDEF, TCOST, TNAME };
   if (node) module.exports = api;
   else g.Rules = api;
 })(typeof window !== 'undefined' ? window : globalThis);

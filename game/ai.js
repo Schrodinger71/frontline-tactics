@@ -102,7 +102,9 @@ module.exports = {
     }
 
     /* 3. атаки группами */
-    const thr = com.aggr.ratio * (this.role[side] === 'defender' ? 1.2 : 1) * (this.scen && this.role[side] === 'attacker' ? .85 : 1);
+    /* обороняющийся контратакует охотнее, если противник уже в его точке */
+    const lost = this.pts.some(p => p.home === side && p.owner !== side);
+    const thr = com.aggr.ratio * (this.role[side] === 'defender' ? (lost ? .95 : 1.05) : 1) * (this.scen && this.role[side] === 'attacker' ? .85 : 1);
     for (let guard = 0; guard < 14; guard++) if (!this.botAttack(side, thr, objective)) break;
 
     /* 4. манёвр */
@@ -132,7 +134,12 @@ module.exports = {
       for (const u of mine.filter(u => !u.supplied && u.sp <= 1 && u.str >= 4).sort((a, b) => b.str - a.str))
         if (cp() >= O.airdrop.cp + 1 && this.weather.fly) this.act(side, { t: 'order', k: 'airdrop', id: u.id });
       const guns = mine.filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0 && u.sp > 0 && foes.some(e => Hex.hexDist(e.hex, u.hex) <= UT[u.k].bomb.rng));
+      /* контрудар: противник в нашей исходной точке, рядом есть кому бить */
+      const lostHome = this.pts.filter(p => p.home === side && p.owner !== side);
+      if (lostHome.length && cp() >= O.counter.cp && !this.counter[side] &&
+        lostHome.some(p => mine.filter(u => !UT[u.k].bomb && u.k !== 'hq' && u.str >= 4 && Hex.hexDist(u.hex, p.hex) <= 3).length >= 2)) this.act(side, { t: 'order', k: 'counter' });
       if (guns.length >= 2 && cp() >= O.barrage.cp && !this.barrage[side]) this.act(side, { t: 'order', k: 'barrage' });
+
       if (cp() >= O.reserve.cp && mine.length < W.MAX_UNITS) {
         const k = 'mot', cand = this.spawnHexes(side, k);
         cand.sort((a, b) => Math.abs(this.map.hexes[a].x - this.frontXAt(this.map.hexes[a].y)) - Math.abs(this.map.hexes[b].x - this.frontXAt(this.map.hexes[b].y)));
@@ -156,8 +163,9 @@ module.exports = {
     for (const p of this.pts) {
       const near = Math.min(...own.map(u => Hex.hexDist(u.hex, p.hex)));
       if (p.owner !== side) {
-        if (this.role[side] === 'defender' && near > 4) continue;
-        const s = p.w * (p.city ? 1.5 : 1) * 10 - near * 1.5;
+        /* обороняющийся тянется к чужим точкам только поблизости, свои потерянные — главное */
+        if (this.role[side] === 'defender' && near > 6 && p.home !== side) continue;
+        const s = p.w * (p.city ? 1.5 : 1) * 10 - near * (this.role[side] === 'defender' && p.home !== side ? 2.5 : 1.5) + (p.home === side ? 12 : 0);
         if (s > bs) { bs = s; best = p }
       } else if (this.units.some(e => e.side === en && e.str > 0 && this.seen(side, e) && Hex.hexDist(e.hex, p.hex) <= 3)) {
         const s = p.w * 12 - near;
@@ -233,7 +241,7 @@ module.exports = {
     } else if (T.bomb) mode = 'arty';
     else if (u.k === 'hq') mode = 'hq';
     else if (u.k === 'aa') mode = 'aa';
-    else if (objective && (this.role[side] !== 'defender' || objective.owner === side)) { goal = objective; mode = 'attack' }
+    else if (objective && (this.role[side] !== 'defender' || objective.owner === side || objective.home === side || (u.str >= 7 && UT[u.k].arm !== 'soft'))) { goal = objective; mode = 'attack' }
     let best = u.hex, bs = -1e9;
     for (const [h, r] of reach) {
       if (r.through) continue;
@@ -260,6 +268,13 @@ module.exports = {
   /** сапёры: понтон к цели через реку, мины перед угрожаемой точкой, окопать соседей */
   botEngineer(u, objective) {
     const side = u.side, ctx = this.ctxFor(side, true);
+    /* взорванный мост рядом — восстановить, если противника нет вплотную */
+    for (let d = 0; d < 6; d++) {
+      const h = Hex.nb(u.hex, d);
+      if (h < 0 || this.br.get(Hex.edgeKey(u.hex, h)) !== 'down') continue;
+      if (Hex.neighbors(h).concat([h]).some(x => { const e = this.unitAt(x); return e && e.side !== side })) continue;
+      if (this.act(side, { t: 'eng', id: u.id, task: 'repair', hex: h }).ok) return true;
+    }
     if (objective && objective.owner !== side) {
       for (let d = 0; d < 6; d++) {
         const h = Hex.nb(u.hex, d);

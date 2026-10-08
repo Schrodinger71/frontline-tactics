@@ -39,6 +39,8 @@ function windVec() {
 function fxAdd(o) { o.t0 = o.t0 || RT(); FX.push(o); if (FX.length > 260) FX.shift(); return o }
 function fxReset() { FX.length = 0; SCORCH.length = 0; PLUMES.length = 0 }
 
+/** точка вокруг центра клетки — разрывы и воронки видны рядом с фишкой, а не под ней */
+function ringPt(c, r0, r1) { const a = Math.random() * 6.283, r = r0 + Math.random() * (r1 - r0); return { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r * .8 } }
 /** разрыв на земле: вспышка сейчас, воронка и шлейф — после */
 function fxBoom(p, pw, delay, opt) {
   const t0 = RT() + (delay || 0), seed = Math.random() * 1000;
@@ -59,11 +61,11 @@ function drawScorch() {
     if (now < b.t0) continue;
     const q = w2s(b);
     if (!onScreen(q, 60)) continue;
-    const R = clamp(s * .55 * b.pw, 3, 30), a = (1 - age) * .85, sd = b.seed | 0;
+    const R = clamp(s * 1.1 * b.pw, 5, 40), a = (1 - age) * .9, sd = b.seed | 0;
     cx.save(); cx.translate(q.x, q.y);
     /* гарь вокруг: рваное пятно */
-    SmokeTex.draw(cx, sd, 0, 0, R * 2.3, a * .55, [24, 19, 14], hsh(b.seed, 1) * 6.28, 1.3);
-    SmokeTex.draw(cx, sd + 2, R * .2, -R * .1, R * 1.6, a * .5, [16, 12, 9], hsh(b.seed, 2) * 6.28, 1.15);
+    SmokeTex.draw(cx, sd, 0, 0, R * 2.4, a * .75, [26, 20, 14], hsh(b.seed, 1) * 6.28, 1.3);
+    SmokeTex.draw(cx, sd + 2, R * .2, -R * .1, R * 1.6, a * .65, [16, 12, 9], hsh(b.seed, 2) * 6.28, 1.15);
     /* выброс грунта лучами */
     if (R > 4) {
       cx.strokeStyle = `rgba(120,102,76,${a * .5})`; cx.lineWidth = Math.max(1, R * .12); cx.lineCap = 'round';
@@ -100,9 +102,9 @@ function drawPlumes() {
     if (age < 0) continue;
     const q = w2s(b);
     if (!onScreen(q, 240)) continue;
-    const dens = Math.pow(1 - age, 1.3) * (b.dark ? .8 : .6), dark = clamp(1 - age * 2.4, 0, 1);
+    const dens = Math.pow(1 - age, 1.3) * (b.dark ? .9 : .7), dark = clamp(1 - age * 2.4, 0, 1);
     const cr = Math.round(lerp(150, 58, dark * (b.dark ? 1 : .6))), cg = Math.round(lerp(146, 52, dark * (b.dark ? 1 : .6))), cb = Math.round(lerp(140, 48, dark * (b.dark ? 1 : .6)));
-    const R = 7 * b.pw * Z, L = R * 8 * clamp(.25 + age * 3, .25, 1), N = 12;
+    const R = 11 * b.pw * Z, L = R * 8 * clamp(.25 + age * 3, .25, 1), N = 12;
     for (let k = 0; k < N; k++) {
       const ph = (now * .07 + k / N + hsh(b.seed, k) * .1) % 1;
       const r = R * (.55 + ph * 2.3) * (.8 + .4 * hsh(b.seed, k + 3));
@@ -118,7 +120,7 @@ function drawPlumes() {
 /* ---------- разрыв ---------- */
 function drawBoom(f, k) {
   const a = w2s(f), s = G.view.s, pw = f.pw;
-  const R0 = clamp(s * 1.9 * pw, 10 * pw + 5, 96);
+  const R0 = clamp(s * 3.2 * pw, 9 + 12 * pw, 120);
   cx.save();
   cx.globalCompositeOperation = 'lighter';
   if (k < .08) {

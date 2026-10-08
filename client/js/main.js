@@ -70,7 +70,7 @@ function applySnapshot(v) {
   G.pendingAt = 0;
   Object.assign(G, {
     phase: v.phase, units: v.units, ghosts: v.ghosts, pts: v.pts, vis: v.vis ? new Set(v.vis) : null, supply: v.supply ? new Set(v.supply) : null,
-    mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, smoke: v.smoke || [], districts: v.districts,
+    mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, counter: v.counter, smoke: v.smoke || [], districts: v.districts,
     dist: v.dist ? (() => { const m = new Map(); for (let i = 0; i < v.dist.length; i += 2) m.set(v.dist[i], v.dist[i + 1]); return m })() : null,
     br: v.br, mines: v.mines, frontY: v.frontY, turn: v.turn, active: v.active, clock: v.clock, day: v.day, night: v.night, weather: v.weather,
     budget: v.budget, income: v.income, air: v.air, score: v.score, scen: v.scen, stats: v.stats, enemyStats: v.enemyStats, history: v.history,
@@ -129,7 +129,7 @@ function clientCtx() {
   const wx = wxById(G.weather);
   const support = { n: new Set(), s: new Set() };
   for (const u of G.units) if (u.support && UT[u.k].bomb) for (const h of Hex.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
-  return { map: Hex.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, cmd };
+  return { map: Hex.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => Hex.within(p.hex, 1)))) : null };
 }
 function computeSel() {
   G.reach = null; G.targets = []; G.selRiv = '';
@@ -220,7 +220,8 @@ function unitCard(u) {
   if (!own) return `<div class="card">${head}
     ${bar('Сила', u.str, MAX_STR, u.str <= 3 ? 'var(--rd)' : 'var(--ac)', u.str + ' из 10 · ' + elCount(u.k, u.str) + ' ' + T.eln)}
     <div class="row"><span>Запасы</span><b>${pips(u.sp)}</b></div>${u.hold ? '<p class="ustate"><span class="ac">стоит насмерть — не отходит</span></p>' : ''}${u.mil ? '<p class="ustate">ополчение</p>' : ''}
-    <div class="row"><span>Местность</span><b>${Rules.TNAME[hx.t]}${u.ent ? ', окоп ' + u.ent : ''}</b></div>
+    <div class="row"><span>Местность</span><b>${Rules.TNAME[hx.t]}, ${Math.round(hx.h)} м${u.ent ? ', окоп ' + u.ent : ''}</b></div>
+    ${u.hb ? '<p class="ustate"><span class="good">связан боем — атака другим родом войск ×1,15</span></p>' : ''}
     <p class="hint">${esc(ROLE_TXT[u.k])}</p></div>`;
   const acts = [];
   if (G.phase === 'deploy' && !G.spec) { if (!u.pre) acts.push(`<button class="btn sm" data-a="sell">Вернуть (+${T.price})</button>`); acts.push('<span class="hint">Клик по клетке зоны — переставить.</span>') }
@@ -232,7 +233,7 @@ function unitCard(u) {
     ob('march', !u.acted && !u.march && u.sp > 0);
     ob('hold', !u.hold);
     if (u.sp < SUPPLY.max) ob('airdrop', wxById(G.weather).fly);
-    if (T.eng && !u.acted) acts.push('<button class="btn sm" data-a="eng:fort">Укрепления…</button><button class="btn sm" data-a="eng:obst">Заграждения…</button><button class="btn sm" data-a="eng:mine">Мины…</button><button class="btn sm" data-a="eng:bridge">Понтон…</button><button class="btn sm" data-a="eng:blow">Взорвать мост…</button><button class="btn sm" data-a="eng:clear">Разминировать…</button>');
+    if (T.eng && !u.acted) acts.push('<button class="btn sm" data-a="eng:fort">Укрепления…</button><button class="btn sm" data-a="eng:obst">Заграждения…</button><button class="btn sm" data-a="eng:mine">Мины…</button><button class="btn sm" data-a="eng:bridge">Понтон…</button><button class="btn sm" data-a="eng:blow">Взорвать мост…</button><button class="btn sm" data-a="eng:repair">Восстановить мост…</button><button class="btn sm" data-a="eng:clear">Разминировать…</button>');
   }
   const st = [];
   if (!u.supplied) st.push(`<span class="bad">в котле${u.cut ? ' ' + u.cut + ' х.' : ''}</span>`);
@@ -256,7 +257,7 @@ function unitCard(u) {
     <div class="row"><span>Атака (пех/лёг/танки)</span><b>${T.atk.soft} / ${T.atk.light} / ${T.atk.hard}</b></div>
     <div class="row"><span>Оборона</span><b>${T.def}</b></div>
     ${T.bomb ? `<div class="row"><span>Огонь</span><b>${T.bomb.pow} на ${T.bomb.rng} кл.${T.bomb.area ? ', по площади' : ''}</b></div>` : ''}
-    <div class="row"><span>Местность · окоп</span><b>${Rules.TNAME[hx.t]} · ${u.ent || 0}${fort ? ' · укрепления ' + fort : ''}</b></div>
+    <div class="row"><span>Местность · окоп</span><b>${Rules.TNAME[hx.t]}, ${Math.round(hx.h)} м · ${u.ent || 0}${fort ? ' · укрепления ' + fort : ''}</b></div>
     <div class="row"><span>Опыт</span><b>${u.xp >= .6 ? 'ветераны' : u.xp >= .3 ? 'обстрелянные' : 'необстрелянные'} ${'★'.repeat(1 + Math.floor(u.xp * 2.99))}</b></div>
     ${T.eng ? `<div class="row"><span>Мин в запасе</span><b>${u.mines}</b></div>` : ''}
     <div class="row"><span>Командир</span><b>${esc(u.trait || '—')}</b></div>
@@ -273,7 +274,8 @@ function renderOrders() {
   $('#rc').innerHTML = `<div class="card"><h3>Приказы штаба <span class="mu">· ${G.spec ? '' : G.cp + ' из ' + CP.max} ★</span></h3>
     <p class="hint">Командные очки копятся каждый ход: +${CP.per}, со штабом ещё +${CP.hq}; трофейные склады — +1. Приказы на часть — выберите её и нажмите, приказ на клетку — кликните по карте.</p>
     ${G.barrage ? '<p class="ustate"><span class="ac">Артподготовка идёт: огонь ×1,5</span></p>' : ''}
-    <div class="ords">${ORDER_LIST.map(k => { const O = ORDERS[k], off = !can || G.cp < O.cp || (k === 'barrage' && G.barrage) || (O.tgt === 'unit' && !(sel && myUnit(sel)));
+    ${G.counter && !G.spec ? '<p class="ustate"><span class="ac">Контрудар: атаки у исходных точек ×1,3</span></p>' : ''}
+    <div class="ords">${ORDER_LIST.map(k => { const O = ORDERS[k], off = !can || G.cp < O.cp || (k === 'barrage' && G.barrage) || (k === 'counter' && (G.counter || !G.pts.some(p => p.home === G.side && p.owner !== G.side))) || (O.tgt === 'unit' && !(sel && myUnit(sel)));
       return `<div class="ord ${off ? 'off' : ''} ${G.mode === 'ord:' + k ? 'on' : ''}" data-ord="${k}"><div class="snm"><b>${esc(O.n)}</b><span>${esc(O.d)}${O.tgt === 'unit' ? ' · <i>на выбранную часть</i>' : O.tgt === 'hex' ? ' · <i>на клетку</i>' : ''}</span></div><div class="cpc">${O.cp}★</div></div>` }).join('')}</div>
     ${sel && myUnit(sel) ? `<p class="hint">Выбрана: «${esc(sel.cs)}» (${esc(UT[sel.k].sh)}).</p>` : ''}
     <div class="lbl">Снабжение</div>
@@ -349,13 +351,17 @@ function renderTip(sp) {
   if (t.odds) {
     const o = t.odds, a = selUnit(), e = G.units.find(x => x.id === t.id);
     if (!a || !e) { tip.hidden = true; return }
-    h = `<b>Атака: ${UT[a.k].sh} → ${UT[e.k].sh}</b><div class="row"><span>Сила атаки</span><b>${o.A.toFixed(1)}</b></div><div class="row"><span>Оборона</span><b>${o.D.toFixed(1)}</b></div>
+    const ka = o.A / (o.A + o.D);
+    h = `<b>Атака: ${esc(UT[a.k].n)} → ${esc(UT[e.k].n)}</b>
+      <div class="ob" title="Соотношение сил"><i style="width:${(ka * 100).toFixed(1)}%;background:linear-gradient(90deg,#3f8fc4,#6cc3ff)"></i><i style="width:${((1 - ka) * 100).toFixed(1)}%;background:linear-gradient(90deg,#ff6b55,#b8392a)"></i></div>
+      <div class="row"><span>Сила атаки</span><b>${o.A.toFixed(1)}</b></div><div class="row"><span>Оборона</span><b>${o.D.toFixed(1)}</b></div>
       <div class="row big"><span>Соотношение</span><b style="color:${t.col}">${o.r.toFixed(2).replace('.', ',')} : 1</b></div>
       ${o.mods.map(m => `<div class="row mod ${(m.who === 'a') === (m.v > 1) ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>${m.who === 'a' ? 'атака' : 'оборона'} ×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}
       <div class="lbl">Ожидаемо</div>
       <div class="row"><span>Потери противника</span><b class="good">${o.lossD[0]}…${o.lossD[1]}</b></div>
       <div class="row"><span>Наши потери</span><b class="bad">${o.lossA[0]}…${o.lossA[1]}</b></div>
       <div class="row"><span>Шанс отхода противника</span><b>${Math.round(o.retreat * 100)}%</b></div>
+      <div class="bar sm"><div style="width:${Math.round(o.retreat * 100)}%;background:var(--ac)"></div></div>
       <p class="hint">Мораль и опыт противника неизвестны — расчёт по типичным.</p>`;
   } else if (t.bomb) {
     h = `<b>Огонь</b>${t.bomb.mods.map(m => `<div class="row mod ${m.v > 1 ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}
@@ -368,15 +374,17 @@ function renderTip(sp) {
 /* ---------- окна ---------- */
 function showHelp() {
   $('#mbox').innerHTML = `<h2>Frontline Tactics</h2>
-    <p><b>Ход</b> — 4 часа. Стороны ходят по очереди. Каждая часть за ход может пройти по очкам хода и один раз атаковать (или стрелять артиллерией), либо окопаться, либо пополниться.</p>
+    <p><b>Ход</b> — 4 часа. Стороны ходят по очереди (во встречном бою первый ход — по жребию). Каждая часть за ход может пройти по очкам хода и один раз атаковать (или стрелять артиллерией), либо окопаться, либо пополниться.</p>
     <p><b>Движение.</b> Лес и высоты дороже, дорога — дешевле. Реку без моста колёсные не переходят, остальные — только с полным запасом хода. Рядом с противником — его <b>зона контроля</b>: вошёл — встал.</p>
-    <p><b>Бой.</b> Наведите на цель — увидите соотношение сил и всё, что на него влияет: местность, окоп, охват (ваши части рядом с целью), удар с двух сторон, реку, ночь, снабжение, штаб. Сильный удар выбивает противника из клетки — займите её.</p>
-    <p><b>Оборона.</b> <b>Засада</b> — часть не действует, а в ход противника встречает огнём того, кто войдёт рядом. Артиллерия, не стрелявшая в свой ход, даёт <b>огонь поддержки</b> соседям в обороне (пунктирная рамка). Сапёры строят <b>укрепления</b> (оборона ×1,25 за уровень, держатся дольше) и <b>заграждения</b> (технике вход — весь ход, танки бьют хуже). <b>Противотанковый дивизион</b> в обороне против брони почти вдвое сильнее.</p>
-    <p><b>Снабжение.</b> Округа снабжения — от ваших городов и края карты (клавиша <b>S</b>), подвоз не идёт через противника и его зоны контроля. У каждой части <b>запас 0–3</b> (полоски на фишке). В котле запас тает по делению за ход: на 2 — медленнее и слабее, на 1 — вдвое медленнее, на 0 — не атакует, обороняется вдвое хуже, тает и сдаётся. Город держит ограниченное число частей — в перегруженном округе запас не выше 2. Окружайте противника и берите его города!</p>
-    <p><b>Приказы штаба</b> (вкладка «Приказы», командные очки ★): артподготовка, форсированный марш, стоять насмерть, дымовая завеса, снабжение по воздуху, резерв ставки.</p>
-    <p><b>Прорыв.</b> Танки, мотопехота и разведка, выбившие противника и занявшие его клетку, могут действовать ещё раз. <b>Ополчение:</b> пустой город, к которому подошёл противник, один раз выставляет защитников. <b>Трофеи:</b> взятый вражеский город отдаёт склады. <b>Подкрепления</b> высаживаются в своей точке или рядом с ней.</p>
-    <p><b>Разведка.</b> Видно только рядом с вашими частями; в лесу и городе противник виден вплотную (разведка — на 2 клетки). Авиаразведка открывает район. С высоты видно дальше.</p>
-    <p><b>Управление.</b> ЛКМ — выбрать / идти / атаковать · ПКМ — снять · Tab — следующая часть · D — окопаться · A — засада · Enter — конец хода · колесо — масштаб · ПКМ-перетаскивание — карта.</p>
+    <p><b>Бой.</b> Наведите на цель — увидите соотношение сил и всё, что на него влияет: местность, окоп, охват, удар с двух сторон, реку, ночь, снабжение, штаб. Новое: <b>рельеф</b> (в гору ×0,88…0,8, с высоты ×1,1) и <b>взаимодействие родов войск</b> — цель, по которой в этот ход уже били танки, пехота атакует ×1,15 (и наоборот). Отход в клетку под огнём двух частей противника стоит шага силы.</p>
+    <p><b>Артиллерия.</b> Огонь слабее в непогоду (дождь, туман, снег). Батарея, не стрелявшая в свой ход, прикрывает соседей и ведёт <b>контрбатарейный огонь</b> по артиллерии противника, открывшей огонь в её дальности.</p>
+    <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
+    <p><b>Снабжение.</b> Округа снабжения — от ваших городов и края карты (клавиша <b>S</b>). Запас 0–3 на фишке; в котле тает по делению за ход, без запасов часть тает и сдаётся.</p>
+    <p><b>Приказы штаба</b> (★): артподготовка, <b>контрудар</b> (атаки у ваших потерянных исходных точек ×1,3), форсированный марш, стоять насмерть, дымовая завеса, снабжение по воздуху, резерв ставки.</p>
+    <p><b>Опыт.</b> Части растут: «обстрелянные» ★ и «ветераны» ★★ бьют и держатся лучше.</p>
+    <div class="lbl">Управление</div>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
 }
@@ -415,12 +423,47 @@ function menuHTML() {
     <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}"><div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div><h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
       <div class="acts"><button class="btn pri sm" data-a="scen" data-id="${id}" data-side="n">За Запад</button><button class="btn sm" data-a="scen" data-id="${id}" data-side="s">За Восток</button><button class="btn sm" data-a="watch" data-mode="${id}">Смотреть</button></div></div>`).join('')}</div>
     <div class="msec">Свободная операция · карта</div>
-    <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div>`).join('')}</div>
-    <div class="mgrid">${mode('both', 'Встречный бой', 'Силы равны. Кто удержит больше городов — у того перевес.')}${mode('attack', 'Наступление', 'Вы наступаете: бюджет больше на 35%. Противник окапывается.')}${mode('defense', 'Оборона', 'Вы держите рубеж: доход выше, противник сильнее и наступает.')}</div>
+    <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}"><canvas data-prev="${id}" width="90" height="132"></canvas><div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
+    <div class="mgrid">${mode('both', 'Встречный бой', 'Силы равны, первый ход — по жребию. Кто удержит больше городов — у того перевес.')}${mode('attack', 'Наступление', 'Вы наступаете и ходите первым, бюджет +12%. Противник встречает в окопах, его точки укреплены.')}${mode('defense', 'Оборона', 'Вы держите рубеж: доход +30%, части в окопах, точки укреплены. Противник сильнее и бьёт первым.')}</div>
     <div class="mjoin"><span>Код партии:</span><input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false"><button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>
-    <div class="mfoot">Версия ${GAME_VERSION}. Рядом — «Линия» в реальном времени.</div></div>`;
+    <div class="mfoot">Версия ${GAME_VERSION} · колесо — масштаб, перетаскивание — карта, <kbd>?</kbd> — справка.</div></div>`;
 }
-function showMenu() { hideModal(); $('#menu').innerHTML = menuHTML(); $('#menu').classList.add('on') }
+function showMenu() { hideModal(); $('#menu').innerHTML = menuHTML(); $('#menu').classList.add('on'); drawPreviews() }
+/* ---------- миниатюры карт в меню: печём в простое по одной ---------- */
+const PREV = new Map();
+function mapPreview(id) {
+  if (PREV.has(id)) return PREV.get(id);
+  const T = Terrain.get(id), def = T.def, k = 3, w = Math.round(WW / k), h = Math.round(WH / k);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'), img = g.createImageData(w, h), D = img.data;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const x = (i + .5) * k, y = (j + .5) * k, o = (j * w + i) * 4, H = T.height(x, y);
+    let col = def.forest && def.forest.thr > .7 ? [104, 96, 60] : [76, 86, 54];
+    if ((def.lakes || []).length && T.lakeK(x, y) > 0) col = [24, 58, 80];
+    else if (T.forestV(x, y, H) > T.FOREST_T) col = [30, 50, 32];
+    if ((def.marsh || []).length && T.marshK(x, y) > .1) col = [44, 66, 58];
+    if ((def.ridges || []).length && T.ridgeK(x, y) > .35) col = [110, 104, 92];
+    const e = .8 + H * .45;
+    D[o] = col[0] * e; D[o + 1] = col[1] * e; D[o + 2] = col[2] * e; D[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  g.scale(1 / k, 1 / k); g.lineCap = g.lineJoin = 'round';
+  for (const r of T.roads()) { g.beginPath(); r.pts.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)); g.strokeStyle = 'rgba(210,190,140,.7)'; g.lineWidth = 2.2; g.stroke() }
+  for (const r of T.rivers()) { g.beginPath(); r.pts.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)); g.strokeStyle = '#3a86b0'; g.lineWidth = 4.5; g.stroke() }
+  for (const p of def.points) { g.fillStyle = !p.owner ? '#ddd' : p.owner === N ? '#6cc3ff' : '#ff8a72'; g.strokeStyle = '#000'; g.lineWidth = 2; const z = p.city ? 12 : 8; g.fillRect(p.x - z / 2, p.y - z / 2, z, z); g.strokeRect(p.x - z / 2, p.y - z / 2, z, z) }
+  PREV.set(id, c);
+  return c;
+}
+function drawPreviews() {
+  const list = [...document.querySelectorAll('canvas[data-prev]')];
+  const next = () => {
+    const el = list.shift();
+    if (!el) return;
+    try { const c = mapPreview(el.dataset.prev); el.getContext('2d').drawImage(c, 0, 0, el.width, el.height) } catch (e) { /* без холста */ }
+    (window.requestIdleCallback || (f => setTimeout(f, 30)))(next);
+  };
+  next();
+}
 function hideMenu() { $('#menu').classList.remove('on') }
 function leaveToMenu() { netSend({ t: 'leave' }); G.roomId = null; G.units = []; G.sel = null; $('#lc_log').innerHTML = ''; showMenu() }
 
@@ -478,7 +521,7 @@ let last = performance.now(), uiAcc = 0;
 const KEYS = new Set();
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  const rdt = Math.min(.25, (now - last) / 1000), dt = Math.min(.05, rdt); last = now;
   try {
     const v = 520 * dt / G.view.s;
     if (KEYS.size) {
@@ -487,7 +530,7 @@ function loop(now) {
       if (KEYS.has('ArrowUp')) y -= v; if (KEYS.has('ArrowDown')) y += v;
       panTo(x, y);
     }
-    camTick(dt);
+    camTick(rdt);
     /* клетка под курсором — и когда карта едет сама */
     if (G.mouse && G.mouse.inside && (CAM.moving || KEYS.size)) { const w = s2w(G.mouse); G.hover = Hex.hexAt(w.x, w.y); renderTip(G.mouse); hexInfo(G.hover) }
     if (G.pendingSnap && G.pendingAt && performance.now() - G.pendingAt > 15000) { skipAnims(); const v = G.pendingSnap; G.pendingSnap = null; applySnapshot(v) }
@@ -536,7 +579,7 @@ function bind() {
     else if (k === 'dig') act({ t: 'dig', id: u.id });
     else if (k === 'replace') act({ t: 'replace', id: u.id });
     else if (k === 'ambush') act({ t: 'ambush', id: u.id });
-    else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.' }[k] + ' ПКМ — отмена.') }
+    else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
   $('#menu').addEventListener('click', e => {
     const mp = e.target.closest('[data-map]');

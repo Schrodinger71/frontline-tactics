@@ -12,7 +12,7 @@ const { N, S, UT, GAME_VERSION, isNight, turnClock, dayOfTurn } = W;
 
 module.exports = {
   unitView(u, full) {
-    const o = { id: u.id, k: u.k, side: u.side, hex: u.hex, str: u.str, ent: u.ent, sup: u.sup ? 1 : 0, sp: u.sp, hold: u.hold ? 1 : 0, mil: u.militia ? 1 : 0 };
+    const o = { id: u.id, k: u.k, side: u.side, hex: u.hex, str: u.str, ent: u.ent, sup: u.sup ? 1 : 0, sp: u.sp, hold: u.hold ? 1 : 0, mil: u.militia ? 1 : 0, hb: u.hb || 0 };
     if (!full) return Object.assign(o, { enemy: 1 });
     return Object.assign(o, {
       org: Math.round(u.org), xp: +u.xp.toFixed(2), mp: +u.mp.toFixed(1), acted: u.acted ? 1 : 0, moved: u.moved ? 1 : 0,
@@ -41,13 +41,13 @@ module.exports = {
       commanders: { n: { name: this.commanders.n.name, trait: this.commanders.n.trait }, s: { name: this.commanders.s.name, trait: this.commanders.s.trait } },
       budget: spec ? { n: Math.floor(this.budget.n), s: Math.floor(this.budget.s) } : Math.floor(this.budget[side]),
       income: spec ? this.income : this.income[side], air: spec ? this.air : this.air[side],
-      pts: this.pts.map(p => ({ id: p.id, n: p.n, city: p.city, hex: p.hex, w: p.w, owner: p.owner })),
+      pts: this.pts.map(p => ({ id: p.id, n: p.n, city: p.city, hex: p.hex, w: p.w, owner: p.owner, home: p.home })),
       units, ghosts, mines, br: [...this.br.entries()],
       vis: spec ? null : [...this.vis[side]],
       supply: spec ? null : [...((this.supplyHex && this.supplyHex[side]) || new Map()).keys()],
       dist: spec ? null : [].concat(...[...this.districtOf[side]].map(([h, i]) => [h, i])),
       districts: spec ? null : this.districts[side].map(d => ({ n: d.n, hex: d.hex, cap: d.cap, used: d.used })),
-      cp: spec ? this.cp : this.cp[side], barrage: spec ? this.barrage : this.barrage[side], smoke: [...this.smoke.keys()],
+      cp: spec ? this.cp : this.cp[side], barrage: spec ? this.barrage : this.barrage[side], counter: spec ? this.counter : this.counter[side], smoke: [...this.smoke.keys()],
       frontY: this.frontY,
       scen: this.scen ? { id: this.scenId, n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
       stats: spec ? sv(N) : sv(side), enemyStats: spec || this.over ? sv(spec ? S : side === N ? S : N) : null,

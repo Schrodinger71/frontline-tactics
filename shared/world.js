@@ -12,7 +12,7 @@
    Используется и сервером (require), и браузером (<script>).
    ============================================================ */
 (function (g) {
-  const GAME_VERSION = '1.2.0';
+  const GAME_VERSION = '2.0.0';
   const WW = 300, WH = 440;
   const N = 'n', S = 's';
   const COL = { n: '#6cc3ff', s: '#ff5b47' };
@@ -84,10 +84,10 @@
   const START_BUDGET = 1300;
   const BASE_INCOME = 30;           /* очков за ход */
   const INCOME_PER_WEIGHT = 10;     /* за единицу веса своей точки (город ×1.5) */
-  const ROLE_BUDGET_MUL = { attacker: 1.35, defender: 1, both: 1 };
-  const ROLE_INCOME_MUL = { attacker: 1, defender: 1.25, both: 1 };
+  const ROLE_BUDGET_MUL = { attacker: 1.12, defender: 1, both: 1 };
+  const ROLE_INCOME_MUL = { attacker: 1, defender: 1.3, both: 1 };
   /** перевес за ход: разница весов точек × SCORE_RATE; ±100 — победа */
-  const SCORE_RATE = 2.2;
+  const SCORE_RATE = 1.8;
   const TURN_LIMIT = 30;            /* 5 суток */
   const MAX_UNITS = 28;
   /** зоны расстановки: столбцы гексов от своего края */
@@ -112,9 +112,10 @@
     hold:    { n: 'Стоять насмерть', cp: 1, tgt: 'unit', d: 'До вашего следующего хода часть не отходит и обороняется ×1,3.' },
     smoke:   { n: 'Дымовая завеса', cp: 2, tgt: 'hex', d: 'Клетка и соседние в дыму до вашего хода: противник видит туда только вплотную, огонь и атаки по дыму слабее.' },
     airdrop: { n: 'Снабжение по воздуху', cp: 2, tgt: 'unit', d: 'Транспортники сбрасывают части +2 запаса — спасение для котла. Нужна лётная погода.' },
-    reserve: { n: 'Резерв ставки', cp: 6, tgt: 'hex', d: 'Бесплатная мотопехота (7 из 10) в своём городе или узле либо рядом.' }
+    reserve: { n: 'Резерв ставки', cp: 6, tgt: 'hex', d: 'Бесплатная мотопехота (7 из 10) в своём городе или узле либо рядом.' },
+    counter: { n: 'Контрудар', cp: 2, tgt: 'none', d: 'В этот ход атаки по противнику в ваших исходных точках и рядом с ними — ×1,3, атакующим +10 морали. Чтобы вернуть потерянное.' }
   };
-  const ORDER_LIST = ['barrage', 'march', 'hold', 'smoke', 'airdrop', 'reserve'];
+  const ORDER_LIST = ['barrage', 'counter', 'march', 'hold', 'smoke', 'airdrop', 'reserve'];
 
   const TRAITS = ['решительный', 'осторожный', 'методичный', 'нервный', 'упрямый'];
   const GEN_FIRST = ['Иван', 'Пётр', 'Олег', 'Семён', 'Андрей', 'Глеб', 'Виктор', 'Макар', 'Роман', 'Тимур'];

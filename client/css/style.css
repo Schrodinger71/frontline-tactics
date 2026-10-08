@@ -32,7 +32,7 @@ button{font:inherit;color:inherit}
 
 .panel{position:fixed;top:calc(var(--th) + 8px);bottom:8px;width:var(--pw);background:var(--pn);
   border:1px solid var(--bd);border-radius:10px;display:flex;flex-direction:column;z-index:4;
-  backdrop-filter:blur(5px);box-shadow:0 8px 30px rgba(0,0,0,.45);transition:transform .2s}
+  box-shadow:0 8px 30px rgba(0,0,0,.45);transition:transform .2s}
 #left{left:8px;right:auto}
 #right{right:8px;left:auto}
 #left.col{transform:translateX(calc(-100% - 12px))}

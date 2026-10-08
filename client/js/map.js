@@ -341,8 +341,8 @@ function startAnim(e) {
     if (!e.amb) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
     if (e.amb) floatText({ x: D.x, y: D.y - 4 }, 'засада!', '#ffd479', 1);
     const hits = 2 + Math.min(3, e.ld || 0);
-    for (let i = 0; i < hits; i++) fxBoom({ x: D.x + (Math.random() - .5) * 5, y: D.y + (Math.random() - .5) * 4 }, heavyA ? .6 : .38, (.25 + i * .13) * k, { noMark: i > 1 });
-    if (e.la) fxBoom({ x: A.x + (Math.random() - .5) * 3, y: A.y + (Math.random() - .5) * 3 }, heavyD ? .55 : .35, .5 * k, {});
+    for (let i = 0; i < hits; i++) fxBoom(ringPt(D, 1.6, 4.2), heavyA ? .85 : .6, (.25 + i * .13) * k, { noMark: i > 2 });
+    if (e.la) fxBoom(ringPt(A, 1.6, 4), heavyD ? .75 : .55, .5 * k, {});
     ANIMS.cur = { end: now + 1.05 * k, done() { floatText(D, e.ld ? '−' + e.ld : 'без потерь', e.ld ? '#ff8f80' : '#cfe0ea', e.ld >= 3); if (e.la) floatText({ x: A.x, y: A.y - 2 }, '−' + e.la, '#ffb070'); upd(e.d, -e.ld); upd(e.a, -e.la) } };
     Sound.gun({ ...D, kind: heavyA ? 'tank' : 'mg' }); setTimeout(() => Sound.boom({ ...D, w: 40 }, true), 300 * k);
   } else if (e.e === 'shell') {
@@ -353,8 +353,9 @@ function startAnim(e) {
   } else if (e.e === 'blast') {
     const D = center(e.hex);
     const pw = e.mine ? .6 : e.big ? 1.2 : .8;
-    fxBoom(D, pw, 0, {});
-    if (e.big) { fxBoom({ x: D.x + 2.5, y: D.y - 1.5 }, .6, .12, { noMark: false }); fxBoom({ x: D.x - 2, y: D.y + 2 }, .5, .22, {}) }
+    fxBoom(ringPt(D, .5, 2.5), pw, 0, {});
+    fxBoom(ringPt(D, 2, 4.2), pw * .7, .1, {});
+    if (e.big) for (let i = 0; i < 3; i++) fxBoom(ringPt(D, 1.5, 4.5), .7, .14 + i * .1, {});
     if (e.ld !== undefined) setTimeout(() => { floatText(D, e.ld ? '−' + e.ld : 'мимо', e.ld ? '#ff8f80' : '#cfe0ea', e.ld >= 3); upd(e.id, -e.ld) }, 250 * k);
     ANIMS.cur = { end: now + .5 * k };
     if (e.hex >= 0 && G.mapId && Hex.build(G.mapId).hexes[e.hex].t === 'city') addFire(e.hex);
@@ -362,7 +363,7 @@ function startAnim(e) {
   } else if (e.e === 'dead') {
     const u = G.units.find(x => x.id === e.id), p = center(e.hex);
     if (u) { ANIMS.dying.push({ u: { ...u }, p, t0: now }); ANIMS.hidden.add(e.id) }
-    if (e.how !== 'surrender') { fxBoom(p, 1.3, .05, {}); addWreck(e.hex, e.k, e.side) }
+    if (e.how !== 'surrender') { fxBoom(p, 1.4, .05, {}); fxBoom(ringPt(p, 1.5, 3.5), .8, .2, {}); addWreck(e.hex, e.k, e.side) }
     floatText({ x: p.x, y: p.y + 2 }, e.how === 'surrender' ? 'сдались' : 'уничтожен', '#ff6b55', 1);
     ANIMS.cur = { end: now + .6 * k };
   } else if (e.e === 'capture') {
@@ -456,7 +457,13 @@ function drawSmokeScreens() {
 function draw(dt) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0);
   if (!G.mapId) { cx.fillStyle = '#04070a'; cx.fillRect(0, 0, CW, CH); return }
-  if (!TER || TER_ID !== G.mapId) bakeTerrain(G.mapId);
+  /* первая выпечка карты — с заставкой: кадр с надписью, потом тяжёлая работа */
+  if (!TER || TER_ID !== G.mapId) {
+    const el = document.getElementById('loading');
+    if (el && el.hidden) { el.hidden = false; cx.fillStyle = '#04070a'; cx.fillRect(0, 0, CW, CH); return }
+    bakeTerrain(G.mapId); FOGW = null; fogKey = '';
+    if (el) el.hidden = true;
+  }
   ANIM += dt;
   animTick();
   drawBase();

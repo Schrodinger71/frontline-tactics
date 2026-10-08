@@ -12,7 +12,7 @@
    Используется и сервером (require), и браузером (<script>).
    ============================================================ */
 (function (g) {
-  const GAME_VERSION = '3.0.0';
+  const GAME_VERSION = '3.1.0';
   const WW = 300, WH = 440;
   const N = 'n', S = 's';
   const COL = { n: '#6cc3ff', s: '#ff5b47' };

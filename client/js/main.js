@@ -24,7 +24,7 @@ const G = {
   scen: null, stats: null, enemyStats: null, history: [], commanders: null, role: null, over: null, limit: 30,
   mapId: null, forts: [], obst: [], cp: 0, barrage: false, smoke: [], dist: null, districts: null, mapPick: (() => { try { return localStorage.getItem('turn.map') || 'valley' } catch (e) { return 'valley' } })(),
   sel: null, reach: null, targets: [], hover: -1, mode: null, deploy: null, isMyTurn: false,
-  view: { x: 150, y: 220, s: 2 }, pace: 1, showSupply: false, speed: 1, pendingSnap: null, tabR: 'unit', tabL: 'log', _overShown: false
+  view: { x: 150, y: 220, s: 5 }, pace: 1, showSupply: false, showTypes: false, visV: 0, selRiv: '', mouse: null, speed: 1, pendingSnap: null, tabR: 'unit', tabL: 'log', _overShown: false
 };
 function nightK() { return G.night ? 1 : 0 }
 const selUnit = () => G.units.find(u => u.id === G.sel);
@@ -77,6 +77,7 @@ function applySnapshot(v) {
     commanders: v.commanders, role: v.role, over: v.over, limit: v.limit, mode0: v.mode, ready: v.ready
   });
   ANIMS.hidden.clear(); ANIMS.pos.clear();
+  G.visV++;
   G.isMyTurn = !G.spec && G.phase === 'battle' && G.active === G.side && !G.over;
   G.deploy = G.phase === 'deploy' && !G.spec ? deployHexes() : null;
   G.spawn = G.mode && /^(buy:|ord:reserve)/.test(G.mode) ? spawnHexes(G.mode === 'ord:reserve' ? 'mot' : G.mode.slice(4)) : null;
@@ -88,8 +89,12 @@ function applySnapshot(v) {
 }
 function firstView() {
   const own = G.units.filter(u => G.spec || u.side === G.side);
-  if (own.length) { const cs = own.map(u => Hex.center(u.hex)); G.view.x = cs.reduce((a, c) => a + c.x, 0) / cs.length; G.view.y = cs.reduce((a, c) => a + c.y, 0) / cs.length }
-  G.view.s = clamp(Math.min(CW / 110, CH / 80), 3, 6);
+  let x = WW / 2, y = WH / 2;
+  if (G.phase === 'deploy' && !G.spec && G.deploy && G.deploy.length) { const cs = G.deploy.map(h => Hex.center(h)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = WH / 2 }
+  else if (own.length) { const cs = own.map(u => Hex.center(u.hex)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = cs.reduce((a, c) => a + c.y, 0) / cs.length }
+  const s = G.spec ? sMin() : clamp(S_WORK() * .8, sMin(), S_MAX);
+  G.view.x = x; G.view.y = y; G.view.s = s; clampView();
+  CAM.x = G.view.x; CAM.y = G.view.y; CAM.s = G.view.s; CAM.ax = null; CAM.moving = false;
 }
 function deployHexes() {
   const md = MAPS[G.mapId] || {}, z = G.scen ? G.scen.deploy : md.deploy ? md.deploy[G.side] : DEPLOY_X[G.side], out = [], hx = Hex.build(G.mapId).hexes;
@@ -127,11 +132,11 @@ function clientCtx() {
   return { map: Hex.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, cmd };
 }
 function computeSel() {
-  G.reach = null; G.targets = [];
+  G.reach = null; G.targets = []; G.selRiv = '';
   const u = selUnit();
   if (!u || !myUnit(u) || !G.isMyTurn) return;
   const ctx = clientCtx(), T = UT[u.k];
-  if (u.mp > 0 && !(u.acted && T.bomb)) G.reach = Rules.reachable(ctx, u);
+  if (u.mp > 0 && !(u.acted && T.bomb)) { G.reach = Rules.reachable(ctx, u); G.selRiv = 'r' }
   if (u.acted || u.sp <= 0) return;
   /* о противнике мораль и опыт не известны — для расчёта берём типичные */
   const foes = G.units.filter(e => e.side !== G.side).map(e => ({ ...e, org: e.org ?? 80, xp: e.xp ?? .2 }));
@@ -163,15 +168,16 @@ function radio(e) {
   if (e.cls === 'crit' && !G.spec && e.to === G.side) toast(e.text);
 }
 let toastT = 0;
-function toast(t) { const el = $('#toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => { el.style.display = 'none' }, 2600) }
+/** всплывающие сообщения складываются стопкой, одинаковые не дублируются */
+function toast(t, kind) {
+  const box = $('#toast');
+  if ([...box.children].some(d => d.textContent === t)) return;
+  const d = document.createElement('div'); d.textContent = t; d.className = kind || '';
+  box.appendChild(d);
+  while (box.children.length > 3) box.removeChild(box.firstChild);
+  setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 300) }, 2800);
+}
 function hint(t) { const el = $('#hintbar'); el.style.display = t ? 'block' : 'none'; el.textContent = t || '' }
-
-/* ---------- холст ---------- */
-let cv, cx, CW = 0, CH = 0, DPR = 1;
-const w2s = p => ({ x: (p.x - G.view.x) * G.view.s + CW / 2, y: (p.y - G.view.y) * G.view.s + CH / 2 });
-const s2w = p => ({ x: (p.x - CW / 2) / G.view.s + G.view.x, y: (p.y - CH / 2) / G.view.s + G.view.y });
-function resize() { DPR = Math.min(2, window.devicePixelRatio || 1); CW = cv.clientWidth; CH = cv.clientHeight; cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR) }
-function clampView() { G.view.s = clamp(G.view.s, 1, 9); G.view.x = clamp(G.view.x, 0, WW); G.view.y = clamp(G.view.y, 0, WH) }
 
 /* ---------- верхняя строка и панели ---------- */
 function renderTop() {
@@ -455,7 +461,7 @@ function nextUnit() {
   const list = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted));
   if (!list.length) { toast('Все части отработали — можно завершать ход'); return }
   const i = list.findIndex(u => u.id === G.sel), u = list[(i + 1) % list.length];
-  const c = Hex.center(u.hex); G.view.x = c.x; G.view.y = c.y;
+  camTo(Hex.center(u.hex));
   setSel(u.id);
 }
 function endTurn() {
@@ -474,27 +480,38 @@ function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   try {
-    const v = 260 * dt / G.view.s;
-    if (KEYS.has('ArrowLeft')) G.view.x -= v; if (KEYS.has('ArrowRight')) G.view.x += v;
-    if (KEYS.has('ArrowUp')) G.view.y -= v; if (KEYS.has('ArrowDown')) G.view.y += v;
-    if (KEYS.size) clampView();
+    const v = 520 * dt / G.view.s;
+    if (KEYS.size) {
+      let x = G.view.x, y = G.view.y;
+      if (KEYS.has('ArrowLeft')) x -= v; if (KEYS.has('ArrowRight')) x += v;
+      if (KEYS.has('ArrowUp')) y -= v; if (KEYS.has('ArrowDown')) y += v;
+      panTo(x, y);
+    }
+    camTick(dt);
+    /* клетка под курсором — и когда карта едет сама */
+    if (G.mouse && G.mouse.inside && (CAM.moving || KEYS.size)) { const w = s2w(G.mouse); G.hover = Hex.hexAt(w.x, w.y); renderTip(G.mouse); hexInfo(G.hover) }
     if (G.pendingSnap && G.pendingAt && performance.now() - G.pendingAt > 15000) { skipAnims(); const v = G.pendingSnap; G.pendingSnap = null; applySnapshot(v) }
+    const t0 = performance.now();
     draw(dt);
+    loop.ms = performance.now() - t0; loop.max = Math.max(loop.max || 0, loop.ms);
     Sound.update(dt);
     uiAcc += dt; if (uiAcc > .5 && G.roomId) { uiAcc = 0; renderTop() }
   } catch (e) { if (!loop.err) { loop.err = 1; console.error(e) } }
 }
 
 function bind() {
-  cv = $('#map'); cx = cv.getContext('2d'); resize(); window.addEventListener('resize', resize);
+  cv = $('#map'); cx = cv.getContext('2d'); resize(); window.addEventListener('resize', resize); watchDPR();
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(cv);
+  applyScreenFX();
   $('#btnEnd').onclick = endTurn;
   $('#btnHelp').onclick = showHelp;
   $('#btnMenu').onclick = () => { if (!G.roomId || G.over || confirm('Выйти в меню?')) leaveToMenu() };
-  $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML(); $('#modal').hidden = false } };
+  $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML().replace('<p class="acts">', screenPanelHTML() + '<p class="acts">'); $('#modal').hidden = false } };
+  document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-scr]'); if (el) setScreen(el.dataset.scr, el.checked) });
   $('#btnStrike').onclick = () => { G.mode = G.mode === 'air:strike' ? null : 'air:strike'; hint(G.mode ? 'Авиаудар: кликните по видимой цели. ПВО рядом с целью может сорвать удар.' : ''); renderTop() };
   $('#btnRecon').onclick = () => { G.mode = G.mode === 'air:recon' ? null : 'air:recon'; hint(G.mode ? 'Авиаразведка: кликните по району — откроется радиус 3 клетки.' : ''); renderTop() };
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
-  document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col') });
+  document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col'); setTimeout(() => { clampTo(CAM); CAM.moving = true }, 220) });
   $('#modal').addEventListener('click', e => { if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal(); if (e.target.id === 'btnNew') leaveToMenu() });
   document.querySelectorAll('#left .tabs button').forEach(b => b.onclick = () => {
     G.tabL = b.dataset.tab;
@@ -503,7 +520,7 @@ function bind() {
     renderUI();
   });
   document.querySelectorAll('#right .tabs button').forEach(b => b.onclick = () => { G.tabR = b.dataset.tab; syncTabs(); renderUI() });
-  $('#lc_pts').addEventListener('click', e => { const r = e.target.closest('[data-go]'); if (r) { const c = Hex.center(+r.dataset.go); G.view.x = c.x; G.view.y = c.y } });
+  $('#lc_pts').addEventListener('click', e => { const r = e.target.closest('[data-go]'); if (r) camTo(Hex.center(+r.dataset.go), Math.max(G.view.s, S_WORK())) });
   $('#rc').addEventListener('click', e => {
     const b = e.target.closest('[data-buy]');
     if (b) { if (b.classList.contains('off')) return toast('Не хватает очков'); G.mode = 'buy:' + b.dataset.buy; G.sel = null; G.spawn = spawnHexes(b.dataset.buy); hint(G.phase === 'deploy' ? 'Кликните по клетке в зоне расстановки (Shift — несколько).' : 'Кликните по подсвеченной клетке у своего города или узла (Shift — несколько).'); renderUI(); return }
@@ -531,37 +548,27 @@ function bind() {
     else if (el.dataset.a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (el.dataset.a === 'join' || el.dataset.a === 'spec') { if (code.trim().length !== 4) return toast('Код — четыре буквы'); netSend({ t: 'join', room: code.trim().toUpperCase(), spec: el.dataset.a === 'spec' }) }
   });
-  let pan = null, down = null;
-  cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('mousedown', e => {
-    if (e.button === 1 || e.button === 2) { pan = { x: e.clientX, y: e.clientY, vx: G.view.x, vy: G.view.y, moved: false }; e.preventDefault(); return }
-    down = { x: e.clientX, y: e.clientY };
-  });
-  window.addEventListener('mousemove', e => {
-    const r = cv.getBoundingClientRect(), sp = { x: e.clientX - r.left, y: e.clientY - r.top };
-    if (pan) { if (Math.hypot(e.clientX - pan.x, e.clientY - pan.y) > 4) pan.moved = true; if (pan.moved) { G.view.x = pan.vx - (e.clientX - pan.x) / G.view.s; G.view.y = pan.vy - (e.clientY - pan.y) / G.view.s; clampView() } return }
-    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) { pan = { x: down.x, y: down.y, vx: G.view.x, vy: G.view.y, moved: true }; down = null }
-    if (e.target === cv) { const w = s2w(sp); G.hover = Hex.hexAt(w.x, w.y); renderTip(sp) } else { G.hover = -1; $('#tip').hidden = true }
-  });
-  window.addEventListener('mouseup', e => {
-    const r = cv.getBoundingClientRect(), sp = { x: e.clientX - r.left, y: e.clientY - r.top };
-    if (pan) { if (!pan.moved && e.button === 2) { G.mode = null; G.spawn = null; hint(''); setSel(null) } pan = null; return }
-    if (down && e.button === 0 && e.target === cv) {
-      const m = miniRect();
-      if (sp.x >= m.x && sp.x <= m.x + m.w && sp.y >= m.y && sp.y <= m.y + m.h) { G.view.x = (sp.x - m.x) / m.w * WW; G.view.y = (sp.y - m.y) / m.h * WH }
-      else { const w = s2w(sp); clickHex(Hex.hexAt(w.x, w.y), e) }
-    }
-    down = null;
-  });
+  bindPointer();
   cv.addEventListener('wheel', e => {
     e.preventDefault();
-    const r = cv.getBoundingClientRect(), sp = { x: e.clientX - r.left, y: e.clientY - r.top }, b = s2w(sp);
-    G.view.s = clamp(G.view.s * (e.deltaY > 0 ? .88 : 1.13), 1, 9);
-    const a = s2w(sp); G.view.x += b.x - a.x; G.view.y += b.y - a.y; clampView();
+    const r = cv.getBoundingClientRect(), sp = { x: e.clientX - r.left, y: e.clientY - r.top };
+    /* горизонтальная прокрутка тачпада — сдвиг карты */
+    if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5) { panTo(G.view.x + e.deltaX / G.view.s, G.view.y); return }
+    zoomAt(sp, wheelFactor(e));
   }, { passive: false });
+  $('#zoomBox').addEventListener('click', e => {
+    const b = e.target.closest('[data-z]'); if (!b) return;
+    const a = mapArea(), c = { x: (a.l + a.r) / 2, y: (a.t + a.b) / 2 };
+    if (b.dataset.z === 'in') zoomAt(c, 1.45); else if (b.dataset.z === 'out') zoomAt(c, 1 / 1.45);
+    else if (b.dataset.z === 'fit') camFit(); else if (b.dataset.z === 'types') { G.showTypes = !G.showTypes; b.classList.toggle('on', G.showTypes) }
+    else if (b.dataset.z === 'sel') { const u = selUnit(); if (u) camTo(Hex.center(u.hex), Math.max(G.view.s, S_WORK())) }
+  });
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return;
     if (e.key.startsWith('Arrow')) { KEYS.add(e.key); e.preventDefault(); return }
+    const a = mapArea(), mid = { x: (a.l + a.r) / 2, y: (a.t + a.b) / 2 };
+    if (e.key === '+' || e.key === '=') { zoomAt(mid, 1.35); return }
+    if (e.key === '-' || e.key === '_') { zoomAt(mid, 1 / 1.35); return }
     if (!G.roomId) return;
     if (e.key === 'Tab') { e.preventDefault(); nextUnit() }
     else if (e.key === 'Enter') endTurn();
@@ -569,9 +576,104 @@ function bind() {
     else if ((e.key === 'd' || e.key === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
     else if ((e.key === 'a' || e.key === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
     else if (e.key === 's' || e.key === 'ы') { G.showSupply = !G.showSupply; renderUI() }
+    else if (e.key === 't' || e.key === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
+    else if (e.key === 'f' || e.key === 'а') camFit();
+    else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(Hex.center(selUnit().hex));
     else if (e.key === '?') showHelp();
   });
   window.addEventListener('keyup', e => KEYS.delete(e.key));
+}
+
+/* ---------- указатель: мышь, перо, палец ---------- */
+function bindPointer() {
+  const P = new Map();          /* активные указатели: id → { x, y, x0, y0, t0 } */
+  let drag = null, pinch = null, mini = false, longT = 0;
+  const local = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } };
+  const inMini = sp => { const m = miniRect(); return MINI && G.roomId && sp.x >= m.x - 4 && sp.x <= m.x + m.w + 4 && sp.y >= m.y - 4 && sp.y <= m.y + m.h + 4 };
+  const miniGo = sp => { const m = miniRect(); panTo(clamp((sp.x - m.x) / m.w, 0, 1) * WW, clamp((sp.y - m.y) / m.h, 0, 1) * WH) };
+  const cancel = () => { G.mode = null; G.spawn = null; hint(''); setSel(null) };
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  cv.addEventListener('pointerdown', e => {
+    const sp = local(e);
+    try { cv.setPointerCapture(e.pointerId) } catch (err) { /* старый браузер */ }
+    P.set(e.pointerId, { x: sp.x, y: sp.y, x0: sp.x, y0: sp.y, t0: performance.now(), btn: e.button, touch: e.pointerType === 'touch' });
+    if (P.size === 2) {
+      const [a, b] = [...P.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: G.view.s, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, wx: s2w({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }) };
+      drag = null; clearTimeout(longT); return;
+    }
+    if (inMini(sp) && e.button === 0) { mini = true; miniGo(sp); return }
+    drag = { x0: sp.x, y0: sp.y, vx: G.view.x, vy: G.view.y, moved: false, btn: e.button };
+    if (e.pointerType === 'touch') longT = setTimeout(() => { if (drag && !drag.moved) { drag.long = true; cancel(); if (navigator.vibrate) navigator.vibrate(15) } }, 550);
+  });
+  cv.addEventListener('pointermove', e => {
+    const sp = local(e), p = P.get(e.pointerId);
+    G.mouse = { x: sp.x, y: sp.y, inside: true };
+    if (p) { p.x = sp.x; p.y = sp.y }
+    if (pinch && P.size >= 2) {
+      const [a, b] = [...P.values()], d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      G.view.s = clamp(pinch.s * d / pinch.d, sMin(), S_MAX);
+      panTo(pinch.wx.x - (mx - CW / 2) / G.view.s, pinch.wx.y - (my - CH / 2) / G.view.s);
+      return;
+    }
+    if (mini) { miniGo(sp); return }
+    if (drag) {
+      const lim = e.pointerType === 'touch' ? 9 : 5;
+      if (!drag.moved && Math.hypot(sp.x - drag.x0, sp.y - drag.y0) > lim) { drag.moved = true; clearTimeout(longT); cv.classList.add('grab') }
+      if (drag.moved) { panTo(drag.vx - (sp.x - drag.x0) / G.view.s, drag.vy - (sp.y - drag.y0) / G.view.s); return }
+    }
+    const w = s2w(sp), h = inMini(sp) ? -1 : Hex.hexAt(w.x, w.y);
+    if (h !== G.hover) { G.hover = h; hexInfo(h) }
+    renderTip(sp);
+  });
+  const up = e => {
+    const sp = local(e), p = P.get(e.pointerId);
+    P.delete(e.pointerId); clearTimeout(longT);
+    cv.classList.remove('grab');
+    if (pinch) { if (P.size < 2) pinch = null; drag = null; return }
+    if (mini) { mini = false; return }
+    const d = drag; drag = null;
+    if (!d || d.moved || d.long || e.type === 'pointercancel') return;
+    if (d.btn === 2) { cancel(); return }
+    if (d.btn !== 0) return;
+    const w = s2w(sp);
+    clickHex(Hex.hexAt(w.x, w.y), e);
+    if (p && p.touch) { G.hover = Hex.hexAt(w.x, w.y); hexInfo(G.hover) }
+  };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', up);
+  cv.addEventListener('pointerleave', () => { if (!P.size) { G.mouse = null; G.hover = -1; $('#tip').hidden = true; hexInfo(-1) } });
+}
+
+/* ---------- сведения о клетке под курсором ---------- */
+let hexInfoLast = -2;
+function hexInfo(h) {
+  const el = $('#hexinfo');
+  if (!el) return;
+  if (h === hexInfoLast) return;
+  hexInfoLast = h;
+  if (h < 0 || !G.mapId || !G.roomId) { el.hidden = true; return }
+  const m = Hex.build(G.mapId), hx = m.hexes[h], T = Rules.TCOST, d = Rules.TDEF[hx.t];
+  const riv = [0, 1, 2, 3, 4, 5].filter(i => m.edge[h * 6 + i] & Hex.RIV).length;
+  const fort = new Map(G.forts || []).get(h), p = G.pts.find(q => q.hex === h);
+  const c = v => v === Infinity ? '—' : v;
+  el.innerHTML = `<b>${p ? esc(p.n) + ' · ' : ''}${Rules.TNAME[hx.t]}</b>
+    <span>${Math.round(hx.h)} м</span>${hx.road ? '<span>дорога</span>' : ''}${riv ? '<span class="bl">река</span>' : ''}${fort ? `<span class="ac">укрепления ${fort}</span>` : ''}
+    <span title="Множитель обороны в этой клетке">оборона ×${String(d).replace('.', ',')}</span>
+    <span class="mu" title="Стоимость входа: пешие / колёсные / гусеничные">ход ${c(T.foot[hx.t])}/${c(T.wheel[hx.t])}/${c(T.track[hx.t])}</span>
+    <span class="mu">${String(Hex.colOf(h) + 1).padStart(2, '0')}${String(Hex.rowOf(h) + 1).padStart(2, '0')}</span>`;
+  el.hidden = false;
+}
+
+/* ---------- плашка начала хода ---------- */
+let bannerT = 0;
+function showBanner(txt, sub, mine, side) {
+  const el = $('#banner');
+  if (!el) return;
+  el.className = mine ? 'mine' : side === S ? 'east' : 'west';
+  el.innerHTML = `<div class="bt">${esc(txt)}</div><div class="bs">${esc(sub)}</div>`;
+  el.hidden = false; el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
+  clearTimeout(bannerT); bannerT = setTimeout(() => { el.hidden = true }, 1900);
 }
 
 bind();

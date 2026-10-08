@@ -1,0 +1,123 @@
+/* ============================================================
+   ИНТЕРФЕЙС ПОВЕРХ КАРТЫ: «экран штаба», масштаб, сведения о
+   клетке, плашка хода, всплывающие сообщения, отделка панелей.
+   Подключается после style.css и уточняет его.
+   ============================================================ */
+:root{
+  --pn:rgba(9,14,20,.9); --pn2:rgba(14,22,30,.92); --bd:#1d2b36; --bd2:#2e4352;
+  --glass:blur(10px) saturate(1.15);
+  --sh:0 10px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04);
+}
+#map.grab{cursor:grabbing}
+/* виньетка и зерно — неподвижные слои над картой */
+#fxVig,#fxGrain{position:fixed;pointer-events:none;z-index:1}
+#fxVig{inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 50%,rgba(0,0,0,.46) 100%)}
+#fxGrain{inset:-96px;opacity:.5;background-repeat:repeat;will-change:transform;animation:grain .5s steps(5) infinite}
+@keyframes grain{0%{transform:translate(0,0)}20%{transform:translate(-37px,21px)}40%{transform:translate(18px,-44px)}60%{transform:translate(-52px,-9px)}80%{transform:translate(29px,40px)}100%{transform:translate(0,0)}}
+body.no-vig #fxVig,body.no-grain #fxGrain{display:none}
+
+/* ---------- верхняя строка ---------- */
+#top{background:linear-gradient(180deg,rgba(12,19,26,.97),rgba(8,13,18,.92));backdrop-filter:var(--glass);
+  border-bottom:1px solid #22323f;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+#top .brand{font-size:1.04em;letter-spacing:.14em;text-shadow:0 0 18px rgba(242,179,61,.25)}
+#top .brand small{letter-spacing:.2em;text-transform:uppercase;font-size:.7em}
+#top .clock{padding:.18em .5em;border:1px solid #2a3c4a;border-radius:6px;background:#0a1117;
+  box-shadow:inset 0 0 12px rgba(108,195,255,.08);text-shadow:0 0 10px rgba(255,255,255,.25)}
+.kv{padding:0 .1em}
+.kv b{font-variant-numeric:tabular-nums}
+#hdActive.ac{color:var(--ac);text-shadow:0 0 12px rgba(242,179,61,.35)}
+#hdActive.mu{color:var(--mu)}
+#btnEnd{box-shadow:0 0 0 0 rgba(242,179,61,.0)}
+#btnEnd:not(:disabled){animation:endglow 2.6s ease-in-out infinite}
+@keyframes endglow{50%{box-shadow:0 0 0 4px rgba(242,179,61,.16)}}
+
+/* ---------- кнопки ---------- */
+.btn{background:linear-gradient(180deg,#18252f,#111b23);border-color:#2b3f4e;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.btn:hover:not(:disabled){background:linear-gradient(180deg,#1f303d,#16232d)}
+.btn.pri{background:linear-gradient(180deg,#f6c25a,#e3a22c);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 8px rgba(242,179,61,.18)}
+.btn.pri:hover:not(:disabled){filter:brightness(1.07);background:linear-gradient(180deg,#f6c25a,#e3a22c)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+
+/* ---------- панели ---------- */
+.panel{background:linear-gradient(180deg,rgba(11,17,24,.93),rgba(8,12,17,.93));backdrop-filter:var(--glass);
+  border-color:#203040;box-shadow:var(--sh)}
+.tabs{background:rgba(0,0,0,.18);border-radius:10px 10px 0 0}
+.tabs button{transition:color .12s,border-color .12s}
+.tabs button:hover{color:var(--tx)}
+.card h3{letter-spacing:.01em}
+.bar{height:7px;background:#16222b;box-shadow:inset 0 1px 2px rgba(0,0,0,.5)}
+.bar>div{background-image:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0));transition:width .3s}
+.lbl{color:#8aa0ae}
+.uhead{padding:.4em;border-radius:8px;background:radial-gradient(ellipse at 30% 60%,rgba(108,195,255,.09),transparent 70%)}
+.ic.big{width:6em;height:3.6em;filter:drop-shadow(0 3px 4px rgba(0,0,0,.6))}
+.shopItem{background:linear-gradient(180deg,#0f1921,#0b131a)}
+.shopItem .ic{filter:drop-shadow(0 2px 2px rgba(0,0,0,.6))}
+.ord{background:linear-gradient(180deg,rgba(16,28,38,.8),rgba(10,18,25,.8))}
+.log .ln{animation:lnin .25s ease-out}
+@keyframes lnin{from{opacity:0;transform:translateX(-6px)}}
+
+/* ---------- масштаб ---------- */
+.zbox{position:fixed;z-index:5;right:calc(var(--pw) + 24px);bottom:62px;display:flex;flex-direction:column;
+  background:rgba(8,13,18,.88);border:1px solid #23384a;border-radius:9px;overflow:hidden;box-shadow:var(--sh);backdrop-filter:var(--glass)}
+.zbox button{width:34px;height:32px;border:0;border-bottom:1px solid #1b2a36;background:none;color:#cfdbe3;font:600 17px/1 system-ui;cursor:pointer}
+.zbox button:last-child{border-bottom:0}
+.zbox button:hover{background:#17242e;color:var(--ac)}
+.zbox button.on{color:var(--ac);background:#1d2a20}
+body:has(#right.col) .zbox{right:24px}
+
+/* ---------- сведения о клетке ---------- */
+#hexinfo{position:fixed;z-index:5;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:.7em;align-items:center;
+  background:rgba(8,13,18,.9);border:1px solid #23384a;border-radius:8px;padding:.35em .85em;font-size:.9em;white-space:nowrap;
+  box-shadow:var(--sh);backdrop-filter:var(--glass);pointer-events:none}
+#hexinfo b{color:#fff;text-transform:capitalize}
+#hexinfo span{color:#c4d0d8}
+#hexinfo .bl{color:#8fd0ff}
+#hexinfo .mu{color:var(--mu);font:.92em ui-monospace,Consolas,monospace}
+body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
+
+/* ---------- плашка хода ---------- */
+#banner{position:fixed;left:0;right:0;top:34%;z-index:9;pointer-events:none;text-align:center;padding:.9em 0 1em;
+  background:linear-gradient(90deg,transparent,rgba(8,13,18,.92) 20%,rgba(8,13,18,.92) 80%,transparent);
+  border-top:1px solid rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.08)}
+#banner.go{animation:bnr 1.9s ease forwards}
+#banner .bt{font:800 1.9em/1.1 system-ui,sans-serif;letter-spacing:.08em;color:#e6eef3}
+#banner .bs{margin-top:.25em;font-weight:600;letter-spacing:.3em;text-transform:uppercase;font-size:.95em;color:#9fb3c0}
+#banner.mine .bt{color:var(--ac);text-shadow:0 0 22px rgba(242,179,61,.4)}
+#banner.mine .bs{color:#ffe6a0}
+#banner.east .bs{color:#ffb8a6}#banner.west .bs{color:#9fd8ff}
+@keyframes bnr{0%{opacity:0;transform:scaleY(.4)}12%{opacity:1;transform:scaleY(1)}78%{opacity:1}100%{opacity:0}}
+
+/* ---------- сообщения ---------- */
+#toast{display:flex!important;flex-direction:column;gap:6px;align-items:center;background:none;border:0;padding:0;pointer-events:none;top:calc(var(--th) + 12px)}
+#toast div{background:linear-gradient(180deg,#2a2112,#1b1710);border:1px solid var(--ac);color:#ffd98a;padding:.5em 1.1em;border-radius:8px;
+  font-weight:600;box-shadow:0 8px 26px rgba(0,0,0,.6);animation:tin .25s;text-align:center;transition:opacity .3s,transform .3s}
+#toast div.crit{background:linear-gradient(180deg,#5a1520,#3e0e16);border-color:var(--rd);color:#fff}
+#toast div.out{opacity:0;transform:translateY(-6px)}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}}
+#hintbar{background:linear-gradient(180deg,#221b0e,#1a150c)!important;border-color:var(--ac)!important;color:#ffd98a!important;box-shadow:var(--sh)}
+
+/* ---------- подсказка боя ---------- */
+#tip{background:linear-gradient(180deg,rgba(14,22,30,.97),rgba(9,14,20,.97));border-color:#2e4352;border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.6)}
+#tip>b:first-child{display:block;margin-bottom:.3em;color:#fff;letter-spacing:.02em}
+#tip .ob{display:flex;height:9px;border-radius:5px;overflow:hidden;margin:.35em 0 .45em;background:#16222b}
+#tip .ob i{display:block;height:100%}
+
+/* ---------- окна и меню ---------- */
+#modal{backdrop-filter:blur(3px)}
+#mbox{background:linear-gradient(180deg,#0f1921,#0a1117);box-shadow:0 30px 80px rgba(0,0,0,.7);border-color:#2e4352}
+#menu{background:
+  radial-gradient(ellipse at 50% -10%,rgba(242,179,61,.12),transparent 55%),
+  radial-gradient(ellipse at 50% 30%,#0e1c27 0,#04070a 72%)}
+#menu .mbox h1{font-size:2.6em;letter-spacing:.22em;text-shadow:0 0 30px rgba(242,179,61,.3)}
+.mcard,.mapc{background:linear-gradient(180deg,rgba(14,22,30,.95),rgba(9,14,20,.95));box-shadow:0 12px 34px rgba(0,0,0,.45);transition:border-color .15s,transform .15s}
+.mcard:hover,.mapc:hover{transform:translateY(-2px);border-color:#3b5568}
+.mapc.on{box-shadow:0 0 0 1px var(--ac),0 12px 34px rgba(0,0,0,.45)}
+.mapc canvas{width:100%;height:auto;border-radius:6px;margin-bottom:.3em;display:block;background:#0a1117}
+.loading{position:fixed;inset:0;z-index:25;display:flex;align-items:center;justify-content:center;background:rgba(3,5,8,.85);
+  color:var(--ac);font:700 1.1em system-ui;letter-spacing:.2em;text-transform:uppercase}
+.loading[hidden]{display:none}
+
+@media (max-width:960px){
+  .zbox{right:12px;bottom:60px}
+  #hexinfo{max-width:94vw;overflow:hidden;font-size:.82em}
+}

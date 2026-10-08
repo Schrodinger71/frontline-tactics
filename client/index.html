@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Frontline Tactics</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/hud.css">
 </head>
 <body>
 <canvas id="map"></canvas>
+<div id="fxVig" aria-hidden="true"></div><div id="fxGrain" aria-hidden="true"></div>
 <header id="top">
   <div class="brand">FRONTLINE<small>tactics</small></div>
   <div class="clock" id="hdClock">06:00</div>
@@ -41,6 +43,15 @@
   <div class="pc" id="rc"></div>
 </aside>
 <div id="tip" hidden></div>
+<div id="zoomBox" class="zbox">
+  <button data-z="in" title="Приблизить (+, колесо)">+</button>
+  <button data-z="out" title="Отдалить (−)">−</button>
+  <button data-z="fit" title="Вся карта (F)">⤢</button>
+  <button data-z="sel" title="К выбранной части (C)">◎</button>
+  <button data-z="types" title="Типы клеток на карте (T)">⬡</button>
+</div>
+<div id="hexinfo" hidden></div>
+<div id="banner" hidden></div>
 <div id="hintbar"></div>
 <div id="toast"></div>
 <div id="modal" hidden><div class="box" id="mbox"></div></div>
@@ -54,6 +65,13 @@
 <script src="/shared/icons.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/sound.js"></script>
+<script src="js/view.js"></script>
+<script src="js/render/smoke-tex.js"></script>
+<script src="js/render/terrain.js"></script>
+<script src="js/render/base.js"></script>
+<script src="js/render/fx.js"></script>
+<script src="js/render/atmos.js"></script>
+<script src="js/render/units.js"></script>
 <script src="js/map.js"></script>
 <script src="js/main.js"></script>
 </body>

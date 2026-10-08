@@ -107,8 +107,15 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   assert.strictEqual(sn.seat, 'n', 'снимок знает своё место');
   assert(sn.seats.length === 4 && sn.seats.every(x => x.id), 'состав мест в снимке');
   assert(typeof sn.budget === 'number', 'бюджет — свой, не стороны');
-  /* партия доигрывается ботами и людьми до смены хода */
-  await c1.wait(m => m.t === 'snap' && m.v.turn >= 1, 30000);
+  /* ход стороны закрывается только когда закончили все её места: человек и бот.
+     Пока человек не нажал «конец хода», сторона не передаёт ход — это и проверяем. */
+  const human = sn.active === 'n' ? c1 : c2, mySeat = sn.active;
+  assert.strictEqual(sn.waiting.length >= 1, true, 'кто-то ещё не закончил ход');
+  assert((await act(human, { t: 'end' })).res.ok, 'человек закончил ход');
+  /* проверяем именно дождавшийся снимок: боты другой стороны отыгрывают быстро
+     и ход может успеть вернуться, поэтому текущее состояние тут не показатель */
+  const flipped = await c1.wait(m => m.t === 'snap' && m.v.active !== mySeat, 30000);
+  assert.notStrictEqual(flipped.v.active, mySeat, 'после всех командиров ход перешёл другой стороне');
 
   /* ---------- уборка: доигранные и брошенные комнаты уходят ---------- */
   const before = rooms.size;

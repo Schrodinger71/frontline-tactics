@@ -52,7 +52,7 @@ function onMsg(m) {
   }
   if (m.t === 'ev') { for (const e of m.list) { if (e.e === 'log') radio(e); else playEvent(e) } return }
   if (m.t === 'res') { if (m.res && !m.res.ok && m.res.error) toast(m.res.error); return }
-  if (m.t === 'seats') { if (m.note) toast(m.note); return }
+  if (m.t === 'seats') { if (Array.isArray(m.seats)) G.lobby = m.seats; if (m.note) toast(m.note); renderLobby(); return }
   if (m.t === 'error') { toast(m.msg); if (!G.roomId) showMenu() }
 }
 function onJoined(m) {
@@ -63,11 +63,53 @@ function onJoined(m) {
   $('#lc_log').innerHTML = '';
   $('#hdRoomBox').style.display = G.vsBot && !G.spec ? 'none' : '';
   $('#hdRoom').textContent = m.room;
-  hideMenu(); hideModal();
+  G.mySeat = m.seat || null;
+  G.lobby = Array.isArray(m.seats) ? m.seats : [];
+  /* лобби показываем, пока ждём живых игроков */
+  G.lobbyHidden = !G.lobby.some(x => x.who === 'open');
+  hideMenu(); hideModal(); renderLobby();
 }
+/* ---------- лобби: кто на каком месте ---------- */
+function lobbyHTML() {
+  const list = G.lobby || [];
+  if (!list.length) return '';
+  const side = sd => {
+    const rows = list.filter(x => x.side === sd).map(x => {
+      const mine = x.id === G.mySeat;
+      const who = x.who === 'bot' ? '<i class="lb bot">бот</i>'
+        : x.who === 'open' ? '<i class="lb open">ждём игрока</i>'
+        : `<b>${esc(x.name || 'Командир ' + x.n)}</b>${mine ? '<i class="lb me">вы</i>' : ''}`;
+      const st = x.who === 'open' ? '' : x.ready ? '<span class="good">готов</span>' : '<span class="mu">расставляет</span>';
+      return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td><td>${st}</td></tr>`;
+    }).join('');
+    return `<div class="lcol"><div class="lhd" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}</div>
+      <table class="ltab">${rows}</table></div>`;
+  };
+  const open = list.filter(x => x.who === 'open').length;
+  return `<div class="lbox">
+    <h2>Партия ${esc(G.roomId || '')}</h2>
+    <p class="mu">${open ? `Ждём игроков: ${open}. Передайте им код — кнопка «Войти» в меню.` : 'Все места заняты.'}</p>
+    <div class="lcols">${side(N)}${side(S)}</div>
+    <p class="acts"><button class="btn pri" id="btnLobbyClose">К расстановке</button></p></div>`;
+}
+function renderLobby() {
+  const el = $('#lobby');
+  if (!el) return;
+  const show = !!G.roomId && !G.spec && G.phase === 'deploy' && !G.lobbyHidden && (G.lobby || []).length > 1;
+  el.hidden = !show;
+  if (show) el.innerHTML = lobbyHTML();
+}
+
 function skipAnims() { ANIMS.q.length = 0; ANIMS.cur = null; ANIMS.pos.clear(); G.pendingAt = 0 }
 function applySnapshot(v) {
   G.pendingAt = 0;
+  /* готовность мест приходит в снимке, ники — в сообщении seats: сводим вместе */
+  if (Array.isArray(v.seats) && (G.lobby || []).length) {
+    const by = new Map(v.seats.map(x => [x.id, x]));
+    G.lobby = G.lobby.map(x => Object.assign({}, x, by.get(x.id) ? { ready: by.get(x.id).ready, done: by.get(x.id).done } : {}));
+  } else if (Array.isArray(v.seats) && !(G.lobby || []).length) G.lobby = v.seats;
+  if (v.seat) G.mySeat = v.seat;
+  G.waiting = v.waiting || [];
   Object.assign(G, {
     phase: v.phase, units: v.units, ghosts: v.ghosts, pts: v.pts, vis: v.vis ? new Set(v.vis) : null, supply: v.supply ? new Set(v.supply) : null,
     mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, counter: v.counter, smoke: v.smoke || [], districts: v.districts,
@@ -85,6 +127,7 @@ function applySnapshot(v) {
   if (G.sel && !G.units.some(u => u.id === G.sel)) G.sel = null;
   computeSel();
   renderUI(true);
+  renderLobby();
   if (G.over && !G._overShown) { G._overShown = true; setTimeout(showEnd, 700) }
 }
 function firstView() {
@@ -434,14 +477,108 @@ const MODE_TXT = {
   defense: { n: 'Оборона', d: 'Вы держите рубеж: доход +30%, части в окопах, точки укреплены. Противник сильнее и бьёт первым.' }
 };
 
+/* ник игрока: показывается остальным в лобби. Сервер всё равно чистит его
+   по белому списку (латиница, кириллица, цифры, пробел, - _ .), здесь — то же
+   ограничение, чтобы поле сразу не принимало лишнего. */
+const NAME_MAX = 16;
+const NAME_BAD = /[^A-Za-z\u0410-\u044F\u0401\u04510-9 _.-]/g;
+const cleanName = v => String(v == null ? '' : v).replace(NAME_BAD, '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+let myName = '';
+try { myName = cleanName(localStorage.getItem('ft.name') || '') } catch (e) { /* приватный режим */ }
+function setMyName(v) {
+  myName = cleanName(v);
+  try { localStorage.setItem('ft.name', myName) } catch (e) { /* приватный режим */ }
+  return myName;
+}
+
 /* состояние меню: экран + выбор, выбор помнится между запусками */
-const M = { view: 'root', side: N, opp: 'bot', mode: 'both' };
+/* Ростер свободной игры: по три слота на сторону.
+   Слот: 'off' — выключен, 'human' — живой игрок, 'bot' — бот.
+   M.me — слот, на котором сидите вы: { side, i }; null — вы только смотрите. */
+const M = {
+  view: 'root', side: N, mode: 'both', team: '1x1', fill: 'bot', joinSide: 'any',
+  roster: { n: ['human', 'off', 'off'], s: ['bot', 'off', 'off'] },
+  me: { side: N, i: 0 }
+};
 try { Object.assign(M, JSON.parse(localStorage.getItem('ft.menu') || '{}')) } catch (e) { /* без настроек */ }
 M.view = 'root';
-if (!OPP_TXT[M.opp]) M.opp = 'bot';
 if (!MODE_TXT[M.mode]) M.mode = 'both';
 if (M.side !== N && M.side !== S) M.side = N;
-function mSave() { try { localStorage.setItem('ft.menu', JSON.stringify({ side: M.side, opp: M.opp, mode: M.mode })) } catch (e) { /* приватный режим */ } }
+if (!['any', N, S].includes(M.joinSide)) M.joinSide = 'any';
+if (!M.roster || typeof M.roster !== 'object') M.roster = { n: ['human', 'off', 'off'], s: ['bot', 'off', 'off'] };
+rosterFix();
+function mSave() {
+  try {
+    localStorage.setItem('ft.menu', JSON.stringify({
+      side: M.side, mode: M.mode, team: M.team, fill: M.fill, joinSide: M.joinSide, roster: M.roster, me: M.me
+    }));
+  } catch (e) { /* приватный режим */ }
+}
+/* ---------- ростер ---------- */
+const SLOT_NEXT = { off: 'human', human: 'bot', bot: 'off' };
+const SLOT_TXT = { off: '—', human: 'Игрок', bot: 'Бот' };
+function rosterFix() {
+  for (const sd of [N, S]) {
+    const a = M.roster[sd];
+    if (!Array.isArray(a) || a.length !== MAX_SEATS) M.roster[sd] = ['off', 'off', 'off'];
+    M.roster[sd] = M.roster[sd].map(v => SLOT_TXT[v] ? v : 'off');
+    /* слоты «сдвинуты» к началу: пустые уходят вниз, иначе нумерация мест путает */
+    const live = M.roster[sd].filter(v => v !== 'off');
+    M.roster[sd] = live.concat(Array(MAX_SEATS - live.length).fill('off'));
+  }
+  /* ваше место должно существовать и быть «игроком» */
+  if (M.me && M.roster[M.me.side] && M.roster[M.me.side][M.me.i] === 'human') return;
+  M.me = null;
+  for (const sd of [N, S]) {
+    const i = M.roster[sd].indexOf('human');
+    if (i >= 0) { M.me = { side: sd, i }; return }
+  }
+}
+const isMe = (sd, i) => !!M.me && M.me.side === sd && M.me.i === i;
+/** сколько живых слотов на стороне */
+const seatCount = sd => M.roster[sd].filter(v => v !== 'off').length;
+/** план мест для сервера из ростера */
+function rosterPlan() {
+  const out = {};
+  for (const sd of [N, S]) out[sd] = M.roster[sd].filter(v => v !== 'off')
+    .map((v, i) => v === 'bot' ? 'bot' : isMe(sd, i) ? 'me' : 'open');
+  return out;
+}
+/** чего не хватает, чтобы начать */
+function rosterErr() {
+  if (!seatCount(N) || !seatCount(S)) return 'В каждой команде нужен хотя бы один командир.';
+  return null;
+}
+
+/* ---------- составы команд ---------- */
+const TEAMS = {
+  '1x1': { n: 'Один на один', a: 1, b: 1 },
+  '2x2': { n: 'Два на два', a: 2, b: 2 },
+  '2x1': { n: 'Два на одного', a: 2, b: 1 },
+  '3x3': { n: 'Три на три', a: 3, b: 3 }
+};
+/** кооп-миссия: сторона игрока по выбранному составу, противник — всегда бот */
+function scenPlan(id) {
+  const T = TEAMS[M.team] || TEAMS['1x1'];
+  const my = M.side, foe = my === N ? S : N;
+  const ally = M.fill === 'bot' ? 'bot' : 'open';
+  return { [my]: ['me'].concat(Array(Math.max(0, T.a - 1)).fill(ally)), [foe]: ['bot'] };
+}
+
+/** план мест для сервера: 'me' — я, 'bot' — бот, 'open' — ждём игрока */
+function seatPlan() {
+  const T = TEAMS[M.team] || TEAMS['1x1'];
+  const my = M.side, foe = my === N ? S : N;
+  if (M.opp === 'watch') return { [my]: Array(T.a).fill('bot'), [foe]: Array(T.b).fill('bot') };
+  /* моё место — первое на своей стороне; союзные места и места противника
+     заполняются по отдельности: ботом или ожиданием живого игрока */
+  const ally = M.fill === 'bot' ? 'bot' : 'open';
+  const enemy = M.opp === 'bot' ? 'bot' : 'open';
+  return {
+    [my]: ['me'].concat(Array(Math.max(0, T.a - 1)).fill(ally)),
+    [foe]: Array(T.b).fill(enemy)
+  };
+}
 
 /** ряд взаимоисключающих кнопок: key — поле в M, opts — [значение, подпись] */
 function mPick(key, opts, dis) {
@@ -466,6 +603,9 @@ function rootHTML() {
   return `<div class="mbox root"><h1>FRONTLINE TACTICS</h1>
     <div class="msub">Пошаговая штабная игра о сухопутном фронте</div>
     <div class="mstrip">${strip}</div>
+    <div class="mname"><label for="nick">Ваш ник</label>
+      <input id="nick" maxlength="${NAME_MAX}" placeholder="Командир" autocomplete="off" spellcheck="false" value="${esc(myName)}">
+      <i>латиница или кириллица, до ${NAME_MAX} знаков</i></div>
     <div class="mmain">
       <button class="btn pri big" data-nav="play">Играть</button>
       <button class="btn big" data-nav="camp">Кампания</button>
@@ -477,14 +617,32 @@ function rootHTML() {
 }
 
 function playHTML() {
-  const watch = M.opp === 'watch';
+  const err = rosterErr();
+  const col = sd => {
+    const rows = M.roster[sd].map((v, i) => {
+      const live = v !== 'off';
+      const mine = isMe(sd, i);
+      return `<div class="slot ${v} ${mine ? 'mine' : ''}">
+        <span class="sn">${i + 1}</span>
+        <button class="btn sl" data-slot="${sd}:${i}">${SLOT_TXT[v]}</button>
+        ${v === 'human'
+          ? `<button class="btn tiny ${mine ? 'on' : ''}" data-me="${sd}:${i}" title="сесть на это место">${mine ? 'вы' : 'сесть'}</button>`
+          : '<span class="tiny mu"></span>'}
+      </div>`;
+    }).join('');
+    return `<div class="tcol ${sd}">
+      <div class="thd" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}<i>${sd === N ? 'слева' : 'справа'}</i></div>
+      ${rows}
+      <div class="tsum">${seatCount(sd)} ${seatCount(sd) === 1 ? 'командир' : 'командира'}</div></div>`;
+  };
   return `<div class="mbox">${backHTML('Свободная операция')}
-    <div class="mlab">Против кого</div>
-    ${mPick('opp', [['bot', 'Против бота'], ['human', 'Против игрока'], ['watch', 'Бот против бота']])}
-    <div class="mnote">${esc(OPP_TXT[M.opp].d)}</div>
-
-    <div class="mlab">Сторона${watch ? ' <i class="mu">— в наблюдении не нужна</i>' : ''}</div>
-    ${mPick('side', [[N, SIDE_NAME[N] + ' (слева)'], [S, SIDE_NAME[S] + ' (справа)']], watch)}
+    <div class="mlab">Команды <i class="mu">— нажмите на слот: — · Игрок · Бот</i></div>
+    <div class="tcols">${col(N)}${col(S)}</div>
+    <div class="mnote">${err
+      ? '<b class="bad">' + esc(err) + '</b>'
+      : M.me
+        ? `Вы — командир ${M.me.i + 1} за ${esc(SIDE_NAME[M.me.side])}. Бюджет и доход команды делятся между её командирами; ход стороны закрывается, когда закончили все.`
+        : 'Вашего места нет — партия пойдёт сама, вы будете смотреть.'}</div>
 
     <div class="mlab">Режим</div>
     ${mPick('mode', [['both', 'Встречный бой'], ['attack', 'Наступление'], ['defense', 'Оборона']])}
@@ -495,7 +653,7 @@ function playHTML() {
       <canvas data-prev="${id}" width="90" height="132"></canvas>
       <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
 
-    <div class="macts"><button class="btn pri big" data-a="go">${watch ? 'Смотреть' : 'В бой'}</button></div></div>`;
+    <div class="macts"><button class="btn pri big" data-a="go"${err ? ' disabled' : ''}>${M.me ? 'В бой' : 'Смотреть'}</button></div></div>`;
 }
 
 function campHTML() {
@@ -503,6 +661,13 @@ function campHTML() {
   return `<div class="mbox">${backHTML('Красногорская операция')}
     <div class="mlab">Сторона</div>
     ${mPick('side', [[N, SIDE_NAME[N] + ' (слева)'], [S, SIDE_NAME[S] + ' (справа)']])}
+    <div class="mlab">Кооператив</div>
+    ${/* в коопе важно только число командиров на своей стороне, поэтому 2x1 здесь не нужен */
+      mPick('team', ['1x1', '2x2', '3x3'].map(k => [k, TEAMS[k].a > 1 ? TEAMS[k].a + ' командира' : 'Один командир']))}
+    ${TEAMS[M.team].a > 1 ? mPick('fill', [['bot', 'Союзники — боты'], ['open', 'Ждать игроков']]) : ''}
+    <div class="mnote">${TEAMS[M.team].a > 1
+      ? 'Операцию ведут ' + TEAMS[M.team].a + ' командира на одной стороне: бюджет и вылеты делятся, ход стороны закрывается, когда закончили все.'
+      : 'Операцию ведёте вы один.'}</div>
     <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
       <div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div>
       <h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
@@ -659,6 +824,7 @@ function bind() {
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
   document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col'); setTimeout(() => { clampTo(CAM); CAM.moving = true }, 220) });
   $('#modal').addEventListener('click', e => { if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal(); if (e.target.id === 'btnNew') leaveToMenu() });
+  $('#lobby').addEventListener('click', e => { if (e.target.id === 'btnLobbyClose') { G.lobbyHidden = true; renderLobby() } });
   document.querySelectorAll('#left .tabs button').forEach(b => b.onclick = () => {
     G.tabL = b.dataset.tab;
     document.querySelectorAll('#left .tabs button').forEach(x => x.classList.toggle('on', x === b));
@@ -684,6 +850,12 @@ function bind() {
     else if (k === 'ambush') act({ t: 'ambush', id: u.id });
     else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
+  $('#menu').addEventListener('input', e => {
+    const el = e.target.closest && e.target.closest('#nick');
+    if (!el) return;
+    const v = setMyName(el.value);
+    if (el.value !== v) el.value = v;   /* лишние знаки не принимаем сразу в поле */
+  });
   $('#menu').addEventListener('click', e => {
     /* переход между экранами меню */
     const nav = e.target.closest('[data-nav]');
@@ -702,14 +874,14 @@ function bind() {
     const el = e.target.closest('[data-a]'); if (!el) return;
     const a = el.dataset.a, code = ($('#joinCode') || {}).value || '';
     if (a === 'go') {
-      if (M.opp === 'watch') netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick });
-      else netSend({ t: 'create', mode: M.mode, side: M.side, vsBot: M.opp === 'bot', map: G.mapPick });
+      if (M.opp === 'watch') netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick, seats: seatPlan() });
+      else netSend({ t: 'create', mode: M.mode, side: M.side, vsBot: M.opp === 'bot', map: G.mapPick, seats: seatPlan(), name: myName });
     }
-    else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true });
+    else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'join' || a === 'spec') {
       if (code.trim().length !== 4) return toast('Код — четыре буквы');
-      netSend({ t: 'join', room: code.trim().toUpperCase(), spec: a === 'spec' });
+      netSend({ t: 'join', room: code.trim().toUpperCase(), spec: a === 'spec', name: myName });
     }
   });
   bindPointer();

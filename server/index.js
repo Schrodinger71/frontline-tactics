@@ -33,6 +33,21 @@ const MODES = ['defense', 'attack', 'both'].concat(Object.keys(SCEN));
 const rooms = new Map();
 const ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
+/* Ник приходит от клиента, поэтому чистим его здесь, а не доверяем вводу.
+   Белый список: латиница, кириллица, цифры, пробел и - _ . Всё остальное
+   вырезается, поэтому из ника не может получиться ни разметка, ни
+   управляющие символы, ни «невидимки» (нулевой ширины, разделители строк) —
+   независимо от того, как его потом отрисуют. Длина — 16 знаков. */
+const NAME_MAX = 16;
+const NAME_OK = /[^A-Za-z\u0410-\u044F\u0401\u04510-9 _.-]/g;
+function cleanName(v) {
+  if (typeof v !== 'string') return null;
+  let s = v.slice(0, 200);
+  try { s = s.normalize('NFC') } catch (e) { /* и без нормализации сойдёт */ }
+  s = s.replace(NAME_OK, '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+  return s || null;
+}
+
 /* защита от флуда: не больше комнат и соединений, создание партий и действия — не чаще предела */
 const MAX_ROOMS = 200, MAX_CONN = 600;
 function tooOften(client, key, n, ms) {
@@ -71,7 +86,7 @@ function createServer() {
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
   wss.on('connection', ws => {
     if (wss.clients.size > MAX_CONN) return ws.close(1013, 'busy');
-    const client = { room: null, side: null, send(o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)) } };
+    const client = { room: null, side: null, seat: null, name: null, send(o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)) } };
     const leave = () => { if (client.room) client.room.leave(client); client.room = null; client.side = null };
     ws.on('message', raw => {
       if (raw.length > 8192) return;
@@ -86,11 +101,13 @@ function createServer() {
         const map = typeof m.map === 'string' && Object.prototype.hasOwnProperty.call(MAPS, m.map) ? m.map : 'valley';
         const room = new Room(newCode(), m.mode, side, !!m.vsBot, !!m.watch, map, m.seats);
         rooms.set(room.id, room);
+        client.name = cleanName(m.name);
         room.join(client, m.watch ? 'spec' : side);
       } else if (m.t === 'join') {
         const room = rooms.get(String(m.room || '').toUpperCase());
         if (!room) return client.send({ t: 'error', msg: 'Партия не найдена: код неверный или она закрылась' });
         leave();
+        client.name = cleanName(m.name);
         room.join(client, m.spec ? 'spec' : m.side);
       } else if (m.t === 'leave') leave();
       else if (m.t === 'act') {
@@ -108,7 +125,7 @@ function createServer() {
   return server;
 }
 
-module.exports = { createServer, rooms };
+module.exports = { createServer, rooms, cleanName };
 if (require.main === module) {
   const port = Number(process.env.PORT) || 8082;
   createServer().listen(port, () => console.log('Frontline Tactics — http://localhost:' + port));

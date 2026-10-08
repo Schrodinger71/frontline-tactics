@@ -46,6 +46,7 @@ class Room {
     this.slot = new Map();
     for (const sd of [N, S]) this.engine.seatsOf(sd).forEach((st, i) => this.slot.set(st.id, this.plan[sd][i] || 'open'));
     this.taken = new Map();   /* место → клиент */
+    this.names = new Map();   /* место → ник игрока (уже очищенный на входе) */
     this.vsBot = this.watch || [...this.slot.values()].includes('bot');
     this.clients = new Set();
     this.emptySince = Date.now();
@@ -58,10 +59,18 @@ class Room {
 
   /** состав мест для клиентов: кто занят, кем и ждём ли кого-то */
   seats() {
-    return this.engine.seats.map(st => ({
+    const g = this.engine;
+    return g.seats.map(st => ({
       id: st.id, side: st.side, n: st.n,
-      who: this.slot.get(st.id) === 'bot' ? 'bot' : this.taken.has(st.id) ? 'human' : 'open'
+      who: this.slot.get(st.id) === 'bot' ? 'bot' : this.taken.has(st.id) ? 'human' : 'open',
+      name: this.names.get(st.id) || null,
+      ready: !!g.ready[st.id], done: !!g.done[st.id]
     }));
+  }
+  /** как звать того, кто на месте: ник, иначе «Командир N» */
+  who(seat) {
+    const st = this.engine.seatById.get(seat);
+    return this.names.get(seat) || (st ? `Командир ${st.n}` : 'Командир');
   }
   /** свободное место для человека: сначала на желаемой стороне */
   freeSeat(want) {
@@ -78,21 +87,22 @@ class Room {
   }
   joinAs(client, side, seat) {
     client.room = this; client.side = side; client.seat = seat;
-    if (seat) this.taken.set(seat, client);
+    if (seat) { this.taken.set(seat, client); if (client.name) this.names.set(seat, client.name) }
     this.clients.add(client);
     client.send({
       t: 'joined', room: this.id, mode: this.mode, side, seat, vsBot: this.vsBot, watch: this.watch,
       bots: this.engine.bots, seats: this.seats()
     });
     client.send({ t: 'snap', v: this.engine.snapshotFor(seat || 'spec') });
-    this.note(client, seat ? `${SIDE_NAME[side]}: командир ${this.engine.seatById.get(seat).n} подключился` : null);
+    this.note(client, seat ? `${SIDE_NAME[side]}: ${this.who(seat)} подключился` : null);
     return true;
   }
   leave(client) {
     if (!this.clients.delete(client)) return;
     if (client.seat && this.taken.get(client.seat) === client) this.taken.delete(client.seat);
     if (!this.clients.size) { this.emptySince = Date.now(); clearTimeout(this.timer); this.timer = null }
-    this.note(null, client.seat ? `${SIDE_NAME[client.side]}: командир ${this.engine.seatById.get(client.seat).n} отключился` : null);
+    if (client.seat) { this.note(null, `${SIDE_NAME[client.side]}: ${this.who(client.seat)} отключился`); this.names.delete(client.seat) }
+    else this.note(null, null);
     client.seat = null;
     this.kick();
   }
@@ -175,7 +185,7 @@ class Room {
   close() {
     clearTimeout(this.timer); this.timer = null;
     /* отпускаем партию и ссылки на клиентов — комнату уже удалили из реестра */
-    this.clients.clear(); this.taken.clear();
+    this.clients.clear(); this.taken.clear(); this.names.clear();
     this.engine = null;
   }
 }

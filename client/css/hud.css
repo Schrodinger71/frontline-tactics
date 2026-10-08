@@ -125,3 +125,20 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
 }
 
 .maps{grid-template-columns:repeat(auto-fit,minmax(255px,1fr))!important}
+
+/* ---------- телефон ---------- */
+@media (max-width:700px){
+  #top{gap:.45em;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  #top::-webkit-scrollbar{display:none}
+  #top .brand{display:none}
+  #top .kv:not(.keep){display:none}
+  #top .clock{font-size:1.2em;min-width:auto}
+  #hdActive{min-width:0!important;font-size:.85em}
+  #btnEnd{min-width:0!important;padding:.4em .6em}
+  #btnHelp,#btnSound{display:none}
+  #airBox .btn{padding:.3em .45em}
+  .zbox{bottom:70px;right:10px}
+  .zbox button{width:40px;height:38px}
+  #hexinfo{font-size:.78em;gap:.45em;bottom:8px}
+  .panel{width:min(86vw,340px)}
+}

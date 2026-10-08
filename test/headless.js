@@ -81,5 +81,38 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(!g.act(side, { t: 'attack', id: lone.id, target: foe.id }).ok, 'без запасов не атакует');
   console.log('механики 1.2: ok');
 }
+/* механики 2.0: контрбатарея, ремонт моста, рельеф, взаимодействие, контрудар, жребий первого хода */
+{
+  const Hex = require('../shared/hex'), Rules = require('../shared/rules');
+  const g = new Game('both', N, 21, 'valley');
+  g.ready.n = g.ready.s = true; g.tryStart();
+  assert([N, S].includes(g.first) && g.active === g.first, 'первый ход — по жребию');
+  const side = g.active, en = side === N ? S : N;
+  /* контрбатарея */
+  const a = g.spawn('art', side, Hex.hexAt(120, 300)), b = g.spawn('art', en, Hex.hexAt(140, 300));
+  const t = g.spawn('inf', en, Hex.neighbors(a.hex).find(h => !g.unitAt(h) && g.passable('inf', h)));
+  b.support = true; a.acted = false; a.reload = 0; a.sp = 3; t.revealed = g.turn; g.updateVision(side);
+  g.drainEvents();
+  assert(g.act(side, { t: 'bombard', id: a.id, hex: t.hex }).ok, 'огонь артиллерии');
+  assert(g.drainEvents().some(e => e.e === 'counter') && !b.support, 'контрбатарейный ответ');
+  /* мост: взорвать и восстановить */
+  const br = Hex.bridgeList('valley').find(x => !g.unitAt(x.a) && !g.unitAt(x.b) && !Hex.neighbors(x.a).concat(Hex.neighbors(x.b)).some(h => g.unitAt(h)));
+  const e1 = g.spawn('eng', side, br.a);
+  assert(g.act(side, { t: 'eng', id: e1.id, task: 'blow', hex: br.b }).ok && g.br.get(br.key) === 'down', 'мост взорван');
+  e1.acted = false;
+  assert(g.act(side, { t: 'eng', id: e1.id, task: 'repair', hex: br.b }).ok && !g.br.has(br.key), 'мост восстановлен');
+  /* рельеф и взаимодействие видны в расчёте */
+  const ctx = g.ctxFor(side, true), m = g.map;
+  let pair = null;
+  for (let h = 0; h < Hex.NH && !pair; h++) for (const n of Hex.neighbors(h)) if (m.hexes[n].h - m.hexes[h].h > 70 && m.hexes[n].t !== 'lake' && m.hexes[h].t !== 'lake') { pair = [h, n]; break }
+  const att = { id: -1, k: 'tnk', side, hex: pair[0], str: 10, org: 100, xp: .2, sp: 3 }, def = { id: -2, k: 'inf', side: en, hex: pair[1], str: 10, org: 100, xp: .2, sp: 3, hb: Rules.ARMBIT.soft };
+  const o = Rules.odds(ctx, att, def);
+  assert(o.mods.some(x => x.t === 'атака в гору') && o.mods.some(x => x.t === 'взаимодействие'), 'рельеф и взаимодействие в расчёте');
+  /* контрудар: потерянная исходная точка */
+  const home = g.pts.find(p => p.home === side);
+  home.owner = en; g.cp[side] = 6;
+  assert(g.act(side, { t: 'order', k: 'counter' }).ok && g.ctxFor(side, true).counter.has(home.hex), 'приказ «Контрудар»');
+  console.log('механики 2.0: ok');
+}
 console.log(`итого свободных: Запад ${wins.n}, Восток ${wins.s}, ничьи ${wins['—']}`);
 console.log('headless: ok');

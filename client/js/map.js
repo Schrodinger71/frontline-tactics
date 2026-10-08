@@ -498,7 +498,7 @@ function draw(dt) {
 }
 
 /* ---------- мини-карта ---------- */
-function miniRect() { const a = mapArea(), h = clamp(CH * .24, 110, 210), w = h * WW / WH; return { x: a.l + 12, y: CH - h - 14, w, h } }
+function miniRect() { const a = mapArea(), h = CW < 700 ? clamp(CH * .15, 80, 130) : clamp(CH * .24, 110, 210), w = h * WW / WH; return { x: a.l + 12, y: CH - h - 14, w, h } }
 function drawMini() {
   if (!MINI || !G.roomId) return;
   const m = miniRect(), k = m.w / WW;

@@ -404,3 +404,10 @@ span.tiny{min-width:3.4em;display:inline-block}
 .nmore[open] .o{display:inline}
 .nmore[open]{margin-bottom:.4em}
 @media (max-width:760px){ .nmore summary{width:100%;justify-content:center;min-height:44px} }
+
+/* У .nlist задан display:flex, и он перебивает скрытие содержимого <details>,
+   поэтому свёрнутое приходится прятать явно — иначе «свёрнуто» ничего не прячет. */
+.nmore:not([open]) > .ngrp,
+.nmore:not([open]) > .nlist,
+.nrel.old:not([open]) > .ngrp,
+.nrel.old:not([open]) > .nlist{display:none}

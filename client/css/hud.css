@@ -144,3 +144,9 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
   #hexinfo{font-size:.78em;gap:.45em;bottom:8px}
   .panel{width:min(86vw,340px)}
 }
+
+/* обязательный шаг расстановки: командный пункт — подсказка и кнопка «Готов» */
+.hint.warn{color:#ffd98a;background:rgba(255,186,64,.07);border-left:3px solid var(--ac);padding:.55em .8em;border-radius:0 6px 6px 0}
+.hint.warn .btn{margin-top:.5em}
+#btnEnd.warn{border-color:var(--ac);color:#1a1409;background:linear-gradient(180deg,#f3c25a,#d79b2a);animation:sitepulse 1.6s ease-in-out infinite}
+@keyframes sitepulse{0%,100%{box-shadow:0 0 0 0 rgba(255,186,64,.5)}50%{box-shadow:0 0 0 7px rgba(255,186,64,0)}}

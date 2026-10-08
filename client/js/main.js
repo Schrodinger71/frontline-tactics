@@ -32,6 +32,14 @@ const selUnit = () => G.units.find(u => u.id === G.sel);
    но приказы ей отдаёт её командир (сервер чужие приказы отклоняет) */
 const myUnit = u => u && !G.spec && u.side === G.side && (!G.mySeat || !u.seat || u.seat === G.mySeat);
 const allyUnit = u => u && !G.spec && u.side === G.side && !myUnit(u);
+/* Командный пункт командира: пока он не развёрнут, расстановку не закончить.
+   Поэтому клиент сам ведёт к этому шагу — подсказкой, выбором и камерой. */
+const myFob = () => G.units.find(u => myUnit(u) && UT[u.k] && UT[u.k].fob);
+function needSite() {
+  if (G.phase !== 'deploy' || G.spec) return null;
+  const f = myFob();
+  return f && !f.sited ? f : null;
+}
 /** как зовут командира места: ник из лобби, иначе «бот» или «Командир N» */
 function seatName(id) {
   const x = (G.lobby || []).find(e => e.id === id);
@@ -160,6 +168,10 @@ function applySnapshot(v) {
   G.spawn = G.mode && /^(buy:|ord:reserve)/.test(G.mode) ? spawnHexes(G.mode === 'ord:reserve' ? 'mot' : G.mode.slice(4)) : null;
   if (G.first) { G.first = false; marksReset(); firstView(); if (G.scen && !G.spec) showBrief(); else if (!G.spec && !localStorage.getItem('turn.help')) { showHelp(); try { localStorage.setItem('turn.help', 1) } catch (e) { /* приватный режим */ } } }
   if (G.sel && !G.units.some(u => u.id === G.sel)) G.sel = null;
+  /* командный пункт: просим развернуть, пока он не на месте, и отмечаем, когда встал */
+  if (G.phase !== 'deploy') { G._siteAsked = false; G._sited = false }
+  else if (needSite()) { G._sited = false; maybeSitePrompt() }
+  else if (!G.spec && myFob() && !G._sited) { G._sited = true; if (G._siteAsked) { toast('Командный пункт развёрнут'); hint('') } }
   computeSel();
   renderUI(true);
   renderLobby();
@@ -204,18 +216,22 @@ function clientCtx() {
   /* секторы командиров своей стороны: место → клетки вокруг его штаба */
   const cmd = new Map();
   for (const h of G.units) {
-    if (h.k !== 'hq' || h.side !== G.side || h.moved) continue;
+    /* сектор дают оба командных объекта, как на сервере: подвижный штаб и
+       стационарный пункт. Штаб, который шёл в этот ход, сектора не держит */
+    if (h.side !== G.side || !UT[h.k] || !UT[h.k].cmd) continue;
+    if (!UT[h.k].fob && h.moved) continue;
     const key = h.seat || h.side;
     if (!cmd.has(key)) cmd.set(key, new Set());
     const set = cmd.get(key);
-    for (const x of H.within(h.hex, UT.hq.cmd)) set.add(x);
+    for (const x of H.within(h.hex, UT[h.k].cmd)) set.add(x);
   }
   if (G.mySeat && !cmd.has(G.mySeat)) cmd.set(G.mySeat, new Set());
   const mines = new Map(); for (const m of G.mines || []) mines.set(m.hex, { side: m.side });
   const wx = wxById(G.weather);
   const support = { n: new Set(), s: new Set() };
   for (const u of G.units) if (u.support && UT[u.k].bomb) for (const h of H.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
-  return { map: H.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => H.within(p.hex, 1)))) : null };
+  /* H — та же сетка гексов, что у сервера: без неё Rules.reachable падает и части не ходят */
+  return { H, map: H.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => H.within(p.hex, 1)))) : null };
 }
 function computeSel() {
   G.reach = null; G.targets = []; G.selRiv = '';
@@ -304,8 +320,14 @@ function renderTop() {
   $('#hdActive').className = G.isMyTurn || G.phase === 'deploy' ? 'ac' : 'mu';
   const btn = $('#btnEnd');
   btn.hidden = G.spec || !!G.over;
-  if (G.phase === 'deploy') { btn.textContent = G.ready && G.ready[G.side] ? 'Ждём соперника…' : 'Готов к бою'; btn.disabled = !!(G.ready && G.ready[G.side]) }
-  else { const left = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted)).length; btn.textContent = G.isMyTurn ? `Конец хода${left ? ' (' + left + ')' : ''}` : 'Ход противника'; btn.disabled = !G.isMyTurn }
+  if (G.phase === 'deploy') {
+    const site = needSite();
+    btn.textContent = G.ready && G.ready[G.side] ? 'Ждём соперника…' : site ? 'Сначала — КП' : 'Готов к бою';
+    btn.classList.toggle('warn', !!site);
+    btn.title = site ? 'Разверните командный пункт: кликните по клетке в своей зоне расстановки' : '';
+    btn.disabled = !!(G.ready && G.ready[G.side]);
+  }
+  else { btn.classList.remove('warn'); btn.title = ''; const left = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted)).length; btn.textContent = G.isMyTurn ? `Конец хода${left ? ' (' + left + ')' : ''}` : 'Ход противника'; btn.disabled = !G.isMyTurn }
   const air = !G.spec && G.air && G.phase === 'battle';
   $('#airBox').hidden = !air;
   if (air) { $('#btnStrike').textContent = `✈ Удар ${G.air.strike}`; $('#btnRecon').textContent = `👁 Разведка ${G.air.recon}`; $('#btnStrike').disabled = !G.isMyTurn || !G.air.strike; $('#btnRecon').disabled = !G.isMyTurn || !G.air.recon; $('#btnStrike').classList.toggle('on', G.mode === 'air:strike'); $('#btnRecon').classList.toggle('on', G.mode === 'air:recon') }
@@ -326,7 +348,12 @@ function unitCard(u) {
     ${u.hb ? '<p class="ustate"><span class="good">связан боем — атака другим родом войск ×1,15</span></p>' : ''}
     <p class="hint">${esc(ROLE_TXT[u.k])}</p></div>`;
   const acts = [];
-  if (G.phase === 'deploy' && !G.spec) { if (!u.pre) acts.push(`<button class="btn sm" data-a="sell">Вернуть (+${T.price})</button>`); acts.push('<span class="hint">Клик по клетке зоны — переставить.</span>') }
+  if (G.phase === 'deploy' && !G.spec) {
+    if (!u.pre) acts.push(`<button class="btn sm" data-a="sell">Вернуть (+${T.price})</button>`);
+    acts.push(T.fob && !u.sited
+      ? '<span class="hint warn">Пункт не развёрнут: кликните по клетке в своей зоне — он встанет там. Без этого бой не начать.</span>'
+      : '<span class="hint">Клик по клетке зоны — переставить.</span>');
+  }
   else if (G.isMyTurn && myUnit(u)) {
     if (!u.acted && !u.moved) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
     if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
@@ -388,7 +415,9 @@ function renderOrders() {
 function renderUnit() {
   const u = selUnit();
   if (u) { $('#rc').innerHTML = unitCard(u); return }
+  const site = needSite();
   $('#rc').innerHTML = `<div class="card"><h3>${G.phase === 'deploy' ? 'Расстановка' : 'Приказы'}</h3>
+    ${site ? '<p class="hint warn"><b>Шаг 1 — командный пункт.</b> Он ещё не развёрнут: выберите его и кликните по клетке в своей зоне. Вокруг пункта — сектор управления.<br><button class="btn sm" data-a="site">Показать пункт</button></p>' : ''}
     <p class="hint">${G.phase === 'deploy' ? 'Купите части во вкладке «Закупка» и кликните по клетке в своей зоне (подсвечена). Свою часть можно переставить: выберите её и кликните по клетке.'
       : `<b>ЛКМ</b> по своей части — выбрать. Голубые клетки — куда она дойдёт; цифры на противнике — <b>соотношение сил</b> (зелёное — выгодно).
       Наведите на цель — подробный расчёт. Клик — атака. <b>Tab</b> — следующая часть, <b>Enter</b> — конец хода.`}</p>
@@ -547,7 +576,34 @@ function showEnd() {
     <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button><button class="btn pri" id="btnNew">В меню</button></p>`;
   $('#modal').hidden = false;
 }
-function hideModal() { $('#modal').hidden = true }
+function hideModal() { $('#modal').hidden = true; maybeSitePrompt() }
+
+/* ---------- обязательный шаг расстановки: командный пункт ---------- */
+/** навести камеру на свой КП и выбрать его: дальше хватит клика по клетке */
+function focusFob() {
+  const f = needSite();
+  if (!f) return;
+  camTo(H.center(f.hex));
+  setSel(f.id);
+  hint('Командный пункт: кликните по клетке в своей зоне расстановки — там он и развернётся.');
+}
+function showSitePrompt() {
+  G._siteAsked = true;
+  $('#mbox').innerHTML = `<h2>Разверните командный пункт</h2>
+    <p>Перед боем командир выбирает место своего <b>КП</b>. Вокруг него — <b>сектор управления</b>:
+    внутри сектора части ходят дальше и бьют сильнее, снаружи — хуже.</p>
+    <p class="mu">Пункт не ходит и держится крепко, но без охраны его захватывают. Ставьте его в глубине своей зоны,
+    за боевыми частями, поближе к тому направлению, где будете наступать или обороняться.</p>
+    <p class="mu">Как развернуть: КП уже выбран — кликните по любой клетке в подсвеченной зоне расстановки.
+    Пока пункт не развёрнут, бой не начать.</p>
+    <p class="acts"><button class="btn pri" id="btnSiteGo">Показать пункт</button></p>`;
+  $('#modal').hidden = false;
+}
+/** спросить один раз за расстановку, но не поверх брифинга или справки */
+function maybeSitePrompt() {
+  if (!needSite() || G._siteAsked || !$('#modal').hidden) return;
+  showSitePrompt();
+}
 
 /* ---------- меню ---------- */
 const SCEN_TXT = {
@@ -876,7 +932,11 @@ function nextUnit() {
   setSel(u.id);
 }
 function endTurn() {
-  if (G.phase === 'deploy') { act({ t: 'ready' }); return }
+  if (G.phase === 'deploy') {
+    /* бой не начать без КП: не молчим и не ругаемся — ведём к шагу */
+    if (needSite()) { toast('Сначала разверните командный пункт'); G._siteAsked = false; maybeSitePrompt(); return }
+    act({ t: 'ready' }); return;
+  }
   if (!G.isMyTurn) return;
   G.sel = null; G.reach = null; G.targets = []; G.isMyTurn = false; G.mode = null;
   $('#tip').hidden = true; hint('');
@@ -923,7 +983,11 @@ function bind() {
   $('#btnRecon').onclick = () => { G.mode = G.mode === 'air:recon' ? null : 'air:recon'; hint(G.mode ? 'Авиаразведка: кликните по району — откроется радиус 3 клетки.' : ''); renderTop() };
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
   document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col'); setTimeout(() => { clampTo(CAM); CAM.moving = true }, 220) });
-  $('#modal').addEventListener('click', e => { if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal(); if (e.target.id === 'btnNew') leaveToMenu() });
+  $('#modal').addEventListener('click', e => {
+    if (e.target.id === 'btnSiteGo') { $('#modal').hidden = true; focusFob(); return }
+    if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal();
+    if (e.target.id === 'btnNew') leaveToMenu();
+  });
   $('#lobby').addEventListener('click', e => {
     if (e.target.id === 'btnLobbyClose' || e.target.id === 'lobby') { G.lobbyHidden = true; G.lobbyOpen = false; renderLobby() }
   });
@@ -944,6 +1008,7 @@ function bind() {
     const a = e.target.closest('[data-a]');
     if (!a) return;
     const u = selUnit(), k = a.dataset.a;
+    if (k === 'site') { focusFob(); return }
     if (k === 'supply') { G.showSupply = !G.showSupply; renderUI(); return }
     if (k === 'cmd') { G.showCmd = !G.showCmd; renderUI(); return }
     if (k.startsWith('ord:')) { orderClick(k.slice(4)); return }

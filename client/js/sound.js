@@ -20,7 +20,7 @@ const Sound = (() => {
   const save = () => { try { localStorage.setItem('line.sound', JSON.stringify(cfg)) } catch (e) { /* приватный режим */ } };
 
   let ac = null, out, comp, verb, bus = {}, send = {}, noiseBuf, brownBuf, crush, amb = null;
-  let lastBoom = 0, boomsNow = 0, lastShot = 0, lastRadio = 0, musT = 0, musBar = 0;
+  let lastBoom = 0, boomsNow = 0, lastShot = 0, lastRadio = 0, mus = null;
   const voices = new Map();
   const ready = () => ac && cfg.on && ac.state === 'running';
 
@@ -44,6 +44,7 @@ const Sound = (() => {
     }
     noiseBuf = makeNoise(4); brownBuf = makeBrown(4); crush = softClip(2.6);
     startAmbient();
+    startMusic();
   }
 
   function makeNoise(sec) {
@@ -259,14 +260,7 @@ const Sound = (() => {
       return { fl, g };
     };
     amb = { wind: bed('lowpass', 380, .8), rain: bed('bandpass', 2600, .4), hum: bed('lowpass', 90, .9), next: { bird: 0, cricket: 0, rumble: 0 } };
-    /* музыкальная подложка: два органных тона, меняются по аккордам */
-    amb.pad = [0, 1, 2].map(() => {
-      const o = ac.createOscillator(), g = ac.createGain(), lp = filt('lowpass', 700, .5);
-      o.type = 'sawtooth'; g.gain.value = 0; o.connect(lp); lp.connect(g); g.connect(bus.music); g.connect(send.music); o.start();
-      return { o, g };
-    });
   }
-  const CHORDS = [[45, 52, 57], [41, 48, 57], [43, 50, 55], [40, 47, 55], [38, 45, 53], [40, 47, 52]];
   const midi = n => 440 * Math.pow(2, (n - 69) / 12);
 
   function bird(t) {
@@ -285,10 +279,163 @@ const Sound = (() => {
   /** отметить, что где-то идёт бой (для далёкой канонады) */
   function busy() { busyT = performance.now() }
 
+  /* ============================================================
+     МУЗЫКА — живой набор треков (перенесён из «Деградации»).
+     Каждый трек: лад, тональность, темп, гармония по тактам и набор
+     голосов. Трек играет 16–32 такта и плавно уступает место другому
+     из той же группы настроения. Настроение берётся из обстановки:
+       day   расстановка и свой ход днём
+       calm  ночь, чужой ход, затишье
+       raid  недавно был бой
+       dawn  итог операции
+     Смена настроения — кроссфейд и короткая «вставка».
+     ============================================================ */
+  const SCALES = {
+    minor: [0, 2, 3, 5, 7, 8, 10], major: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10],
+    phrygian: [0, 1, 3, 5, 7, 8, 10], lydian: [0, 2, 4, 6, 7, 9, 11], aeolian: [0, 2, 3, 5, 7, 8, 10]
+  };
+  /* prog — ступени лада (0 — тоника), по аккорду на такт; inst — какие голоса звучат */
+  const TRACKS = [
+    { n: 'Штаб днём', mood: 'day', root: 48, sc: 'lydian', bpm: 72, prog: [0, 4, 5, 3], inst: ['pad', 'piano', 'bass'] },
+    { n: 'Карта края', mood: 'day', root: 45, sc: 'dorian', bpm: 84, prog: [0, 3, 6, 4], inst: ['arpSlow', 'bell', 'pad'] },
+    { n: 'Сводки', mood: 'day', root: 50, sc: 'major', bpm: 66, prog: [0, 5, 3, 4], inst: ['piano', 'strings'] },
+    { n: 'Тихое небо', mood: 'calm', root: 50, sc: 'minor', bpm: 58, prog: [0, 5, 3, 6], inst: ['pad', 'bellSparse', 'drone'] },
+    { n: 'Дежурство', mood: 'calm', root: 52, sc: 'aeolian', bpm: 70, prog: [0, 6, 5, 4], inst: ['arpSlow', 'strings', 'bass'] },
+    { n: 'Огни края', mood: 'calm', root: 42, sc: 'dorian', bpm: 54, prog: [0, 3, 0, 4], inst: ['piano', 'drone', 'pad'] },
+    { n: 'Эфир', mood: 'calm', root: 47, sc: 'phrygian', bpm: 62, prog: [0, 1, 0, 6], inst: ['bellSparse', 'strings', 'drone'] },
+    { n: 'Волна', mood: 'raid', root: 48, sc: 'minor', bpm: 96, prog: [0, 0, 5, 6], inst: ['ostinato', 'strings', 'bass8', 'pulse'] },
+    { n: 'Перехват', mood: 'raid', root: 50, sc: 'phrygian', bpm: 104, prog: [0, 1, 0, 6], inst: ['arpFast', 'bass8', 'pulse', 'drone'] },
+    { n: 'Пуск', mood: 'raid', root: 45, sc: 'minor', bpm: 90, prog: [0, 6, 5, 4], inst: ['ostinato', 'pad', 'pulse'] },
+    { n: 'Рассвет', mood: 'dawn', root: 55, sc: 'major', bpm: 66, prog: [0, 3, 4, 0], inst: ['strings', 'bell', 'piano'] },
+    { n: 'Отбой', mood: 'dawn', root: 52, sc: 'lydian', bpm: 60, prog: [0, 1, 4, 0], inst: ['pad', 'arpSlow'] }
+  ];
+
+  function startMusic() {
+    const lp = filt('lowpass', 2600, .3), g = ac.createGain(), w = ac.createGain();
+    g.gain.value = .6; w.gain.value = .7;
+    lp.connect(g); g.connect(bus.music); g.connect(w); w.connect(send.music || verb);
+    mus = { lp, cur: null, last: null, mood: null };
+  }
+
+  /** ноты аккорда: ступень лада → четыре звука (терции вверх) */
+  function chordNotes(tr, deg) {
+    const SC = SCALES[tr.sc], out = [];
+    for (let k = 0; k < 4; k++) { const i = deg + k * 2; out.push(tr.root + SC[i % 7] + 12 * Math.floor(i / 7)) }
+    return out;
+  }
+
+  /* голоса: каждый рисует такт начиная с t, длительностью d, на выход o */
+  function vPad(o, t, d, n, vol) {
+    for (const det of [-7, 6]) {
+      const x = ac.createOscillator(), g = ac.createGain(), f = filt('lowpass', 1100, .4);
+      x.type = 'sawtooth'; x.frequency.value = midi(n); x.detune.value = det;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + d * .4); g.gain.linearRampToValueAtTime(0, t + d + 1.2);
+      x.connect(f); f.connect(g); g.connect(o); x.start(t); x.stop(t + d + 1.3);
+    }
+  }
+  function vPluck(o, t, n, vol, dec) {
+    const x = ac.createOscillator(), x2 = ac.createOscillator(), g = ac.createGain();
+    x.type = 'triangle'; x2.type = 'sine'; x.frequency.value = midi(n); x2.frequency.value = midi(n) * 2.01;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .006); g.gain.exponentialRampToValueAtTime(.0001, t + dec);
+    const g2 = ac.createGain(); g2.gain.value = .25;
+    x.connect(g); x2.connect(g2); g2.connect(g); g.connect(o);
+    x.start(t); x2.start(t); x.stop(t + dec + .05); x2.stop(t + dec + .05);
+  }
+  function vBell(o, t, n, vol) {
+    tone(o, t, 3.5, { f0: midi(n), vol, att: .004 });
+    tone(o, t, 2.2, { f0: midi(n) * 2.76, vol: vol * .35, att: .004 });
+  }
+  function vString(o, t, d, n, vol) {
+    const x = ac.createOscillator(), g = ac.createGain(), f = filt('lowpass', 1500, .5), lfo = ac.createOscillator(), lg = ac.createGain();
+    x.type = 'sawtooth'; x.frequency.value = midi(n);
+    lfo.frequency.value = 5; lg.gain.value = 3; lfo.connect(lg); lg.connect(x.detune);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + d * .3); g.gain.setValueAtTime(vol, t + d * .8); g.gain.linearRampToValueAtTime(0, t + d + .6);
+    x.connect(f); f.connect(g); g.connect(o); x.start(t); lfo.start(t); x.stop(t + d + .7); lfo.stop(t + d + .7);
+  }
+  function vKick(o, t, vol) { tone(o, t, .45, { f0: 70, f1: 38, vol, att: .004 }) }
+
+  function playBar(tr, bar, t) {
+    const o = tr.out, beat = 60 / tr.bpm, B = beat * 4;
+    const ch = chordNotes(tr, tr.prog[bar % tr.prog.length]);
+    const R = (a, b) => a + Math.random() * (b - a);
+    for (const inst of tr.inst) {
+      if (inst === 'pad') for (const n of ch.slice(0, 3)) vPad(o, t, B, n, .018);
+      else if (inst === 'strings') { vString(o, t, B, ch[0] - 12, .02); vString(o, t, B, ch[2], .012) }
+      else if (inst === 'drone' && bar % 2 === 0) vString(o, t, B * 2, tr.root - 12, .022);
+      else if (inst === 'bass') vPluck(o, t, ch[0] - 12, .07, B * .9);
+      else if (inst === 'bass8') for (let i = 0; i < 8; i++) vPluck(o, t + i * beat / 2, ch[0] - 12, i % 2 ? .035 : .06, beat * .45);
+      else if (inst === 'piano') {
+        /* мелодия по аккорду: 2–4 ноты в такте, случайный ритм */
+        const k = 2 + (Math.random() * 3 | 0);
+        for (let i = 0; i < k; i++) vPluck(o, t + Math.floor(R(0, 8)) * beat / 2, ch[(Math.random() * 4) | 0] + 12, .045, 2.2);
+        vPluck(o, t, ch[0], .04, 2.5);
+      }
+      else if (inst === 'arpSlow') for (let i = 0; i < 4; i++) vPluck(o, t + i * beat, ch[[0, 1, 2, 1][i]] + 12, .035, beat * 1.6);
+      else if (inst === 'arpFast') for (let i = 0; i < 16; i++) vPluck(o, t + i * beat / 4, ch[[0, 1, 2, 3, 2, 1, 2, 3][i % 8]] + 12, .022, beat * .5);
+      else if (inst === 'ostinato') for (let i = 0; i < 8; i++) vPluck(o, t + i * beat / 2, ch[i % 2 ? 2 : 0], .03, beat * .4);
+      else if (inst === 'bell' && Math.random() < .7) vBell(o, t + Math.floor(R(0, 4)) * beat, ch[(Math.random() * 3) | 0] + 24, .014);
+      else if (inst === 'bellSparse' && Math.random() < .35) vBell(o, t + Math.floor(R(0, 4)) * beat, ch[(Math.random() * 3) | 0] + 24, .012);
+      else if (inst === 'pulse') for (let i = 0; i < 4; i++) { vKick(o, t + i * beat, i % 2 ? .05 : .08); if (i === 3) vKick(o, t + i * beat + beat / 2, .04) }
+    }
+  }
+
+  function startTrack(m, t, fade) {
+    const pool = TRACKS.filter(x => x.mood === m && x !== mus.last);
+    const tr = Object.assign({}, pool[(Math.random() * pool.length) | 0] || TRACKS[0]);
+    tr.out = ac.createGain();
+    tr.out.gain.setValueAtTime(0, t); tr.out.gain.linearRampToValueAtTime(1, t + fade);
+    tr.out.connect(mus.lp);
+    tr.bar = 0; tr.next = t + .05; tr.len = 16 + ((Math.random() * 3) | 0) * 8; tr.mood = m;
+    if (mus.cur) {
+      const old = mus.cur;
+      old.out.gain.setTargetAtTime(0, t, fade / 3);
+      setTimeout(() => old.out.disconnect(), (fade + 6) * 1000);
+    }
+    mus.last = TRACKS.find(x => x.n === tr.n);
+    mus.cur = tr;
+  }
+
+  /** обстановка на фронте одним словом — под неё и подбирается трек */
+  function musMood() {
+    if (!G.roomId) return 'day';
+    if (G.over) return 'dawn';
+    if (G.phase === 'deploy') return 'day';
+    if (performance.now() - busyT < 14000) return 'raid';
+    if (G.night) return 'calm';
+    return G.isMyTurn ? 'day' : 'calm';
+  }
+  /** короткая вставка на смену настроения: её слышно раньше, чем разойдётся новый трек */
+  function sting(from, to, t) {
+    if (to === 'raid') {
+      /* три глухих удара, как большой барабан вдалеке */
+      for (let i = 0; i < 3; i++) {
+        tone(bus.music, t + i * .62, .9, { f0: 58, f1: 36, vol: .16, att: .004 });
+        noise(bus.music, t + i * .62, .5, { f0: 500, f1: 80, vol: .07, att: .003 });
+      }
+    } else if (to === 'calm' && from === 'raid') {
+      /* низкий аккорд, медленно раскрывается: волна схлынула */
+      for (const n of [38, 45, 50]) tone(mus.lp, t, 6, { f0: midi(n), vol: .05, att: 2.4, wave: 'triangle' });
+    } else if (to === 'dawn') {
+      /* светлый аккорд: операция окончена */
+      for (const n of [60, 64, 67, 71, 74]) tone(mus.lp, t, 9, { f0: midi(n), vol: .02, att: 3, wave: 'sine' });
+    }
+  }
+  /** такты раскладываем на четверть секунды вперёд — иначе ритм рвётся на просадках */
+  function musicTick(t) {
+    if (!mus) return;
+    const m = musMood();
+    if (m !== mus.mood) { if (mus.mood) sting(mus.mood, m, t); mus.mood = m }
+    if (!mus.cur) startTrack(m, t + .2, 3);
+    else if (mus.cur.mood !== m) startTrack(m, t + .1, m === 'raid' ? 2.5 : 5);
+    else if (mus.cur.bar >= mus.cur.len) startTrack(m, mus.cur.next, 6);
+    const tr = mus.cur;
+    while (tr.next < t + .25) { playBar(tr, tr.bar++, tr.next); tr.next += 60 / tr.bpm * 4 }
+  }
+
   function update(dt) {
     if (!ready() || !amb) return;
     const t = ac.currentTime, w = G.weather || 'clear', night = nightK(G.t);
-    const live = G.roomId && G.phase === 'battle' && G.speed > 0;
+    const live = !!G.roomId && G.phase === 'battle' && !G.over;
     const windV = { clear: .04, cloud: .07, rain: .1, fog: .02, snow: .09, storm: .2 }[w] || .05;
     amb.wind.g.gain.setTargetAtTime(windV, t, 1.5);
     amb.wind.fl.frequency.setTargetAtTime(300 + windV * 1500, t, 2);
@@ -299,15 +446,7 @@ const Sound = (() => {
     if (live && night > .6 && (w === 'clear' || w === 'cloud') && t > nx.cricket) { cricket(t); nx.cricket = t + 1 + Math.random() * 4 }
     if (live && performance.now() - busyT < 8000 && t > nx.rumble) { rumble(t); nx.rumble = t + 3 + Math.random() * 6 }
     engines();
-    /* музыка: смена аккорда каждые ~9 с */
-    if (t > musT) {
-      musT = t + 9;
-      const ch = CHORDS[musBar++ % CHORDS.length], v = .02 * (1 - night * .3);
-      amb.pad.forEach((p, i) => {
-        p.o.frequency.setTargetAtTime(midi(ch[i] - (night > .5 ? 12 : 0) + 12), t, 1.2);
-        p.g.gain.setTargetAtTime(v / (i + 1), t, 2.5);
-      });
-    }
+    musicTick(t);
   }
 
   function apply() {
@@ -347,5 +486,7 @@ const Sound = (() => {
     for (const k of ['sfx', 'radio', 'amb', 'music']) r[k] = { bus: bus[k].gain.value, send: send[k] ? send[k].gain.value : null };
     return r;
   }
-  return { init, update, boom: (o, s) => boom(o, s), gun, launch, outgoing, thunder, radio, busy, panelHTML, toggle, levels };
+  /** что сейчас играет — для диагностики, как и levels() */
+  function music() { return mus && mus.cur ? { mood: mus.mood, track: mus.cur.n, bar: mus.cur.bar, len: mus.cur.len } : null }
+  return { init, update, boom: (o, s) => boom(o, s), gun, launch, outgoing, thunder, radio, busy, panelHTML, toggle, levels, music };
 })();

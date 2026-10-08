@@ -19,7 +19,10 @@ module.exports = {
       supplied: u.supplied ? 1 : 0, cut: u.cut, reload: u.reload, mines: u.mines, cs: u.cs, trait: u.trait, pre: u.pre ? 1 : 0,
       /* чьё это: своё или союзного командира. Только для своей стороны — противнику состав не раскрываем */
       seat: u.seat,
-      amb: u.amb ? 1 : 0, support: u.support ? 1 : 0, over: u.over ? 1 : 0, march: u.march ? 1 : 0, exploit: u.exploit ? 1 : 0
+      amb: u.amb ? 1 : 0, support: u.support ? 1 : 0, over: u.over ? 1 : 0, march: u.march ? 1 : 0, exploit: u.exploit ? 1 : 0,
+      /* командный пункт: развёрнут ли. Клиент по этому полю ведёт командира
+         через обязательный шаг расстановки */
+      sited: u.sited === false ? 0 : 1
     });
   },
   /** seat — место зрителя снимка; для одноместной стороны это её буква.

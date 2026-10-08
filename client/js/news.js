@@ -223,23 +223,15 @@ const News = (() => {
       return `${gr.g ? `<div class="ngrp">${esc(gr.g)}</div>` : ''}<ul class="nlist">${items.map(li).join('')}</ul>`;
     }).join('');
     const head = r => `${esc(r.v)}${r.v === cur ? ' · текущая' : ''}${r.d ? ' · ' + esc(r.d) : ''}`;
-    const countRest = r => groupsOf(r).reduce((a, gr) => a + (gr.items || []).filter(x => !x.n).length, 0);
 
+    const countAll = r => groupsOf(r).reduce((a, gr) => a + (gr.items || []).length, 0);
     return NEWS.map((r, i) => {
-      /* Прошлые выпуски свёрнуты целиком. У текущего сразу видны заметные
-         изменения, а остальное — под кнопкой: иначе список слишком длинный. */
-      if (i !== 0) {
-        return `<details class="nrel old"><summary><span class="nver">${head(r)}</span>${r.t ? `<b>${esc(r.t)}</b>` : ''}</summary>${body(r)}</details>`;
-      }
-      const rest = countRest(r);
-      const marked = groupsOf(r).some(gr => (gr.items || []).some(x => x.n));
-      /* если заметных пунктов нет, прятать нечего — показываем всё сразу */
-      if (!marked || !rest) return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}${body(r)}</div>`;
-      return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}
-        ${body(r, x => x.n)}
-        <details class="nmore"><summary>
-          <span class="c">Развернуть подробности — ещё ${rest}</span><span class="o">Свернуть подробности</span>
-        </summary>${body(r, x => !x.n)}</details></div>`;
+      /* Текущий выпуск показан целиком, прошлые — под кнопкой «Развернуть». */
+      if (i === 0) return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}${body(r)}</div>`;
+      return `<details class="nrel old"><summary>
+        <span class="nhd"><span class="nver">${head(r)}</span>${r.t ? `<b>${esc(r.t)}</b>` : ''}</span>
+        <span class="nbtn"><span class="c">Развернуть · ${countAll(r)}</span><span class="o">Свернуть</span></span>
+      </summary>${body(r)}</details>`;
     }).join('');
   }
   return { latest, unseen, markSeen, html };

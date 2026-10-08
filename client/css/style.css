@@ -390,24 +390,22 @@ span.tiny{min-width:3.4em;display:inline-block}
 .mapc .msize.tall{background:#16283a;color:#9fd8ff}
 .mapc .msize.wide{background:#2a2113;color:#ffd37a}
 
-/* чейнжлог: остальное у текущего выпуска — под кнопкой */
-.nmore{margin-top:1em}
-.nmore summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:.4em;
-  background:#15212b;border:1px solid var(--bd2);border-radius:8px;padding:.5em .9em;
-  color:var(--ac);font-weight:600;font-size:.92em;transition:border-color .12s,background .12s}
-.nmore summary::-webkit-details-marker{display:none}
-.nmore summary::before{content:'▸';font-size:.9em}
-.nmore[open] summary::before{content:'▾'}
-.nmore summary:hover{border-color:var(--ac);background:#1c2b38}
-.nmore .o{display:none}
-.nmore[open] .c{display:none}
-.nmore[open] .o{display:inline}
-.nmore[open]{margin-bottom:.4em}
-@media (max-width:760px){ .nmore summary{width:100%;justify-content:center;min-height:44px} }
+/* чейнжлог: прошлые выпуски раскрываются кнопкой «Развернуть» */
+.nrel.old summary{display:flex;align-items:center;gap:.8em;justify-content:space-between}
+.nrel.old .nhd{display:flex;flex-direction:column;gap:.1em;min-width:0}
+.nbtn{flex:0 0 auto;background:#15212b;border:1px solid var(--bd2);border-radius:8px;
+  padding:.4em .8em;color:var(--ac);font-weight:600;font-size:.88em;white-space:nowrap;
+  transition:border-color .12s,background .12s}
+.nrel.old summary:hover .nbtn{border-color:var(--ac);background:#1c2b38}
+.nbtn .o{display:none}
+.nrel.old[open] .nbtn .c{display:none}
+.nrel.old[open] .nbtn .o{display:inline}
+@media (max-width:760px){
+  .nrel.old summary{flex-direction:column;align-items:stretch;gap:.5em}
+  .nbtn{text-align:center;min-height:40px;line-height:1.9}
+}
 
 /* У .nlist задан display:flex, и он перебивает скрытие содержимого <details>,
    поэтому свёрнутое приходится прятать явно — иначе «свёрнуто» ничего не прячет. */
-.nmore:not([open]) > .ngrp,
-.nmore:not([open]) > .nlist,
 .nrel.old:not([open]) > .ngrp,
 .nrel.old:not([open]) > .nlist{display:none}

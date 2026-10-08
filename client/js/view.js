@@ -59,20 +59,20 @@ function mapArea() {
 }
 function sMin() {
   const a = mapArea();
-  return Math.max(.6, Math.min((a.r - a.l) / WW, (a.b - a.t) / WH) * .94);
+  return Math.max(.6, Math.min((a.r - a.l) / mapW(), (a.b - a.t) / mapH()) * .94);
 }
 /** не дать карте уехать: поле 60 пикс. за краем, при мелком масштабе — по центру видимой области */
 function clampTo(v) {
   if (!CW) return v;
   v.s = clamp(v.s, sMin(), S_MAX);
-  const a = mapArea(), m = 60;
+  const a = mapArea(), m = 60, W = mapW(), Ht = mapH();
   const fit = (lo, hi, len, c0) => {
     if (len * v.s <= hi - lo) return len / 2 - ((lo + hi) / 2 - c0) / v.s;
     return null;
   };
-  const fx = fit(a.l, a.r, WW, CW / 2), fy = fit(a.t, a.b, WH, CH / 2);
-  if (fx !== null) v.x = fx; else v.x = clamp(v.x, (CW / 2 - a.l - m) / v.s, WW - (a.r - m - CW / 2) / v.s);
-  if (fy !== null) v.y = fy; else v.y = clamp(v.y, (CH / 2 - a.t - m) / v.s, WH - (a.b - m - CH / 2) / v.s);
+  const fx = fit(a.l, a.r, W, CW / 2), fy = fit(a.t, a.b, Ht, CH / 2);
+  if (fx !== null) v.x = fx; else v.x = clamp(v.x, (CW / 2 - a.l - m) / v.s, W - (a.r - m - CW / 2) / v.s);
+  if (fy !== null) v.y = fy; else v.y = clamp(v.y, (CH / 2 - a.t - m) / v.s, Ht - (a.b - m - CH / 2) / v.s);
   return v;
 }
 function clampView() { clampTo(G.view) }
@@ -112,7 +112,7 @@ function camTo(p, s) {
   CAM.ax = null; CAM.x = p.x; CAM.y = p.y; CAM.s = s ? clamp(s, sMin(), S_MAX) : CAM.moving ? CAM.s : G.view.s;
   clampTo(CAM); CAM.moving = true;
 }
-function camFit() { camTo({ x: WW / 2, y: WH / 2 }, sMin()) }
+function camFit() { camTo({ x: mapW() / 2, y: mapH() / 2 }, sMin()) }
 /** «рабочий» масштаб: гекс шириной около 46 пикселей */
 const S_WORK = () => clamp(46 / Hex.HW, sMin(), S_MAX);
 

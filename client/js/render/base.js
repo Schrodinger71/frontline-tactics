@@ -14,9 +14,9 @@
      освещение по времени суток: рассвет, день, закат, ночь.
    ============================================================ */
 
-let BASE = null, baseKey = '', baseAt = 0, baseFull = false;
-/** fast — пока камера движется: без мелочи (кроны), полная подложка — когда встала */
-function renderBaseTo(s, fast) { const main = cx; cx = BASE.getContext('2d'); try { renderBase(s, fast) } finally { cx = main } }
+let BASE = null, baseKey = '';
+/** подложку печём в свой холст и дальше только копируем, пока вид не изменился */
+function renderBaseTo(s) { const main = cx; cx = BASE.getContext('2d'); try { renderBase(s) } finally { cx = main } }
 const MAPGEO = { id: null, edges: null, rivers: null, roads: null, bridges: null };
 
 /** геометрия карты, которую рисуем вектором: один раз на карту */
@@ -77,13 +77,13 @@ function drawBase() {
   const brKey = (G.br || []).map(b => b.join(':')).join(',');
   const key = [v.x.toFixed(3), v.y.toFixed(3), s.toFixed(4), CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
   if (!BASE || BASE.width !== cv.width || BASE.height !== cv.height) { BASE = document.createElement('canvas'); BASE.width = cv.width; BASE.height = cv.height; baseKey = '' }
-  const now = performance.now();
-  if (key !== baseKey) { baseKey = key; baseAt = now; baseFull = false; renderBaseTo(s, true) }
-  else if (!baseFull && now - baseAt > 140) { baseFull = true; renderBaseTo(s, false) }
+  /* раньше здесь был второй, «полный» проход через 140 мс — он дорисовывал кроны.
+     Теперь кроны рисуются сразу, и второй проход лишь повторял ту же работу. */
+  if (key !== baseKey) { baseKey = key; renderBaseTo(s) }
   cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.drawImage(BASE, 0, 0); cx.restore();
 }
 
-function renderBase(s, fast) {
+function renderBase(s) {
   const geo = mapGeo(G.mapId);
   cx.setTransform(DPR, 0, 0, DPR, 0, 0);
   /* стол штабной карты */

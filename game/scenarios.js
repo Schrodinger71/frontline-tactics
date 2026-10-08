@@ -34,8 +34,8 @@ const SCEN = {
   },
   breakthrough: {
     n: 'Прорыв к Красногору',
-    brief: 'Первая полоса у Бродов прорвана. За 24 хода взять Красногор — узел дорог и столицу Востока. Перед Степным — мины, к Востоку подходят резервы.',
-    map: 'valley', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 24, weather: 'clear', budget: { n: 400, s: 250 }, target: 'kras',
+    brief: 'Первая полоса у Бродов прорвана. За 30 ходов взять Красногор — узел дорог и столицу Востока. Перед Степным — мины, к Востоку подходят резервы.',
+    map: 'valley', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 30, weather: 'clear', budget: { n: 400, s: 250 }, target: 'kras',
     deploy: { n: [120, 175], s: [205, 296] }, owner: { brod: N, most: N, olh: N },
     forces: {
       n: [['hq', 145, 210], ['tnk', 165, 200], ['tnk', 168, 215], ['tnk', 160, 228], ['tnk', 170, 190], ['mot', 160, 185], ['mot', 162, 240], ['mot', 172, 225],

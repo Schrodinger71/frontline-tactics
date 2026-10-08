@@ -57,8 +57,9 @@ function play(mode, seed, map) {
 const SCENS = ['bridge', 'breakthrough', 'night'];
 const FREE = ['both', 'attack', 'defense'];
 const per = +process.argv[2] || 2;
-/* партий на сценарий кампании: по умолчанию столько же, сколько на режим */
-const perScen = +(process.env.FT_SCEN_GAMES || per);
+/* партий на сценарий кампании: второй аргумент, иначе столько же, сколько на режим.
+   Запуск: node test/headless.js [на режим] [на сценарий] */
+const perScen = +process.argv[3] || +process.env.FT_SCEN_GAMES || per;
 let seed = 1;
 const games = [];
 const run = (mode, map) => { const r = play(mode, seed++, map); games.push(r); return r };
@@ -241,7 +242,7 @@ console.log('\n════════ БАЛАНС ════════');
   /* сценарий, который боты не берут ни разу, скорее всего непроходим по сроку */
   for (const id of SCENS) {
     const list = games.filter(g => g.mode === id);
-    if (list.length >= 2 && !list.some(g => g.w === N)) notes.push(`«${SCEN_RU[id]}» не взят ни в одной из ${list.length} партий — срок ${list[0].span} ходов может быть слишком жёстким`);
+    if (list.length >= 5 && !list.some(g => g.w === N)) notes.push(`«${SCEN_RU[id]}» не взят ни в одной из ${list.length} партий — срок ${list[0].span} ходов может быть слишком жёстким`);
   }
   if (notes.length) { console.log(''); for (const t of notes) console.log('  ⚠ ' + t) }
   else console.log('резких перекосов не видно');

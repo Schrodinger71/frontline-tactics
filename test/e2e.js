@@ -67,16 +67,17 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   p2.send({ t: 'join', room: d.room });
   assert.strictEqual((await p2.wait(m => m.t === 'joined')).side, 's');
   await act(p1, { t: 'ready' }); await act(p2, { t: 'ready' });
-  await p1.wait(m => m.t === 'snap' && m.v.phase === 'battle');
-  assert(!(await act(p2, { t: 'end' })).res.ok, 'ход не в свою очередь');
+  const first = (await p1.wait(m => m.t === 'snap' && m.v.phase === 'battle')).v.active;   /* первый ход — по жребию */
+  const [cur, other] = first === 'n' ? [p1, p2] : [p2, p1];
+  assert(!(await act(other, { t: 'end' })).res.ok, 'ход не в свою очередь');
   sp.send({ t: 'join', room: d.room, spec: true });
   assert.strictEqual((await sp.wait(m => m.t === 'joined')).side, 'spec');
   await sp.wait(m => m.t === 'snap');
   assert(sp.snap.units.some(u => u.side === 'n') && sp.snap.units.some(u => u.side === 's'), 'зритель видит обе стороны');
   assert(!(await act(sp, { t: 'end' })).res.ok, 'зритель не ходит');
   for (const u of p2.snap.units) if (u.side === 'n') assert(u.org === undefined, 'туман: чужая мораль скрыта');
-  assert((await act(p1, { t: 'end' })).res.ok);
-  await p2.wait(m => m.t === 'snap' && m.v.active === 's');
+  assert((await act(cur, { t: 'end' })).res.ok);
+  await other.wait(m => m.t === 'snap' && m.v.active === (first === 'n' ? 's' : 'n'));
 
   /* наблюдение ботов */
   const w = client(port); await w.open;

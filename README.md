@@ -2,7 +2,7 @@
 
 Пошаговая штабная игра о сухопутном фронте на гексах, ходы по очереди, у каждой атаки виден расчёт.
 
-Версия: **3.1.0** (`GAME_VERSION` в `shared/world.js`, совпадает с `package.json`).
+Версия: **3.2.0** (`GAME_VERSION` в `shared/world.js`, совпадает с `package.json`).
 
 ```
 npm install

@@ -64,7 +64,8 @@ module.exports = {
   /** куда поставить ставку: глубокий тыл своей полосы, рядом с городом */
   placeHQ(seat, zone, dir) {
     const side = this.sideOf(seat) || seat;
-    const hq = this.units.find(u => u.k === 'hq' && u.seat === seat && u.str > 0);
+    /* ставим стационарный пункт: именно он обязателен перед началом */
+    const hq = this.units.find(u => UT[u.k].fob && u.seat === seat && u.str > 0);
     if (!hq) return;
     const mine = this.seatsOf(side), band = Math.max(0, mine.findIndex(st => st.id === seat));
     const yband = W.WH * (band + 1) / (mine.length + 1);
@@ -80,13 +81,14 @@ module.exports = {
       /* штабы союзников разводим по фронту: иначе оба садятся в один угол
          и смысл направлений теряется */
       const apart = Math.min(6, ...this.units
-        .filter(v => v.k === 'hq' && v.side === side && v.seat !== seat && v.str > 0)
+        .filter(v => UT[v.k].fob && v.side === side && v.seat !== seat && v.str > 0)
         .map(v => Hex.hexDist(h, v.hex)).concat([6]));
       const sc = depth * 2.2 + near * 1.2 - Math.abs(hx.y - yband) / 6 + apart * .9
         + (hx.t === 'city' ? 2 : 0) + this.rnd() * .8;
       if (sc > bs) { bs = sc; best = h }
     }
     if (best !== hq.hex && !this.unitAt(best)) hq.hex = best;
+    hq.sited = true;   /* бот тоже обязан выбрать место */
   },
   wantKind(seat, mix) {
     const side = this.sideOf(seat) || seat;

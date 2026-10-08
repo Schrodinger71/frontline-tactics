@@ -225,6 +225,85 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   }
   console.log('места и команды: ok');
 }
+/* ---------- ставка: свой штаб у каждого командира, захват без охраны ---------- */
+{
+  const Hex = require('../shared/hex');
+  /* у каждого командира свой подвижный штаб и свой стационарный пункт */
+  {
+    const g = new Game('both', N, 5, 'valley', { teams: { n: [{ bot: 1 }, { bot: 1 }, { bot: 1 }], s: [{ bot: 1 }] } });
+    g.tryStart();
+    const hq = g.units.filter(u => u.k === 'hq' && u.side === N && u.str > 0);
+    const fob = g.units.filter(u => u.k === 'fob' && u.side === N && u.str > 0);
+    assert.strictEqual(hq.length, 3, 'по штабу на командира');
+    assert.strictEqual(fob.length, 3, 'по командному пункту на командира');
+    assert.strictEqual(new Set(fob.map(u => u.seat)).size, 3, 'пункты принадлежат разным командирам');
+    assert(fob.every(u => u.sited), 'бот обязан поставить свой пункт');
+    const far = Math.min(Hex.hexDist(fob[0].hex, fob[1].hex), Hex.hexDist(fob[1].hex, fob[2].hex));
+    assert(far >= 5, 'пункты союзников разведены по фронту, а не в одном углу: ' + far);
+    /* стационарный пункт не передвигают */
+    assert.strictEqual(g.move(fob[0], Hex.neighbors(fob[0].hex)[0]).ok, false, 'пункт не ходит');
+    assert.strictEqual(fob[0].mp, 0, 'у пункта нет очков хода');
+  }
+
+  /* пункт обязателен: без него «Готов» не принимается */
+  {
+    const g = new Game('both', N, 17, 'steppe');
+    assert.strictEqual(g.act(N, { t: 'ready' }).ok, false, 'без поставленного пункта нельзя быть готовым');
+    const fob = g.units.find(u => u.k === 'fob' && u.seat === N);
+    const spot = g.map.hexes.findIndex((h, i) => g.inDeploy(N, i) && !g.unitAt(i));
+    assert(g.act(N, { t: 'place', id: fob.id, hex: spot }).ok, 'пункт ставится в своей зоне');
+    assert.strictEqual(fob.sited, true, 'пункт отмечен как развёрнутый');
+    assert.strictEqual(g.act(N, { t: 'ready' }).ok, true, 'после постановки готовность принимается');
+  }
+
+  /* сектор даёт штаб своего командира: чужой не считается */
+  {
+    const g = new Game('both', N, 9, 'steppe', { teams: { n: [{ bot: 1 }, { bot: 1 }], s: [{ bot: 1 }] } });
+    g.tryStart();
+    const sets = g.cmdHexes(N);
+    assert(sets.get('n') && sets.get('n2'), 'сектор у каждого командира');
+    const hq2 = g.units.find(u => u.k === 'hq' && u.seat === 'n2');
+    const fob2 = g.units.find(u => u.k === 'fob' && u.seat === 'n2');
+    assert(sets.get('n2').has(hq2.hex), 'штаб внутри своего сектора');
+    assert(sets.get('n2').has(fob2.hex), 'пункт внутри своего сектора');
+    /* подвижный штаб на марше сектора не держит, а стационарный пункт держит всегда */
+    hq2.moved = true;
+    const afterMarch = g.cmdHexes(N).get('n2');
+    assert(!afterMarch.has(hq2.hex) || Hex.hexDist(hq2.hex, fob2.hex) <= W.UT.fob.cmd,
+      'штаб на марше сектора не держит');
+    assert(afterMarch.has(fob2.hex), 'пункт держит сектор и когда штаб на марше');
+    hq2.moved = false;
+  }
+
+  /* захват ставки: без охраны берут в плен, с охраной — обычный бой */
+  const tryCapture = guarded => {
+    const g = new Game('both', N, 13, 'steppe');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    const side = g.active, en = side === N ? S : N;
+    const hq = g.units.find(u => u.k === 'fob' && u.side === en && u.str > 0);
+    /* убираем всех соседей вражеского штаба, чтобы он остался один */
+    for (const h of Hex.neighbors(hq.hex)) { const v = g.unitAt(h); if (v) g.units = g.units.filter(x => x !== v) }
+    const spot = Hex.neighbors(hq.hex).find(h => h >= 0 && !g.unitAt(h) && g.passable('inf', h));
+    const att = g.spawn('inf', side, spot, { seat: side });
+    if (guarded) {
+      const gh = Hex.neighbors(hq.hex).find(h => h >= 0 && h !== spot && !g.unitAt(h) && g.passable('inf', h));
+      g.spawn('inf', en, gh);
+    }
+    att.acted = false; att.sp = 3; att.org = 100; att.str = 10;
+    g.active = side; g.updateVision(side);
+    const cpBefore = g.cp[side];
+    const r = g.act(side, { t: 'attack', id: att.id, target: hq.id });
+    return { ok: r.ok, captured: !!r.captured, hqDead: hq.str <= 0, cpGain: g.cp[side] - cpBefore, took: att.hex === hq.hex };
+  };
+  const free = tryCapture(false);
+  assert(free.ok && free.captured, 'ставка без охраны захватывается');
+  assert.strictEqual(free.hqDead, true, 'захваченный штаб уходит с карты');
+  assert.strictEqual(free.cpGain, W.HQ_CAPTURE_CP, `за ставку ${W.HQ_CAPTURE_CP}★, получено ${free.cpGain}`);
+  assert.strictEqual(free.took, true, 'захватчик занимает клетку ставки');
+  const held = tryCapture(true);
+  assert(held.ok && !held.captured, 'под охраной ставка не сдаётся — обычный бой');
+  console.log('ставка командира: ok');
+}
 /* ============================================================
    ОТЧЁТ ПО БАЛАНСУ: сводка по всем сыгранным партиям.
    Цифры — от ботов, поэтому это не истина, а индикатор: резкий

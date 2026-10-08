@@ -409,7 +409,8 @@ function renderHQ() {
     ${side(N)}${side(S)}
     <div class="lbl">Перевес по ходам</div>${histSVG(G.history) || '<p class="hint">Пока рано.</p>'}
     <div class="lbl">Погода: ${esc(w.n)}</div><p class="hint">${esc(w.d)}</p>
-    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Округа снабжения <kbd>S</kbd></button></div>
+    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Округа снабжения <kbd>S</kbd></button>
+      <button class="btn sm ${G.showCmd ? 'on' : ''}" data-a="cmd">Секторы командиров <kbd>H</kbd></button></div>
     ${G.vsBot && !G.spec ? '' : `<div class="row"><span>Код партии</span><b class="ac">${esc(G.roomId)}</b></div>`}</div>`;
 }
 function renderPts() {
@@ -512,6 +513,16 @@ function showHelp() {
     весов точек: ваши города и узлы минус города противника (вес крупного города больше). Держите больше — перевес
     растёт в вашу пользу, потеряли город — пошёл назад. Дошёл до <b>+100</b> — вы победили, до <b>−100</b> — проиграли;
     если срок операции истёк раньше, побеждает тот, кто впереди. Число и темп за ход видны наверху, график — во вкладке «Сводка».</p>
+    <p><b>Управление: сектор командира.</b> Части внутри сектора ходят дальше и бьют сильнее (×1,1), вне его — хуже (×0,9).
+    Сектор даёт только <b>свой</b> командный объект, чужой не считается: поэтому сторона с несколькими командирами естественно
+    делится на направления. <kbd>H</kbd> — показать секторы на карте: свой жёлтым, союзные зелёным.</p>
+    <p>Командных объекта два. <b>Командный пункт</b> (КП) — укреплённый и неподвижный: его <b>обязательно ставят при расстановке</b>,
+    обычно в тылу у своих городов, и до этого нельзя нажать «Готов». Он хорошо держится (оборона 9) и сектор даёт всегда.
+    <b>Штаб бригады</b> — подвижный: ездит за наступающими частями, но в тот ход, когда он шёл, сектора не держит.</p>
+    <p><b>Командный объект без охраны берут в плен.</b> Если рядом с ним нет ни одной своей части, подошедшая пехота или техника
+    захватывает его вместе с документами: захватчику ${HQ_CAPTURE_CP}★, вскрытый сектор противника и занятая клетка,
+    а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
+    развалить целое направление.</p>
     <div class="lbl">Управление</div>
     <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
@@ -912,6 +923,7 @@ function bind() {
     if (!a) return;
     const u = selUnit(), k = a.dataset.a;
     if (k === 'supply') { G.showSupply = !G.showSupply; renderUI(); return }
+    if (k === 'cmd') { G.showCmd = !G.showCmd; renderUI(); return }
     if (k.startsWith('ord:')) { orderClick(k.slice(4)); return }
     if (!u) return;
     if (k === 'sell') act({ t: 'sell', id: u.id });
@@ -1008,6 +1020,7 @@ function bind() {
     else if ((e.key === 'd' || e.key === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
     else if ((e.key === 'a' || e.key === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
     else if (e.key === 's' || e.key === 'ы') { G.showSupply = !G.showSupply; renderUI() }
+    else if (e.key === 'h' || e.key === 'р') { G.showCmd = !G.showCmd; renderUI() }
     else if (e.key === 't' || e.key === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
     else if (e.key === 'f' || e.key === 'а') camFit();
     else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(Hex.center(selUnit().hex));

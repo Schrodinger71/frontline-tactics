@@ -124,6 +124,8 @@ class Game {
       mine.forEach((st, i) => {
         const y = Math.round(W.WH * (i + 1) / (mine.length + 1));
         this.spawn('hq', side, this.freeHex(x, y, 'hq'), { seat: st.id });
+        /* sited: командир обязан сам выбрать место пункта до начала партии */
+        this.spawn('fob', side, this.freeHex(side === N ? x - 12 : x + 12, y, 'fob'), { seat: st.id, sited: false, ent: 2 });
       });
     }
     this.log('*', 'Расстановка: купите части во вкладке «Закупка» и поставьте их в своей зоне. Потом — «Готов».', 'hq');
@@ -199,16 +201,17 @@ class Game {
   }
   /** клетки под управлением штабов стороны */
   /** Сектор каждого командира: клетки вокруг ЕГО штаба.
-      Командование даёт только свой штаб — так сторона с несколькими
-      командирами естественно делится на направления. Штаб на марше
-      в этот ход сектора не держит. */
+      Сектор дают и подвижный штаб, и стационарный пункт, но только СВОЕГО
+      командира — так сторона с несколькими командирами делится на направления.
+      Штаб, который шёл в этот ход, сектора не держит; пункт держит всегда. */
   cmdHexes(side) {
     const by = new Map();
     for (const st of this.seatsOf(side)) by.set(st.id, new Set());
     for (const h of this.units) {
-      if (h.side !== side || h.k !== 'hq' || h.str <= 0 || h.moved) continue;
+      if (h.side !== side || h.str <= 0 || !UT[h.k].cmd) continue;
+      if (!UT[h.k].fob && h.moved) continue;        /* подвижный штаб в ход марша сектора не держит */
       const set = by.get(h.seat) || by.set(h.seat, new Set()).get(h.seat);
-      for (const x of Hex.within(h.hex, UT.hq.cmd)) set.add(x);
+      for (const x of Hex.within(h.hex, UT[h.k].cmd)) set.add(x);
     }
     return by;
   }
@@ -265,7 +268,11 @@ class Game {
       if (t === 'buy') return this.buy(seat, a.k, +a.hex, true);
       if (t === 'sell') return this.sell(seat, +a.id);
       if (t === 'place') return this.place(seat, +a.id, +a.hex);
-      if (t === 'ready') { this.ready[seat] = true; this.tryStart(); return { ok: true } }
+      if (t === 'ready') {
+        const hq = this.units.find(v => UT[v.k].fob && v.seat === seat && v.str > 0);
+        if (hq && !hq.sited) return { ok: false, error: 'сначала поставьте командный пункт' };
+        this.ready[seat] = true; this.tryStart(); return { ok: true };
+      }
       return { ok: false, error: 'сначала расстановка' };
     }
     if (side !== this.active) return { ok: false, error: 'сейчас ход противника' };
@@ -427,9 +434,11 @@ class Game {
     if (!u || u.side !== side) return { ok: false, error: 'нет такой части' };
     if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     if (!this.inDeploy(side, hex)) return { ok: false, error: 'только в своей зоне расстановки' };
-    if (this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
+    /* на свою же клетку — можно: так подтверждают место, предложенное по умолчанию */
+    if (hex !== u.hex && this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
     if (!this.passable(u.k, hex)) return { ok: false, error: 'сюда эта часть не встанет' };
     u.hex = hex;
+    if (UT[u.k].fob) { u.sited = true; this.log(side, 'Командный пункт развёрнут.', 'hq') }
     return { ok: true };
   }
   tryStart() {
@@ -483,7 +492,7 @@ class Game {
       if (u.sp <= 0) mp = 1; else if (u.sp === 1) mp = Math.ceil(mp / 2); else if (u.sp === 2) mp -= 1;
       if (u.sup) mp -= 1;
       if (u.org < 25) mp = Math.min(mp, 2);
-      u.mp = Math.max(1, mp); u.acted = false; u.moved = false; u.sup = false;
+      u.mp = T.fob ? 0 : Math.max(1, mp); u.acted = false; u.moved = false; u.sup = false;
       u.amb = false; u.ambUsed = false; u.support = false; u.hold = false; u.march = false; u.exploit = false;
       u.startHex = u.hex;
     }
@@ -562,6 +571,7 @@ class Game {
 
   /* ---------- движение ---------- */
   move(u, to) {
+    if (UT[u.k].fob) return { ok: false, error: 'командный пункт не передвигают' };
     if (u.mp <= 0) return { ok: false, error: 'очки хода кончились' };
     if (u.acted && UT[u.k].bomb) return { ok: false, error: 'артиллерия после огня не двигается' };
     const reach = Rules.reachable(this.ctxFor(u.side, false), u), r = reach.get(to);
@@ -653,13 +663,13 @@ class Game {
   /** Захват ставки: брошенный штаб не уничтожают, а берут — вместе со штабными
       документами. Захватчику командные очки и вскрытый сектор противника. */
   captureHQ(e, u) {
-    const seat = e.seat || e.side, zone = Hex.within(e.hex, UT.hq.cmd);
+    const seat = e.seat || e.side, zone = Hex.within(e.hex, UT[e.k].cmd);
     this.ev({ e: 'dead', to: '*', id: e.id, hex: e.hex, k: e.k, side: e.side, how: 'captured' });
     e.str = 0;
-    const st = this.stats[e.side], price = UT.hq.price;
-    st.lost.hq = (st.lost.hq || 0) + 1; st.lostV += price;
+    const st = this.stats[e.side], price = UT[e.k].price;
+    st.lost[e.k] = (st.lost[e.k] || 0) + 1; st.lostV += price;
     const ks = this.stats[u.side];
-    ks.killed.hq = (ks.killed.hq || 0) + 1; ks.killedV += price;
+    ks.killed[e.k] = (ks.killed[e.k] || 0) + 1; ks.killedV += price;
     this.lastVacated = e.hex;
     /* трофей: командные очки захватившему командиру */
     const mySeat = u.seat || u.side;
@@ -668,7 +678,7 @@ class Game {
     for (const h of zone) this.recon[u.side].add(h);
     this.updateVision(u.side);
     /* части бывшего сектора теряют управление и мораль */
-    for (const v of this.units) if (v.side === e.side && v.str > 0 && Hex.hexDist(v.hex, e.hex) <= UT.hq.cmd) v.org = Math.max(0, v.org - 20);
+    for (const v of this.units) if (v.side === e.side && v.str > 0 && Hex.hexDist(v.hex, e.hex) <= UT[e.k].cmd) v.org = Math.max(0, v.org - 20);
     this.log(e.side, `Ставка командира ${this.seatById.get(seat) ? this.seatById.get(seat).n : ''} захвачена! Документы у противника, части без управления.`, 'crit');
     this.log(u.side, `Взята ставка противника: +${W.HQ_CAPTURE_CP}★ и вскрытый сектор.`, 'g');
     return { ok: true, captured: 1 };
@@ -684,7 +694,7 @@ class Game {
     if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
     if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
     /* штаб без охраны берут в плен, а не вышибают: за это командные очки и документы */
-    if (e.k === 'hq' && T.cap && this.hqAlone(e)) {
+    if (UT[e.k].cmd && T.cap && this.hqAlone(e)) {
       u.acted = true; u.mp = 0; u.revealed = this.turn;
       const res = this.captureHQ(e, u);
       this.advanceAfterFight(u, T, true);
@@ -777,8 +787,8 @@ class Game {
     const un = W.lc(W.unitName(u.side, u.k));
     this.log(u.side, how === 'surrender' ? `«${u.cs}» (${un}) в окружении сложил оружие.` : `«${u.cs}» (${un}) уничтожен.`, 'crit');
     if (by && by.str > 0 && by.side !== u.side) this.say(by, how === 'surrender' ? 'prisoners' : 'kill', { lb: un }, 'g');
-    if (u.k === 'hq') {
-      for (const v of this.units) if (v.side === u.side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= UT.hq.cmd) v.org = Math.max(0, v.org - 15);
+    if (UT[u.k].cmd) {
+      for (const v of this.units) if (v.side === u.side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= UT[u.k].cmd) v.org = Math.max(0, v.org - 15);
       this.log(u.side, 'Штаб уничтожен! Части без управления.', 'crit');
     }
     /* бегство заразно */

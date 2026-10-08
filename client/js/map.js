@@ -102,6 +102,39 @@ function drawSupplyOverlay() {
   cx.restore();
 }
 
+/* ---------- секторы командиров (клавиша H) ---------- */
+/** у каждого командира свой штаб и свой сектор: видно, кто за какое направление отвечает */
+function drawCmdSectors() {
+  if (!G.showCmd || G.spec) return;
+  const hqs = (G.units || []).filter(u => u.k === 'hq' && u.side === G.side && !u.ghost);
+  if (!hqs.length) return;
+  cx.save();
+  for (const hq of hqs) {
+    const mine = !hq.seat || hq.seat === G.mySeat;
+    const col = mine ? '242,179,61' : '111,209,141';
+    const list = Hex.within(hq.hex, UT.hq.cmd).filter(h => h >= 0);
+    const set = new Set(list);
+    cx.beginPath();
+    for (const h of list) { const c = w2s(Hex.center(h)); if (onScreen(c, 40)) addHex(h, 1) }
+    cx.fillStyle = `rgba(${col},${hq.moved ? .04 : .09})`; cx.fill();
+    regionEdges(n => set.has(n), list);
+    cx.strokeStyle = `rgba(${col},${hq.moved ? .35 : .8})`; cx.lineWidth = 1.8;
+    if (hq.moved) cx.setLineDash([5, 4]);
+    cx.stroke(); cx.setLineDash([]);
+    /* подпись: чей сектор и держит ли он управление */
+    const q = w2s(Hex.center(hq.hex));
+    if (onScreen(q, 60)) {
+      const who = mine ? 'ваша ставка' : (typeof seatName === 'function' && seatName(hq.seat)) || 'союзник';
+      const txt = hq.moved ? who + ' · на марше' : who;
+      cx.font = '700 11px system-ui'; cx.textAlign = 'center';
+      const w = cx.measureText(txt).width + 10, y = q.y - Hex.R * G.view.s * 1.15;
+      cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, y - 14, w, 16, 4); cx.fill();
+      cx.fillStyle = `rgb(${col})`; cx.fillText(txt, q.x, y - 2);
+    }
+  }
+  cx.restore();
+}
+
 /* ---------- линия фронта: сглажена, стороны чуть подкрашены ---------- */
 function drawFront() {
   if (!G.frontY || !G.frontY.length) return;
@@ -472,6 +505,7 @@ function draw(dt) {
   drawCityLights();
   drawFog();
   drawSupplyOverlay();
+  drawCmdSectors();
   drawFront();
   drawPontoons();
   drawMines();

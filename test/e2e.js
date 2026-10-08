@@ -9,6 +9,12 @@ const assert = require('assert');
 const WebSocket = require('ws');
 const { createServer, rooms } = require('../server/index');
 
+/** КП обязателен перед «Готов»: ставим его туда, где он уже стоит */
+async function siteFob(c, act) {
+  const fob = (c.snap && c.snap.units || []).find(u => u.k === 'fob' && !u.enemy);
+  if (!fob) return;
+  await act(c, { t: 'place', id: fob.id, hex: fob.hex });
+}
 function client(port) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const c = { ws, msgs: [], snap: null, waiters: [] };
@@ -50,7 +56,7 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   assert((await act(a, { t: 'buy', k: 'tnk', hex: zone[400] })).res.ok, 'покупка в зоне');
   assert(!(await act(a, { t: 'buy', k: 'tnk', hex: Hex.hexAt(250, 200) })).res.ok, 'покупка вне зоны запрещена');
   assert(!(await act(a, { t: 'move', id: 1, to: 5 })).res.ok, 'ходить до боя нельзя');
-  await act(a, { t: 'ready' });
+  (await siteFob(a, act), await act(a, { t: 'ready' }));
   await a.wait(m => m.t === 'snap' && m.v.phase === 'battle' && m.v.active === 'n');
   const tank = a.snap.units.find(u => u.k === 'tnk');
   const end = await act(a, { t: 'end' });
@@ -66,7 +72,7 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   const d = await p1.wait(m => m.t === 'joined');
   p2.send({ t: 'join', room: d.room });
   assert.strictEqual((await p2.wait(m => m.t === 'joined')).side, 's');
-  await act(p1, { t: 'ready' }); await act(p2, { t: 'ready' });
+  (await siteFob(p1, act), await act(p1, { t: 'ready' })); (await siteFob(p2, act), await act(p2, { t: 'ready' }));
   const first = (await p1.wait(m => m.t === 'snap' && m.v.phase === 'battle')).v.active;   /* первый ход — по жребию */
   const [cur, other] = first === 'n' ? [p1, p2] : [p2, p1];
   assert(!(await act(other, { t: 'end' })).res.ok, 'ход не в свою очередь');
@@ -102,7 +108,7 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   const c3 = client(port); await c3.open;
   c3.send({ t: 'join', room: j1.room });
   assert(/Свободных мест/.test((await c3.wait(m => m.t === 'error')).msg), 'лишний игрок получает отказ');
-  await act(c1, { t: 'ready' }); await act(c2, { t: 'ready' });
+  (await siteFob(c1, act), await act(c1, { t: 'ready' })); (await siteFob(c2, act), await act(c2, { t: 'ready' }));
   const sn = (await c1.wait(m => m.t === 'snap' && m.v.phase === 'battle', 20000)).v;
   assert.strictEqual(sn.seat, 'n', 'снимок знает своё место');
   assert(sn.seats.length === 4 && sn.seats.every(x => x.id), 'состав мест в снимке');

@@ -254,7 +254,7 @@ class Game {
     else { const err = this.spawnErr(side, hex, k); if (err) return { ok: false, error: err } }
     this.budget[side] -= T.price; this.stats[side].spent += T.price;
     const u = this.spawn(k, side, hex, { mp: 0, acted: true, moved: true, xp: .05 });
-    if (!deploy) this.log(side, `«${u.cs}» (${W.lc(T.n)}) прибыл: ${this.spawnPt(side, hex).n}.`, 'g');
+    if (!deploy) this.log(side, `«${u.cs}» (${W.lc(W.unitName(side, u.k))}) прибыл: ${this.spawnPt(side, hex).n}.`, 'g');
     this.ev({ e: 'spawn', to: side, id: u.id, hex });
     return { ok: true, id: u.id };
   }
@@ -564,7 +564,7 @@ class Game {
     u.acted = true; u.mp = T.mp > 5 && u.k !== 'rec' ? Math.min(u.mp, 1) : 0; u.ent = 0; u.revealed = this.turn;
     e.revealed = this.turn; e.hitThisTurn = true; e.hb = (e.hb || 0) | Rules.ARMBIT[T.arm];
     this.ev({ e: 'fight', to: '*', a: u.id, d: e.id, ah: u.hex, dh: e.hex, la, ld, r: +o.r.toFixed(2) });
-    this.say(u, 'attack', { lb: W.lc(UT[e.k].n) });
+    this.say(u, 'attack', { lb: W.lc(W.unitName(e.side, e.k)) });
     let retreat = this.chance(o.retreat);
     this.lastVacated = null;
     /* огонь поддержки: своя артиллерия защитника бьёт по атакующим */
@@ -636,8 +636,9 @@ class Game {
     if (by && by.side !== u.side) { const ks = this.stats[by.side]; ks.killed[u.k] = (ks.killed[u.k] || 0) + 1; ks.killedV += price; if (how === 'surrender') ks.prisoners++ }
     this.lastVacated = u.hex;
     this.ev({ e: 'dead', to: '*', id: u.id, hex: u.hex, k: u.k, side: u.side, how: how || '' });
-    this.log(u.side, how === 'surrender' ? `«${u.cs}» (${W.lc(UT[u.k].n)}) в окружении сложил оружие.` : `«${u.cs}» (${W.lc(UT[u.k].n)}) уничтожен.`, 'crit');
-    if (by && by.str > 0 && by.side !== u.side) this.say(by, how === 'surrender' ? 'prisoners' : 'kill', { lb: W.lc(UT[u.k].n) }, 'g');
+    const un = W.lc(W.unitName(u.side, u.k));
+    this.log(u.side, how === 'surrender' ? `«${u.cs}» (${un}) в окружении сложил оружие.` : `«${u.cs}» (${un}) уничтожен.`, 'crit');
+    if (by && by.str > 0 && by.side !== u.side) this.say(by, how === 'surrender' ? 'prisoners' : 'kill', { lb: un }, 'g');
     if (u.k === 'hq') {
       for (const v of this.units) if (v.side === u.side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= UT.hq.cmd) v.org = Math.max(0, v.org - 15);
       this.log(u.side, 'Штаб уничтожен! Части без управления.', 'crit');

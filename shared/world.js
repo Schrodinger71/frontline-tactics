@@ -3,7 +3,7 @@
    ОБЩИЙ МИР «FRONTLINE TACTICS»: карта, части, экономика, утилиты.
    Та же местность, что в «Линии» (shared/terrain.js — копия),
    но поверх неё — гексы (shared/hex.js). Фронт вертикальный:
-   Запад (n) слева, Восток (s) справа. 1 единица карты = 1 км.
+   Альянс (n) слева, Союз (s) справа. 1 единица карты = 1 км.
 
    Ход — 4 игровых часа: стороны ходят по очереди, полный круг —
    «ход» (06:00, 10:00, 14:00, 18:00, 22:00, 02:00). Ходы в 22:00
@@ -16,8 +16,50 @@
   const WW = 300, WH = 440;
   const N = 'n', S = 's';
   const COL = { n: '#6cc3ff', s: '#ff5b47' };
-  const SIDE_NAME = { n: 'Запад', s: 'Восток' };
-  const SIDE_GEN = { n: 'Запада', s: 'Востока' };
+  /* ============================================================
+     ФРАКЦИИ. Пока различаются только названием и техникой: боевые
+     характеристики берутся из общей таблицы UT, фракция переопределяет
+     подпись части и единицу счёта. Заделка под настоящие фракции —
+     поля mul и only: движок читает их через utFor(), сейчас они пустые.
+       mul   — множители к характеристикам: { tnk: { def: 1.1 } }
+       only  — какие типы частей доступны фракции (пусто = все)
+     ============================================================ */
+  const FACTIONS = {
+    alliance: {
+      id: 'alliance', n: 'Альянс', gen: 'Альянса', style: 'nato', mul: {}, only: null,
+      units: {
+        inf:  { n: 'Мотопехотный батальон',             eln: 'бойцов' },
+        mot:  { n: 'Мотопехота на «Страйкерах»',        eln: '«Страйкеров»' },
+        rec:  { n: 'Разведрота на «Хамви»',             eln: '«Хамви»' },
+        tnk:  { n: 'Танковый батальон «Абрамс»',        eln: '«Абрамсов»' },
+        at:   { n: 'Противотанковый дивизион «Джавелин»', eln: 'ПТРК' },
+        art:  { n: 'Артдивизион «Паладин»',             eln: 'САУ' },
+        mlrs: { n: 'Дивизион HIMARS',                   eln: 'установок' },
+        aa:   { n: 'Зенитный дивизион «Пэтриот»',       eln: 'пусковых' },
+        eng:  { n: 'Инженерный батальон',               eln: 'машин' },
+        hq:   { n: 'Штаб бригады',                      eln: 'машин' }
+      }
+    },
+    union: {
+      id: 'union', n: 'Союз', gen: 'Союза', style: 'cis', mul: {}, only: null,
+      units: {
+        inf:  { n: 'Мотострелковый батальон',           eln: 'бойцов' },
+        mot:  { n: 'Мотопехота на БМП-2',               eln: 'БМП-2' },
+        rec:  { n: 'Разведрота на БРДМ',                eln: 'БРДМ' },
+        tnk:  { n: 'Танковый батальон Т-72',            eln: 'Т-72' },
+        at:   { n: 'Противотанковый дивизион «Конкурс»', eln: 'установок' },
+        art:  { n: 'Артдивизион «Мста-С»',              eln: 'САУ' },
+        mlrs: { n: 'Дивизион «Град»',                   eln: 'установок' },
+        aa:   { n: 'Зенитный дивизион «Тунгуска»',      eln: 'машин' },
+        eng:  { n: 'Инженерный батальон',               eln: 'машин' },
+        hq:   { n: 'Штаб бригады',                      eln: 'машин' }
+      }
+    }
+  };
+  /* какая фракция играет за какую сторону — пока закреплено */
+  const SIDE_FACTION = { n: 'alliance', s: 'union' };
+  const SIDE_NAME = { n: FACTIONS.alliance.n, s: FACTIONS.union.n };
+  const SIDE_GEN = { n: FACTIONS.alliance.gen, s: FACTIONS.union.gen };
 
   /*
      Части. У всех 10 шагов силы (str); el — сколько «единиц» на шаг (для подписи: 10 танков, 300 бойцов).
@@ -44,6 +86,29 @@
     hq:   { n: 'Штаб бригады',           sh: 'КП',  cls: 'wheel', arm: 'light', mp: 5, vis: 2, atk: { soft: 1, light: 0, hard: 0 }, def: 2, el: .4, eln: 'машин', price: 120, cmd: 5 }
   };
   const UT_ORDER = ['inf', 'mot', 'rec', 'tnk', 'at', 'art', 'mlrs', 'aa', 'eng', 'hq'];
+
+  /* таблицы частей по сторонам: общие характеристики + правки фракции.
+     Считаются один раз; движок и клиент берут их через utFor(side). */
+  const UT_SIDE = {};
+  for (const side of [N, S]) {
+    const F = FACTIONS[SIDE_FACTION[side]], t = {};
+    for (const k of Object.keys(UT)) {
+      const over = (F.units || {})[k] || {}, mul = (F.mul || {})[k] || {};
+      t[k] = Object.assign({}, UT[k], over);
+      for (const f of Object.keys(mul)) if (typeof t[k][f] === 'number') t[k][f] = t[k][f] * mul[f];
+    }
+    UT_SIDE[side] = t;
+  }
+  /** таблица частей стороны: UT с названиями и техникой её фракции */
+  const utFor = side => UT_SIDE[side] || UT;
+  /** подпись части у стороны — для журналов, панелей и подсказок */
+  const unitName = (side, k) => (utFor(side)[k] || UT[k] || {}).n || k;
+  /** какие типы доступны фракции стороны (пусто в FACTIONS.only = все) */
+  const unitsFor = side => {
+    const F = FACTIONS[SIDE_FACTION[side]];
+    return F && F.only ? UT_ORDER.filter(k => F.only.includes(k)) : UT_ORDER;
+  };
+  const factionOf = side => FACTIONS[SIDE_FACTION[side]] || FACTIONS.alliance;
   const MAX_STR = 10;
   const ROLE_TXT = {
     inf: 'Держит города и лес, дёшево берёт точки. Медленная.',
@@ -146,7 +211,8 @@
   const elCount = (k, str) => Math.round(UT[k].el * str * 10) / 10;
 
   const api = {
-    GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
+    GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
+    FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
     START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, CP, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount

@@ -215,13 +215,31 @@ const News = (() => {
     const cur = typeof GAME_VERSION === 'string' ? GAME_VERSION : '';
     const li = it => `<li${it.n ? ' class="new"' : ''}><b>${esc(it.h)}</b>${it.n ? '<i class="tag">новое</i>' : ''}
       <span>${esc(it.d)}</span></li>`;
-    const body = r => (r.groups || [{ items: r.items || [] }]).map(gr =>
-      `${gr.g ? `<div class="ngrp">${esc(gr.g)}</div>` : ''}<ul class="nlist">${gr.items.map(li).join('')}</ul>`).join('');
+    const groupsOf = r => r.groups || [{ items: r.items || [] }];
+    /** разделы выпуска; pick отбирает, какие пункты показывать */
+    const body = (r, pick) => groupsOf(r).map(gr => {
+      const items = (gr.items || []).filter(pick || (() => true));
+      if (!items.length) return '';
+      return `${gr.g ? `<div class="ngrp">${esc(gr.g)}</div>` : ''}<ul class="nlist">${items.map(li).join('')}</ul>`;
+    }).join('');
     const head = r => `${esc(r.v)}${r.v === cur ? ' · текущая' : ''}${r.d ? ' · ' + esc(r.d) : ''}`;
+    const countRest = r => groupsOf(r).reduce((a, gr) => a + (gr.items || []).filter(x => !x.n).length, 0);
+
     return NEWS.map((r, i) => {
-      /* текущий выпуск открыт, прошлые — свёрнуты, чтобы экран оставался читаемым */
-      if (i === 0) return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}${body(r)}</div>`;
-      return `<details class="nrel old"><summary><span class="nver">${head(r)}</span>${r.t ? `<b>${esc(r.t)}</b>` : ''}</summary>${body(r)}</details>`;
+      /* Прошлые выпуски свёрнуты целиком. У текущего сразу видны заметные
+         изменения, а остальное — под кнопкой: иначе список слишком длинный. */
+      if (i !== 0) {
+        return `<details class="nrel old"><summary><span class="nver">${head(r)}</span>${r.t ? `<b>${esc(r.t)}</b>` : ''}</summary>${body(r)}</details>`;
+      }
+      const rest = countRest(r);
+      const marked = groupsOf(r).some(gr => (gr.items || []).some(x => x.n));
+      /* если заметных пунктов нет, прятать нечего — показываем всё сразу */
+      if (!marked || !rest) return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}${body(r)}</div>`;
+      return `<div class="nrel"><div class="nver">${head(r)}</div>${r.t ? `<h2>${esc(r.t)}</h2>` : ''}
+        ${body(r, x => x.n)}
+        <details class="nmore"><summary>
+          <span class="c">Развернуть подробности — ещё ${rest}</span><span class="o">Свернуть подробности</span>
+        </summary>${body(r, x => !x.n)}</details></div>`;
     }).join('');
   }
   return { latest, unseen, markSeen, html };

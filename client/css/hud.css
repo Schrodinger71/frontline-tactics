@@ -51,28 +51,29 @@ body.no-vig #fxVig,body.no-grain #fxGrain{display:none}
 .uhead{padding:.4em;border-radius:8px;background:radial-gradient(ellipse at 30% 60%,rgba(108,195,255,.09),transparent 70%)}
 .ic.big{width:6em;height:3.6em;filter:drop-shadow(0 3px 4px rgba(0,0,0,.6))}
 .shopItem{background:linear-gradient(180deg,#0f1921,#0b131a)}
+#dock .shop{display:flex;flex-direction:column;gap:.35em}
+#dock .pc{padding:.45em .55em}
 .shopItem .ic{filter:drop-shadow(0 2px 2px rgba(0,0,0,.6))}
 .ord{background:linear-gradient(180deg,rgba(16,28,38,.8),rgba(10,18,25,.8))}
 .log .ln{animation:lnin .25s ease-out}
 @keyframes lnin{from{opacity:0;transform:translateX(-6px)}}
 
 /* ---------- масштаб ---------- */
-.zbox{position:fixed;z-index:5;right:calc(var(--pw) + 24px);bottom:62px;display:flex;flex-direction:column;
+.zbox{position:fixed;z-index:5;right:12px;top:calc(var(--th) + 12px);bottom:auto;display:flex;flex-direction:column;
   background:rgba(8,13,18,.88);border:1px solid #23384a;border-radius:9px;overflow:hidden;box-shadow:var(--sh);backdrop-filter:var(--glass)}
 .zbox button{width:34px;height:32px;border:0;border-bottom:1px solid #1b2a36;background:none;color:#cfdbe3;font:600 17px/1 system-ui;cursor:pointer}
 .zbox button:last-child{border-bottom:0}
 .zbox button:hover{background:#17242e;color:var(--ac)}
 .zbox button.on{color:var(--ac);background:#1d2a20}
-body:has(#right.col) .zbox{right:24px}
-
 /* ---------- сведения о клетке ---------- */
-#hexinfo{position:fixed;z-index:5;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:.7em;align-items:center;
+#hexinfo{position:fixed;z-index:5;bottom:12px;left:calc(var(--drawer) + 16px);right:168px;transform:none;max-width:none;display:flex;gap:.7em;align-items:center;
   background:rgba(8,13,18,.9);border:1px solid #23384a;border-radius:8px;padding:.35em .85em;font-size:.9em;white-space:nowrap;
   box-shadow:var(--sh);backdrop-filter:var(--glass);pointer-events:none}
 #hexinfo b{color:#fff;text-transform:capitalize}
 #hexinfo span{color:#c4d0d8}
 #hexinfo .bl{color:#8fd0ff}
 #hexinfo .mu{color:var(--mu);font:.92em ui-monospace,Consolas,monospace}
+body:has(#dock.col) #hexinfo{left:44px}
 body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
 
 /* ---------- плашка хода ---------- */
@@ -122,8 +123,9 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
 .loading[hidden]{display:none}
 
 @media (max-width:960px){
-  .zbox{right:12px;bottom:60px}
-  #hexinfo{max-width:94vw;overflow:hidden;font-size:.82em}
+  :root{--drawer:min(400px,88vw)}
+  #hexinfo{right:12px;overflow:hidden;font-size:.82em}
+  body:has(#dock.col) #hexinfo{left:44px;right:12px}
 }
 
 .maps{grid-template-columns:repeat(auto-fit,minmax(255px,1fr))!important}
@@ -139,10 +141,9 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
   #btnEnd{min-width:0!important;padding:.4em .6em}
   #btnHelp,#btnSound{display:none}
   #airBox .btn{padding:.3em .45em}
-  .zbox{bottom:70px;right:10px}
+  .zbox{right:10px}
   .zbox button{width:40px;height:38px}
-  #hexinfo{font-size:.78em;gap:.45em;bottom:8px}
-  .panel{width:min(86vw,340px)}
+  #hexinfo{font-size:.78em;gap:.45em}
 }
 
 /* обязательный шаг расстановки: командный пункт — подсказка и кнопка «Готов» */

@@ -127,7 +127,7 @@ function drawScaleBar() {
   const a = mapArea(), s = G.view.s;
   const steps = [1, 2, 5, 10, 20, 50, 100];
   let km = steps.find(k => k * s > 70) || 100;
-  const x0 = a.r - 22 - km * s, y0 = CH - 26;
+  const x0 = a.r - 22 - km * s, y0 = a.b - 18;
   cx.save();
   cx.fillStyle = 'rgba(6,10,14,.6)'; cx.fillRect(x0 - 8, y0 - 16, km * s + 16, 26);
   cx.strokeStyle = 'rgba(220,228,234,.85)'; cx.lineWidth = 1.5;

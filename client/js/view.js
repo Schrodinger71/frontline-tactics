@@ -14,8 +14,8 @@
    снять выбор.
 
    Границы: масштаб от «вся карта в видимой области» до крупного;
-   карту нельзя утащить за край дальше небольшого поля, и она не
-   прячется под панелями.
+   карту нельзя утащить за край дальше небольшого поля. Открытый штаб
+   слева занимает свою полосу, закрытый кадр не сужает.
    ============================================================ */
 
 let cv, cx, CW = 0, CH = 0, DPR = 1;
@@ -48,14 +48,17 @@ function watchDPR() {
   else if (mq.addListener) mq.addListener(on);
 }
 
-/** видимая область карты на экране: между панелями и под верхней строкой */
+/** видимая область карты: под верхней строкой и правее открытого штаба */
 function mapArea() {
-  const top = document.getElementById('top'), L = document.getElementById('left'), R = document.getElementById('right');
+  const top = document.getElementById('top');
   const t = top ? top.getBoundingClientRect().bottom : 0;
-  const shown = el => el && !el.classList.contains('col') && getComputedStyle(el).display !== 'none' && !document.body.classList.contains('nopanels');
-  const l = shown(L) ? L.getBoundingClientRect().right : 0;
-  const r = shown(R) ? R.getBoundingClientRect().left : CW;
-  return { l: Math.max(0, l), r: Math.min(CW, r || CW), t, b: CH };
+  let l = 0;
+  const dock = document.getElementById('dock');
+  if (dock && !document.body.classList.contains('nopanels')) {
+    const r = dock.getBoundingClientRect();
+    if (r.right > 0 && r.right < CW) l = r.right;
+  }
+  return { l, r: CW, t, b: CH };
 }
 function sMin() {
   const a = mapArea();

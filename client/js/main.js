@@ -1016,12 +1016,18 @@ function bind() {
   $('#btnHelp').onclick = showHelp;
   $('#btnMenu').onclick = () => { if (!G.roomId || G.over || confirm('Выйти в меню?')) leaveToMenu() };
   $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML().replace('<p class="acts">', screenPanelHTML() + '<p class="acts">'); $('#modal').hidden = false } };
-  document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-scr]'); if (!el) return; if (el.dataset.scr === 'trees') setTrees(el.checked); else setScreen(el.dataset.scr, el.checked) });
+  const onScr = e => {
+    const el = e.target.closest && e.target.closest('[data-scr]'); if (!el) return;
+    if (el.dataset.scr === 'trees') setTrees(el.checked);
+    else setScreen(el.dataset.scr, el.checked);
+  };
+  document.addEventListener('change', onScr);
   { const tb = document.querySelector('[data-z=trees]'); if (tb) tb.classList.toggle('on', !!SCREEN.trees) }
   $('#btnStrike').onclick = () => { G.mode = G.mode === 'air:strike' ? null : 'air:strike'; hint(G.mode ? 'Авиаудар: кликните по видимой цели. ПВО рядом с целью может сорвать удар.' : ''); renderTop() };
   $('#btnRecon').onclick = () => { G.mode = G.mode === 'air:recon' ? null : 'air:recon'; hint(G.mode ? 'Авиаразведка: кликните по району — откроется радиус 3 клетки.' : ''); renderTop() };
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
-  document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col'); setTimeout(() => { clampTo(CAM); CAM.moving = true }, 220) });
+  const dtog = $('#dockToggle');
+  if (dtog) dtog.onclick = () => setDock($('#dock').classList.contains('col'));
   $('#modal').addEventListener('click', e => {
     if (e.target.id === 'btnSiteGo') { $('#modal').hidden = true; focusFob(); return }
     if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal();
@@ -1254,5 +1260,13 @@ document.addEventListener('visibilitychange', () => { if (document.hidden || !G.
 Sound.init();
 netConnect();
 showMenu();
-if (innerWidth < 960) { $('#left').classList.add('col'); $('#right').classList.add('col') }
+if (innerWidth < 960) setDock(false);
+function setDock(open) {
+  const d = $('#dock');
+  if (!d) return;
+  d.classList.toggle('col', !open);
+  const b = $('#dockToggle');
+  if (b) { b.textContent = open ? '‹' : 'Штаб'; b.title = open ? 'Скрыть штаб' : 'Показать штаб' }
+  setTimeout(() => { clampTo(CAM); CAM.moving = true }, 230);
+}
 requestAnimationFrame(loop);

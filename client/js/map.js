@@ -552,7 +552,14 @@ function draw(dt) {
 }
 
 /* ---------- мини-карта ---------- */
-function miniRect() { const a = mapArea(), h = CW < 700 ? clamp(CH * .15, 80, 130) : clamp(CH * .24, 110, 210), w = h * H.WW / H.WH; return { x: a.l + 12, y: CH - h - 14, w, h } }
+function miniRect() {
+  const a = mapArea();
+  let h = CW < 700 ? clamp((a.b - a.t) * .22, 70, 120) : clamp((a.b - a.t) * .28, 96, 168);
+  let w = h * H.WW / H.WH;
+  const maxW = Math.min(260, (a.r - a.l) * .32);
+  if (w > maxW) { w = maxW; h = w * H.WH / H.WW }
+  return { x: a.l + 12, y: a.t + 10, w, h };
+}
 function drawMini() {
   if (!MINI || !G.roomId) return;
   const m = miniRect(), k = m.w / H.WW;

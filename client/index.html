@@ -34,18 +34,21 @@
   <button class="btn" id="btnMenu">Меню</button>
   <button class="btn" id="btnHelp">?</button>
 </header>
-<aside id="left" class="panel">
-  <div class="colbtn" data-col="left">‹</div>
-  <div class="tabs"><button class="on" data-tab="log">Журнал</button><button data-tab="pts">Точки</button><button data-tab="sum">Сводка</button></div>
-  <div class="pc log" id="lc_log"></div>
-  <div class="pc" id="lc_pts" style="display:none"></div>
-  <div class="pc" id="lc_sum" style="display:none"></div>
-</aside>
-<aside id="right" class="panel">
-  <div class="colbtn" data-col="right">›</div>
-  <div class="tabs"><button class="on" data-tab="unit">Часть</button><button data-tab="buy">Закупка</button><button data-tab="ord">Приказы</button><button data-tab="hq">Штаб</button></div>
-  <div class="pc" id="rc"></div>
-</aside>
+<div id="dock">
+  <button type="button" id="dockToggle" class="dockhide" title="Скрыть штаб">‹</button>
+  <div id="dockpanes">
+    <aside id="left" class="panel">
+      <div class="tabs"><button class="on" data-tab="log">Журнал</button><button data-tab="pts">Точки</button><button data-tab="sum">Сводка</button></div>
+      <div class="pc log" id="lc_log"></div>
+      <div class="pc" id="lc_pts" style="display:none"></div>
+      <div class="pc" id="lc_sum" style="display:none"></div>
+    </aside>
+    <aside id="right" class="panel">
+      <div class="tabs"><button class="on" data-tab="unit">Часть</button><button data-tab="buy">Закупка</button><button data-tab="ord">Приказы</button><button data-tab="hq">Штаб</button></div>
+      <div class="pc" id="rc"></div>
+    </aside>
+  </div>
+</div>
 <div id="tip" hidden></div>
 <div id="zoomBox" class="zbox">
   <button data-z="in" title="Приблизить (+, колесо)">+</button>

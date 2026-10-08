@@ -1,7 +1,7 @@
 :root{
   --bg:#04070a; --pn:rgba(10,16,22,.94); --bd:#1d2b36; --bd2:#2b3f4e;
   --tx:#d7dfe5; --mu:#7f909c; --ac:#f2b33d; --rd:#ff5b47; --gn:#6fd18d; --bl:#6cc3ff;
-  --pw:clamp(200px,22vw,300px); --th:44px;
+  --drawer:min(440px,92vw); --th:44px;
   font-size:clamp(11px,calc(.36vw + 6.7px),14px);
 }
 *{box-sizing:border-box}
@@ -30,19 +30,23 @@ button{font:inherit;color:inherit}
 .kv b{font-weight:600}
 #top .sp{flex:1}
 
-.panel{position:fixed;top:calc(var(--th) + 8px);bottom:8px;width:var(--pw);background:var(--pn);
-  border:1px solid var(--bd);border-radius:10px;display:flex;flex-direction:column;z-index:4;
-  box-shadow:0 8px 30px rgba(0,0,0,.45);transition:transform .2s}
-#left{left:8px;right:auto}
-#right{right:8px;left:auto}
-#left.col{transform:translateX(calc(-100% - 12px))}
-#right.col{transform:translateX(calc(100% + 12px))}
-.colbtn{position:absolute;top:50%;width:18px;height:52px;margin-top:-26px;background:var(--pn);
-  border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--mu);z-index:2}
-#left .colbtn{right:-19px;border-radius:0 6px 6px 0;border-left:0}
-#right .colbtn{left:-19px;border-radius:6px 0 0 6px;border-right:0}
+/* штаб выезжает слева на всю высоту; закрытый оставляет только ярлык у края */
+#dock{position:fixed;top:var(--th);left:0;bottom:0;width:var(--drawer);z-index:4;display:flex;
+  pointer-events:none;transform:translateX(0);transition:transform .22s ease}
+#dock.col{transform:translateX(-100%)}
+.dockhide{pointer-events:auto;position:absolute;top:50%;right:-30px;z-index:2;transform:translateY(-50%);
+  width:30px;min-height:96px;padding:.8em 0;border-radius:0 8px 8px 0;border:1px solid #3a5366;border-left:0;
+  background:#15222c;color:var(--ac);cursor:pointer;font:600 .84em inherit;letter-spacing:.12em;writing-mode:vertical-rl;
+  box-shadow:4px 0 16px rgba(0,0,0,.45)}
+.dockhide:hover{color:#fff;border-color:var(--ac)}
+#dockpanes{pointer-events:none;flex:1;min-height:0;width:100%;display:flex;flex-direction:column;gap:8px;padding:8px}
+.panel{position:relative;flex:1;min-width:0;min-height:0;background:var(--pn);
+  border:1px solid var(--bd);border-radius:10px;display:flex;flex-direction:column;
+  box-shadow:0 8px 30px rgba(0,0,0,.45);pointer-events:auto;overflow:hidden}
+#left{flex:0 0 38%}
+#right{flex:1 1 auto}
 .tabs{display:flex;border-bottom:1px solid var(--bd);flex:none}
-.tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;padding:.62em .2em;
+.tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;padding:.55em .25em;
   cursor:pointer;color:var(--mu);font-weight:600}
 .tabs button.on{color:var(--tx);border-bottom-color:var(--ac)}
 .pc{flex:1;overflow:auto;padding:.6em;min-height:0}
@@ -71,7 +75,7 @@ button{font:inherit;color:inherit}
 .fl .nm{flex:1;min-width:0;line-height:1.3}
 .mu{color:var(--mu)}
 
-#hintbar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:7;background:#0f1820ee;
+#hintbar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:7;background:#0f1820ee;
   border:1px solid var(--bd2);border-radius:8px;padding:.45em .9em;color:var(--tx);pointer-events:none;
   display:none;max-width:46vw;text-align:center}
 #toast{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:8;display:none;
@@ -123,8 +127,8 @@ button{font:inherit;color:inherit}
 .shopItem.on{border-color:var(--ac);background:#1c2b38}
 .shopItem .snm{flex:1;min-width:0}
 .shopItem .snm b{display:block}
-.shopItem .snm span{color:var(--mu);font-size:.85em}
-.shopItem .sprice{font:600 .95em ui-monospace,monospace;color:var(--ac);white-space:nowrap}
+.shopItem .snm span{color:var(--mu);font-size:.85em;line-height:1.3}
+.shopItem .sprice{font:600 .95em ui-monospace,monospace;color:var(--ac);white-space:nowrap;flex:none}
 
 /* ---------- v3 ---------- */
 .kv.click{cursor:pointer}

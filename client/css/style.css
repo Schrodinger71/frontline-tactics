@@ -301,3 +301,12 @@ body.spec #right .tabs button[data-tab="buy"]{display:none}
   .snd input[type=range]{width:7.5em}
   .mfoot{font-size:.9em}
 }
+
+/* прошлые выпуски в чейнжлоге — свёрнуты */
+.nrel.old{border-top:1px solid var(--bd);margin-top:1.2em;padding-top:1em}
+.nrel.old summary{cursor:pointer;list-style:none;display:flex;flex-direction:column;gap:.1em}
+.nrel.old summary::-webkit-details-marker{display:none}
+.nrel.old summary::before{content:'▸';color:var(--ac);margin-right:.4em;font-size:.9em}
+.nrel.old[open] summary::before{content:'▾'}
+.nrel.old summary b{color:var(--tx);font-weight:600}
+.nrel.old summary:hover .nver{color:#ffd37a}

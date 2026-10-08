@@ -419,9 +419,9 @@ function hideModal() { $('#modal').hidden = true }
 
 /* ---------- меню ---------- */
 const SCEN_TXT = {
-  bridge: { n: 'Мост через Тихую', d: 'Взять переправу у Моста за 8 ходов, пока к Востоку не подошли резервы.' },
+  bridge: { n: 'Мост через Тихую', d: 'Взять переправу у Моста за 8 ходов, пока к Союзу не подошли резервы.' },
   breakthrough: { n: 'Прорыв к Красногору', d: 'За 30 ходов взять Красногор через мины и волны резервов.' },
-  night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Востока под Заречьем.' }
+  night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Союза под Заречьем.' }
 };
 const OPP_TXT = {
   bot: { n: 'Против бота', d: 'Одиночная партия — вторую сторону держит бот-командир.' },
@@ -484,7 +484,7 @@ function playHTML() {
     <div class="mnote">${esc(OPP_TXT[M.opp].d)}</div>
 
     <div class="mlab">Сторона${watch ? ' <i class="mu">— в наблюдении не нужна</i>' : ''}</div>
-    ${mPick('side', [[N, 'Запад (слева)'], [S, 'Восток (справа)']], watch)}
+    ${mPick('side', [[N, SIDE_NAME[N] + ' (слева)'], [S, SIDE_NAME[S] + ' (справа)']], watch)}
 
     <div class="mlab">Режим</div>
     ${mPick('mode', [['both', 'Встречный бой'], ['attack', 'Наступление'], ['defense', 'Оборона']])}
@@ -502,7 +502,7 @@ function campHTML() {
   let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
   return `<div class="mbox">${backHTML('Красногорская операция')}
     <div class="mlab">Сторона</div>
-    ${mPick('side', [[N, 'Запад (слева)'], [S, 'Восток (справа)']])}
+    ${mPick('side', [[N, SIDE_NAME[N] + ' (слева)'], [S, SIDE_NAME[S] + ' (справа)']])}
     <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
       <div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div>
       <h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>

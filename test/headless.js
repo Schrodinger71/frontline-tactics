@@ -192,7 +192,7 @@ console.log('\n════════ БАЛАНС ════════');
       f1(avg(list.map(g => g.turns))), pct(list.filter(g => g.timeout).length, n),
       Math.round(avg(list.map(g => g.lostN))) + '/' + Math.round(avg(list.map(g => g.lostS)))];
   });
-  table(['режим', 'партий', 'Зап', 'Вост', 'ничьи', 'атакующий', 'ходов', 'до срока', 'потери З/В'], rows, w);
+  table(['режим', 'партий', W.SIDE_NAME.n, W.SIDE_NAME.s, 'ничьи', 'атакующий', 'ходов', 'до срока', 'потери З/В'], rows, w);
 }
 
 /* --- кампания --- */
@@ -231,7 +231,7 @@ console.log('\n════════ БАЛАНС ════════');
   console.log('');
   const free = games.filter(g => !g.scen && !g.sweep);
   const wn = free.filter(g => g.w === N).length, ws = free.filter(g => g.w === S).length, dr = free.filter(g => g.w === '—').length;
-  console.log(`всего свободных партий ${free.length}: Запад ${wn}, Восток ${ws}, ничьи ${dr} · средняя длина ${f1(avg(free.map(g => g.turns)))} ходов`);
+  console.log(`всего свободных партий ${free.length}: ${W.SIDE_NAME.n} ${wn}, ${W.SIDE_NAME.s} ${ws}, ничьи ${dr} · средняя длина ${f1(avg(free.map(g => g.turns)))} ходов`);
   const notes = [];
   /* перекос сторон во встречном бою — там силы равны, значит должно быть близко к 50/50 */
   const both = games.filter(g => g.mode === 'both');

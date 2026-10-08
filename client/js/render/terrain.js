@@ -30,10 +30,14 @@ let TER = null, TER_ID = null, MINI = null, TREES = null;
    а не масштабируем 1200×1760 каждый кадр. TREE_GRID — деревья по клеткам
    10×10 км, чтобы не перебирать все 60–70 тысяч ради видимых трёх. */
 let TER_MIP = [], TREE_GRID = null;
-const TG_CELL = 10, TG_W = Math.ceil(WW / TG_CELL), TG_H = Math.ceil(WH / TG_CELL);
+const TG_CELL = 10;
+let TG_W = 1, TG_H = 1;   /* размер сетки деревьев — по размерам испечённой карты */
 
 function bakeTerrain(id) {
   const T = Terrain.get(id), def = T.def, sd = def.seed || 0;
+  /* размеры берём у карты: широкие карты шире, чем выше */
+  const dims = Hex.dimsOf(id), WW = dims[0], WH = dims[1];
+  TG_W = Math.ceil(WW / TG_CELL); TG_H = Math.ceil(WH / TG_CELL);
   const fbm = Terrain.fbm, h2 = Terrain.h2, M = Terrain.METERS;
   const FT = T.FOREST_T;
   const hasLake = (def.lakes || []).length > 0, hasMarsh = (def.marsh || []).length > 0, hasRidge = (def.ridges || []).length > 0;
@@ -230,7 +234,7 @@ function bakeTerrain(id) {
   TER = c; TER_ID = id;
   buildTreeGrid();
   buildMips();
-  bakeMini(T);
+  bakeMini(T, WW, WH);
 }
 
 /** деревья по клеткам карты: в каждой — индексы в TREES */
@@ -268,7 +272,7 @@ function terLevel(pxWide) {
 }
 
 /** мини-карта: подложка с реками и дорогами, один раз на карту */
-function bakeMini(T) {
+function bakeMini(T, WW, WH) {
   const k = 2, c = document.createElement('canvas');
   c.width = WW * k; c.height = WH * k;
   const g = c.getContext('2d');

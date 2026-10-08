@@ -39,7 +39,7 @@ module.exports = {
     if (this.scen && this.scen.noDeploy) { this.ready[seat] = true; return }
     const mix = MIX[this.role[side]] || MIX.both, dir = side === N ? 1 : -1;
     const zone = [];
-    for (let h = 0; h < Hex.NH; h++) if (this.inDeploy(side, h) && !this.unitAt(h)) zone.push(h);
+    for (let h = 0; h < this.H.NH; h++) if (this.inDeploy(side, h) && !this.unitAt(h)) zone.push(h);
     if (!zone.length) { this.ready[seat] = true; return }
     const xs = zone.map(h => this.map.hexes[h].x), edge = dir > 0 ? Math.max(...xs) : Math.min(...xs);
     /* ставка — в тылу своей полосы, поближе к своему городу: её захват дорого стоит */
@@ -49,7 +49,7 @@ module.exports = {
       const k = this.wantKind(seat, mix);
       if (!k) break;
       const back = UT[k].bomb ? 3.5 : k === 'hq' ? 6 : k === 'aa' ? 2.5 : 1;
-      const yband = (guard % 5 + .5) * W.WH / 5;
+      const yband = (guard % 5 + .5) * this.WH / 5;
       let best = -1, bs = -1e9;
       for (const h of zone) {
         if (this.unitAt(h)) continue;
@@ -68,7 +68,7 @@ module.exports = {
     const hq = this.units.find(u => UT[u.k].fob && u.seat === seat && u.str > 0);
     if (!hq) return;
     const mine = this.seatsOf(side), band = Math.max(0, mine.findIndex(st => st.id === seat));
-    const yband = W.WH * (band + 1) / (mine.length + 1);
+    const yband = this.WH * (band + 1) / (mine.length + 1);
     const towns = this.pts.filter(p => p.owner === side);
     const backX = dir > 0 ? Math.min(...zone.map(h => this.map.hexes[h].x)) : Math.max(...zone.map(h => this.map.hexes[h].x));
     let best = hq.hex, bs = -1e9;
@@ -77,12 +77,12 @@ module.exports = {
       const hx = this.map.hexes[h];
       /* чем глубже в тыл и ближе к своему городу в своей полосе, тем лучше */
       const depth = -Math.abs(hx.x - backX) / Hex.HW;
-      const near = towns.length ? -Math.min(...towns.map(p => Hex.hexDist(h, p.hex))) : 0;
+      const near = towns.length ? -Math.min(...towns.map(p => this.H.hexDist(h, p.hex))) : 0;
       /* штабы союзников разводим по фронту: иначе оба садятся в один угол
          и смысл направлений теряется */
       const apart = Math.min(6, ...this.units
         .filter(v => UT[v.k].fob && v.side === side && v.seat !== seat && v.str > 0)
-        .map(v => Hex.hexDist(h, v.hex)).concat([6]));
+        .map(v => this.H.hexDist(h, v.hex)).concat([6]));
       const sc = depth * 2.2 + near * 1.2 - Math.abs(hx.y - yband) / 6 + apart * .9
         + (hx.t === 'city' ? 2 : 0) + this.rnd() * .8;
       if (sc > bs) { bs = sc; best = h }
@@ -121,18 +121,18 @@ module.exports = {
 
     /* 2. разведка, артиллерия, авиация */
     if (objective && this.air[seat].recon > 0) this.act(seat, { t: 'air', kind: 'recon', hex: objective.hex });
-    const targets = () => foes().map(e => ({ e, adj: Hex.neighbors(e.hex).filter(h => { const o = this.unitAt(h); return o && o.side === side }).length }));
+    const targets = () => foes().map(e => ({ e, adj: this.H.neighbors(e.hex).filter(h => { const o = this.unitAt(h); return o && o.side === side }).length }));
     for (const a of mine().filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0)) {
       let best = null, bs = 0;
       for (const { e, adj } of targets()) {
-        if (Hex.hexDist(a.hex, e.hex) > UT[a.k].bomb.rng) continue;
-        const s = val(e) * (1 + adj * .5) * (objective && Hex.hexDist(e.hex, objective.hex) <= 2 ? 1.5 : 1);
+        if (this.H.hexDist(a.hex, e.hex) > UT[a.k].bomb.rng) continue;
+        const s = val(e) * (1 + adj * .5) * (objective && this.H.hexDist(e.hex, objective.hex) <= 2 ? 1.5 : 1);
         if (s > bs) { bs = s; best = e }
       }
       if (best) this.act(seat, { t: 'bombard', id: a.id, hex: best.hex });
     }
     while (this.air[seat].strike > 0) {
-      const t = targets().filter(x => !this.units.some(a => a.side === en && UT[a.k].aa && Hex.hexDist(a.hex, x.e.hex) <= 2) || com.trait === 'решительный')
+      const t = targets().filter(x => !this.units.some(a => a.side === en && UT[a.k].aa && this.H.hexDist(a.hex, x.e.hex) <= 2) || com.trait === 'решительный')
         .sort((a, b) => val(b.e) * (1 + b.adj) - val(a.e) * (1 + a.adj))[0];
       if (!t) break;
       this.act(seat, { t: 'air', kind: 'strike', hex: t.e.hex });
@@ -150,7 +150,7 @@ module.exports = {
       this.botMove(u, objective, dir);
     }
     /* оборона: засады в укрытиях, окопы у противника, сапёры — мины, укрепления, заграждения */
-    const near = (u, r) => this.units.some(e => e.side === en && e.str > 0 && this.seen(side, e) && Hex.hexDist(e.hex, u.hex) <= r);
+    const near = (u, r) => this.units.some(e => e.side === en && e.str > 0 && this.seen(side, e) && this.H.hexDist(e.hex, u.hex) <= r);
     for (const u of mine()) {
       if (u.str <= 0 || u.acted) continue;
       if (UT[u.k].eng && this.botEngineer(u, objective)) continue;
@@ -171,11 +171,11 @@ module.exports = {
     if (phase === 'early') {
       for (const u of mine.filter(u => !u.supplied && u.sp <= 1 && u.str >= 4).sort((a, b) => b.str - a.str))
         if (cp() >= O.airdrop.cp + 1 && this.weather.fly) this.act(seat, { t: 'order', k: 'airdrop', id: u.id });
-      const guns = mine.filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0 && u.sp > 0 && foes.some(e => Hex.hexDist(e.hex, u.hex) <= UT[u.k].bomb.rng));
+      const guns = mine.filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0 && u.sp > 0 && foes.some(e => this.H.hexDist(e.hex, u.hex) <= UT[u.k].bomb.rng));
       /* контрудар: противник в нашей исходной точке, рядом есть кому бить */
       const lostHome = this.pts.filter(p => p.home === side && p.owner !== side);
       if (lostHome.length && cp() >= O.counter.cp && !this.counter[side] &&
-        lostHome.some(p => mine.filter(u => !UT[u.k].bomb && u.k !== 'hq' && u.str >= 4 && Hex.hexDist(u.hex, p.hex) <= 3).length >= 2)) this.act(seat, { t: 'order', k: 'counter' });
+        lostHome.some(p => mine.filter(u => !UT[u.k].bomb && u.k !== 'hq' && u.str >= 4 && this.H.hexDist(u.hex, p.hex) <= 3).length >= 2)) this.act(seat, { t: 'order', k: 'counter' });
       if (guns.length >= 2 && cp() >= O.barrage.cp && !this.barrage[side]) this.act(seat, { t: 'order', k: 'barrage' });
 
       if (cp() >= O.reserve.cp && mine.length < W.MAX_UNITS) {
@@ -187,7 +187,7 @@ module.exports = {
     }
     /* поздно: держать точки под угрозой */
     const threatened = mine.filter(u => this.ptAt(u.hex) && UT[u.k].cap && !u.hold &&
-      Hex.neighbors(u.hex).filter(h => { const e = this.unitAt(h); return e && e.side === en }).length >= 2)
+      this.H.neighbors(u.hex).filter(h => { const e = this.unitAt(h); return e && e.side === en }).length >= 2)
       .sort((a, b) => this.ptAt(b.hex).w - this.ptAt(a.hex).w);
     for (const u of threatened) if (cp() >= O.hold.cp + 1) this.act(seat, { t: 'order', k: 'hold', id: u.id });
   },
@@ -199,13 +199,13 @@ module.exports = {
     if (this.scen && this.scen.target && this.role[side] === 'attacker') { const p = this.pts.find(q => q.id === this.scen.target); if (p && p.owner !== side) return p }
     let best = null, bs = -1e9;
     for (const p of this.pts) {
-      const near = Math.min(...own.map(u => Hex.hexDist(u.hex, p.hex)));
+      const near = Math.min(...own.map(u => this.H.hexDist(u.hex, p.hex)));
       if (p.owner !== side) {
         /* обороняющийся тянется к чужим точкам только поблизости, свои потерянные — главное */
         if (this.role[side] === 'defender' && near > 6 && p.home !== side) continue;
         const s = p.w * (p.city ? 1.5 : 1) * 10 - near * (this.role[side] === 'defender' && p.home !== side ? 2.5 : 1.5) + (p.home === side ? 12 : 0);
         if (s > bs) { bs = s; best = p }
-      } else if (this.units.some(e => e.side === en && e.str > 0 && this.seen(side, e) && Hex.hexDist(e.hex, p.hex) <= 3)) {
+      } else if (this.units.some(e => e.side === en && e.str > 0 && this.seen(side, e) && this.H.hexDist(e.hex, p.hex) <= 3)) {
         const s = p.w * 12 - near;
         if (s > bs) { bs = s; best = p }
       }
@@ -221,10 +221,10 @@ module.exports = {
     const ready = this.units.filter(u => u.side === side && u.seat === seat && u.str >= 3 && u.org >= 30 && u.sp > 0 && !u.acted && !UT[u.k].bomb && UT[u.k].atk.soft >= 2 && u.k !== 'hq');
     let plan = null, ps = 0;
     for (const e of foes) {
-      const slots = Hex.neighbors(e.hex).filter(h => { const o = this.unitAt(h); return !o || o.side === side });
+      const slots = this.H.neighbors(e.hex).filter(h => { const o = this.unitAt(h); return !o || o.side === side });
       const cand = [];
       for (const u of ready) {
-        if (Hex.hexDist(u.hex, e.hex) > UT[u.k].mp + 1) continue;
+        if (this.H.hexDist(u.hex, e.hex) > UT[u.k].mp + 1) continue;
         const reach = Rules.reachable(ctx, u);
         for (const h of slots) {
           const o = this.unitAt(h);
@@ -243,7 +243,7 @@ module.exports = {
       const lead = group[0], sim = { ...lead.u, hex: lead.h };
       occ.set(lead.h, sim);
       const o = Rules.odds({ ...ctx, occ }, sim, e);
-      const prio = (objective && Hex.hexDist(e.hex, objective.hex) <= 1 ? 1.6 : 1) * (this.ptAt(e.hex) ? 1.3 : 1);
+      const prio = (objective && this.H.hexDist(e.hex, objective.hex) <= 1 ? 1.6 : 1) * (this.ptAt(e.hex) ? 1.3 : 1);
       const score = (o.expD * val(e) / MAX_STR * (1 + o.retreat) - o.expA * val(lead.u) / MAX_STR) * prio;
       if (o.r * (prio > 1 ? 1.15 : 1) < thr || score <= ps) continue;
       ps = score; plan = { e, group };
@@ -252,7 +252,7 @@ module.exports = {
     for (const c of plan.group) if (c.u.hex !== c.h) this.act(seat, { t: 'move', id: c.u.id, to: c.h });
     for (const c of plan.group) {
       const e = this.byId(plan.e.id);
-      if (!e || c.u.str <= 0 || c.u.acted || Hex.hexDist(c.u.hex, e.hex) !== 1) continue;
+      if (!e || c.u.str <= 0 || c.u.acted || this.H.hexDist(c.u.hex, e.hex) !== 1) continue;
       const o = Rules.odds(this.ctxFor(side, false), c.u, e);
       if (o.r < Math.max(1, thr * .7)) continue;
       this.act(seat, { t: 'attack', id: c.u.id, target: e.id });
@@ -266,16 +266,16 @@ module.exports = {
     /* гарнизон: пехота в своём городе (и в главной точке сценария) остаётся на месте */
     const here = this.ptAt(u.hex);
     if (here && here.owner === side && T.cap && (here.city || (this.scen && this.scen.target === here.id)) && u.str > 3 &&
-      (u.k === 'inf' || (this.scen && this.scen.target === here.id) || !this.units.some(v => v !== u && v.side === side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= 1))) return;
+      (u.k === 'inf' || (this.scen && this.scen.target === here.id) || !this.units.some(v => v !== u && v.side === side && v.str > 0 && this.H.hexDist(v.hex, u.hex) <= 1))) return;
     const ctx = this.ctxFor(side, false), reach = Rules.reachable(ctx, u);
     const supply = this.supplyHex && this.supplyHex[side];
     const known = this.units.filter(e => e.side !== side && e.str > 0 && this.seen(side, e));
-    const danger = h => known.filter(e => Hex.hexDist(e.hex, h) === 1).length;
+    const danger = h => known.filter(e => this.H.hexDist(e.hex, h) === 1).length;
     const front = h => (this.map.hexes[h].x - this.frontXAt(this.map.hexes[h].y)) * dir;   /* >0 — за линией фронта у противника */
     const com = this.commanders[side];
     let goal = null, mode = 'line';
     if ((u.str <= com.aggr.retreat || u.org < 30) && !T.bomb) {
-      goal = this.pts.filter(p => p.owner === side && p.city).sort((a, b) => Hex.hexDist(a.hex, u.hex) - Hex.hexDist(b.hex, u.hex))[0];
+      goal = this.pts.filter(p => p.owner === side && p.city).sort((a, b) => this.H.hexDist(a.hex, u.hex) - this.H.hexDist(b.hex, u.hex))[0];
       mode = 'rest';
     } else if (T.bomb) mode = 'arty';
     else if (u.k === 'hq') mode = 'hq';
@@ -286,17 +286,17 @@ module.exports = {
       if (r.through) continue;
       const hx = this.map.hexes[h], dg = danger(h);
       let s = TERR[hx.t] * .8 + (supply && supply.has(h) ? 4 : -8) - r.c * .1;
-      if (mode === 'rest') s += -Hex.hexDist(h, goal ? goal.hex : h) * 3 - dg * 6;
-      else if (mode === 'attack') s += -Hex.hexDist(h, goal.hex) * 3 - dg * (u.str >= 7 && T.arm === 'hard' ? 1 : 4);
-      else if (mode === 'arty') s += -Math.abs(front(h) + 2.5 * Hex.HW) / Hex.HW * 3 - dg * 10 + (known.some(e => Hex.hexDist(e.hex, h) <= T.bomb.rng) ? 4 : 0);
+      if (mode === 'rest') s += -this.H.hexDist(h, goal ? goal.hex : h) * 3 - dg * 6;
+      else if (mode === 'attack') s += -this.H.hexDist(h, goal.hex) * 3 - dg * (u.str >= 7 && T.arm === 'hard' ? 1 : 4);
+      else if (mode === 'arty') s += -Math.abs(front(h) + 2.5 * Hex.HW) / Hex.HW * 3 - dg * 10 + (known.some(e => this.H.hexDist(e.hex, h) <= T.bomb.rng) ? 4 : 0);
       else if (mode === 'hq' || mode === 'aa') {
         const mates = this.units.filter(v => v.side === side && v.str > 0 && v !== u && !UT[v.k].bomb);
         const cx = mates.reduce((a, v) => a + this.map.hexes[v.hex].x, 0) / Math.max(1, mates.length), cy = mates.reduce((a, v) => a + this.map.hexes[v.hex].y, 0) / Math.max(1, mates.length);
         s += -Math.hypot(hx.x - cx + dir * (mode === 'hq' ? 25 : 12), hx.y - cy) / Hex.HW * 2 - dg * 10;
       } else {
         /* рубеж: держаться у линии фронта со своей стороны, у своих точек */
-        const p = this.pts.filter(q => q.owner === side).sort((a, b) => Hex.hexDist(a.hex, h) - Hex.hexDist(b.hex, h))[0];
-        s += -Math.abs(front(h) + Hex.HW) / Hex.HW * 2.5 - (p ? Math.max(0, Hex.hexDist(p.hex, h) - 3) : 0) - dg * 2;
+        const p = this.pts.filter(q => q.owner === side).sort((a, b) => this.H.hexDist(a.hex, h) - this.H.hexDist(b.hex, h))[0];
+        s += -Math.abs(front(h) + Hex.HW) / Hex.HW * 2.5 - (p ? Math.max(0, this.H.hexDist(p.hex, h) - 3) : 0) - dg * 2;
         if (h === u.hex) s += 1.5 + u.ent;   /* окопавшиеся неохотно уходят */
       }
       if (s > bs) { bs = s; best = h }
@@ -309,40 +309,40 @@ module.exports = {
     const side = u.side, seat = u.seat || u.side, ctx = this.ctxFor(side, true);
     /* взорванный мост рядом — восстановить, если противника нет вплотную */
     for (let d = 0; d < 6; d++) {
-      const h = Hex.nb(u.hex, d);
+      const h = this.H.nb(u.hex, d);
       if (h < 0 || this.br.get(Hex.edgeKey(u.hex, h)) !== 'down') continue;
-      if (Hex.neighbors(h).concat([h]).some(x => { const e = this.unitAt(x); return e && e.side !== side })) continue;
+      if (this.H.neighbors(h).concat([h]).some(x => { const e = this.unitAt(x); return e && e.side !== side })) continue;
       if (this.act(seat, { t: 'eng', id: u.id, task: 'repair', hex: h }).ok) return true;
     }
     if (objective && objective.owner !== side) {
       for (let d = 0; d < 6; d++) {
-        const h = Hex.nb(u.hex, d);
+        const h = this.H.nb(u.hex, d);
         if (h < 0) continue;
         const e = Rules.edgeOf(ctx, u.hex, d);
-        if ((e & Hex.RIV) && !(e & Hex.BR) && Hex.hexDist(h, objective.hex) < Hex.hexDist(u.hex, objective.hex)) return this.act(seat, { t: 'eng', id: u.id, task: 'bridge', hex: h }).ok;
+        if ((e & Hex.RIV) && !(e & Hex.BR) && this.H.hexDist(h, objective.hex) < this.H.hexDist(u.hex, objective.hex)) return this.act(seat, { t: 'eng', id: u.id, task: 'bridge', hex: h }).ok;
       }
     }
     if (u.mines > 0) {
       const en = side === N ? S : N;
-      const threat = this.units.filter(e => e.side === en && e.str > 0 && this.seen(side, e)).sort((a, b) => Hex.hexDist(a.hex, u.hex) - Hex.hexDist(b.hex, u.hex))[0];
-      if (threat && Hex.hexDist(threat.hex, u.hex) <= 3) {
-        const h = Hex.neighbors(u.hex).filter(x => !this.unitAt(x) && !this.mines.has(x)).sort((a, b) => Hex.hexDist(a, threat.hex) - Hex.hexDist(b, threat.hex))[0];
+      const threat = this.units.filter(e => e.side === en && e.str > 0 && this.seen(side, e)).sort((a, b) => this.H.hexDist(a.hex, u.hex) - this.H.hexDist(b.hex, u.hex))[0];
+      if (threat && this.H.hexDist(threat.hex, u.hex) <= 3) {
+        const h = this.H.neighbors(u.hex).filter(x => !this.unitAt(x) && !this.mines.has(x)).sort((a, b) => this.H.hexDist(a, threat.hex) - this.H.hexDist(b, threat.hex))[0];
         if (h !== undefined) return this.act(seat, { t: 'eng', id: u.id, task: 'mine', hex: h }).ok;
       }
     }
     /* укрепить угрожаемую свою точку рядом (или клетку с нашей частью), против танков — заграждения */
     const en = side === N ? S : N, foes = this.units.filter(e => e.side === en && e.str > 0 && this.seen(side, e));
-    const threatened = h => foes.some(e => Hex.hexDist(e.hex, h) <= 3);
-    for (const h of [u.hex, ...Hex.neighbors(u.hex)]) {
+    const threatened = h => foes.some(e => this.H.hexDist(e.hex, h) <= 3);
+    for (const h of [u.hex, ...this.H.neighbors(u.hex)]) {
       const occ = this.unitAt(h), p = this.ptAt(h);
       if ((occ && occ.side !== side) || this.map.hexes[h].t === 'lake') continue;
       if ((p && p.owner === side || (occ && occ.side === side && UT[occ.k].cap)) && threatened(h) && (this.forts.get(h) || 0) < 2) return this.act(seat, { t: 'eng', id: u.id, task: 'fort', hex: h }).ok;
     }
-    if (foes.some(e => UT[e.k].arm === 'hard' && Hex.hexDist(e.hex, u.hex) <= 4)) {
-      const h = Hex.neighbors(u.hex).filter(x => !this.unitAt(x) && !this.obst.has(x) && this.map.hexes[x].t !== 'lake').sort((a, b) => Math.min(...foes.map(e => Hex.hexDist(e.hex, a))) - Math.min(...foes.map(e => Hex.hexDist(e.hex, b))))[0];
+    if (foes.some(e => UT[e.k].arm === 'hard' && this.H.hexDist(e.hex, u.hex) <= 4)) {
+      const h = this.H.neighbors(u.hex).filter(x => !this.unitAt(x) && !this.obst.has(x) && this.map.hexes[x].t !== 'lake').sort((a, b) => Math.min(...foes.map(e => this.H.hexDist(e.hex, a))) - Math.min(...foes.map(e => this.H.hexDist(e.hex, b))))[0];
       if (h !== undefined) return this.act(seat, { t: 'eng', id: u.id, task: 'obst', hex: h }).ok;
     }
-    if (!u.moved && Hex.neighbors(u.hex).some(h => { const v = this.unitAt(h); return v && v.side === side && v.ent < 2 })) return this.act(seat, { t: 'dig', id: u.id }).ok;
+    if (!u.moved && this.H.neighbors(u.hex).some(h => { const v = this.unitAt(h); return v && v.side === side && v.ent < 2 })) return this.act(seat, { t: 'dig', id: u.id }).ok;
     return false;
   },
 

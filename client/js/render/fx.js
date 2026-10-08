@@ -314,11 +314,11 @@ function drawDrop(f, k) {
 
 /* ---------- захват точки ---------- */
 function drawCapture(f, k) {
-  const c = Hex.center(f.hex);
+  const c = H.center(f.hex);
   for (let i = 0; i < 2; i++) {
     const t = clamp(k * 1.3 - i * .2, 0, 1);
     if (t <= 0) continue;
-    const cs = Hex.corners(f.hex, .9 + t * .9).map(w2s);
+    const cs = H.corners(f.hex, .9 + t * .9).map(w2s);
     cx.beginPath(); cs.forEach((p, j) => j ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y)); cx.closePath();
     cx.strokeStyle = `rgba(${f.col},${(1 - t) * .9})`; cx.lineWidth = 3 - i; cx.stroke();
   }

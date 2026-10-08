@@ -41,7 +41,7 @@ function cityLights(p) {
   let seed = 0;
   for (const ch of p.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-  const c = Hex.center(p.hex), R = p.city ? p.w * 2 + 1.5 : 1.2, n = p.city ? 10 + p.w * 10 : 4;
+  const c = H.center(p.hex), R = p.city ? p.w * 2 + 1.5 : 1.2, n = p.city ? 10 + p.w * 10 : 4;
   L = [];
   for (let i = 0; i < n; i++) { const a = rnd() * 6.28, r = Math.sqrt(rnd()) * R; L.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r, k: rnd(), sz: .5 + rnd() * .9 }) }
   LIGHTS.set(p.id, L);
@@ -53,10 +53,10 @@ function drawCityLights() {
   const fade = night ? 1 : .35, s = G.view.s, T = RT();
   cx.save(); cx.globalCompositeOperation = 'lighter';
   for (const p of G.pts) {
-    const q = w2s(Hex.center(p.hex));
+    const q = w2s(H.center(p.hex));
     if (!onScreen(q, 120)) continue;
     /* у фронта — затемнение: огни реже и мерцают */
-    const near = G.units.some(u => Hex.hexDist(u.hex, p.hex) <= 1 && u.side !== p.owner);
+    const near = G.units.some(u => H.hexDist(u.hex, p.hex) <= 1 && u.side !== p.owner);
     const pw = near ? .35 : 1;
     let lit = 0;
     for (const L of cityLights(p)) {
@@ -76,13 +76,13 @@ function drawCityLights() {
 
 /* ---------- облака, туман, осадки ---------- */
 const WX_LOOK = { clear: { cloud: 0, haze: 0 }, cloud: { cloud: .16, haze: 0 }, fog: { cloud: .12, haze: .26 }, rain: { cloud: .2, haze: .06, rain: 1 }, snow: { cloud: .15, haze: .08, snow: 1 }, storm: { cloud: .26, haze: .08, rain: 1.4 } };
-const WX_PUFFS = (() => { let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; const a = []; for (let i = 0; i < 46; i++) a.push({ x: r() * (WW + 160), y: r() * (WH + 160), r: 14 + r() * 26, k: .6 + r() * .4, v: (r() * 6) | 0 }); return a })();
+const WX_PUFFS = (() => { let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; const a = []; for (let i = 0; i < 46; i++) a.push({ x: r() * (H.WW + 160), y: r() * (H.WH + 160), r: 14 + r() * 26, k: .6 + r() * .4, v: (r() * 6) | 0 }); return a })();
 let WX_DROPS = [];
 function drawWeather(dt) {
   const L = WX_LOOK[G.weather] || WX_LOOK.clear, s = G.view.s, w = windVec(), T = RT();
   if (!SCREEN.clouds) { WX_DROPS = []; if (L.haze) { cx.fillStyle = `rgba(160,172,180,${L.haze})`; cx.fillRect(0, 0, CW, CH) } return }
   if (L.cloud) {
-    const drift = T * 1.2, sx = WW + 160, sy = WH + 160;
+    const drift = T * 1.2, sx = H.WW + 160, sy = H.WH + 160;
     for (const p of WX_PUFFS) {
       const x = ((p.x + w.x * drift) % sx + sx) % sx - 80, y = ((p.y + w.y * drift) % sy + sy) % sy - 80;
       const q = w2s({ x, y }), r = p.r * s;

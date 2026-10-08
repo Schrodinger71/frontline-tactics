@@ -46,14 +46,14 @@
     }
     return pts;
   }
-  function riverPath(x0, y0, tx, ty, s) {
+  function riverPath(x0, y0, tx, ty, s, ww) {
     const pts = [{ x: x0, y: y0 }];
     let x = x0, y = y0;
     for (let i = 0; i < 500; i++) {
       const a = Math.atan2(ty - y, tx - x) + (fbm(x * .03, y * .03, s, 4) - .5) * 2.1;
       x += Math.cos(a) * 1.6; y += Math.sin(a) * 1.6;
       pts.push({ x, y });
-      if (Math.hypot(tx - x, ty - y) < 3 || x < -4 || x > WW + 4) break;
+      if (Math.hypot(tx - x, ty - y) < 3 || x < -4 || x > (ww || WW) + 4) break;
     }
     return pts;
   }
@@ -72,6 +72,8 @@
   /** местность одной карты */
   function make(id) {
     const def = MAPS[id] || MAPS.valley, sd = def.seed || 0;
+    /* размеры берём у карты: широкие карты шире, чем выше (по умолчанию — общие) */
+    const WW = def.w || W.WW, WH = def.h || W.WH;
     const HILLS = def.hills || [], FT = (def.forest && def.forest.thr) || FOREST_T0;
     const ridges = (def.ridges || []).map(r => ({ w: r.w, pts: r.pts.map(([x, y]) => ({ x, y })) }));
     /** близость к хребту 0..1 */
@@ -108,7 +110,7 @@
     }
     function rivers() {
       if (RIVERS) return RIVERS;
-      return (RIVERS = (def.rivers || []).map(r => ({ n: r.n, w: r.w, pts: riverPath(r.from[0], r.from[1], r.to[0], r.to[1], r.seed) })));
+      return (RIVERS = (def.rivers || []).map(r => ({ n: r.n, w: r.w, pts: riverPath(r.from[0], r.from[1], r.to[0], r.to[1], r.seed, WW) })));
     }
     function bridges() {
       if (BRIDGES) return BRIDGES;

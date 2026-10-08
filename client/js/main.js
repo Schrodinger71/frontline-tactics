@@ -135,6 +135,8 @@ function renderLobby() {
 function skipAnims() { ANIMS.q.length = 0; ANIMS.cur = null; ANIMS.pos.clear(); G.pendingAt = 0 }
 function applySnapshot(v) {
   G.pendingAt = 0;
+  /* карта могла смениться — берём её сетку до любых расчётов геометрии */
+  if (v.map && v.map !== G.mapId) useMap(v.map);
   /* готовность мест приходит в снимке, ники — в сообщении seats: сводим вместе */
   if (Array.isArray(v.seats) && (G.lobby || []).length) {
     const by = new Map(v.seats.map(x => [x.id, x]));
@@ -165,30 +167,30 @@ function applySnapshot(v) {
 }
 function firstView() {
   const own = G.units.filter(u => G.spec || u.side === G.side);
-  let x = WW / 2, y = WH / 2;
-  if (G.phase === 'deploy' && !G.spec && G.deploy && G.deploy.length) { const cs = G.deploy.map(h => Hex.center(h)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = WH / 2 }
-  else if (own.length) { const cs = own.map(u => Hex.center(u.hex)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = cs.reduce((a, c) => a + c.y, 0) / cs.length }
+  let x = H.WW / 2, y = H.WH / 2;
+  if (G.phase === 'deploy' && !G.spec && G.deploy && G.deploy.length) { const cs = G.deploy.map(h => H.center(h)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = H.WH / 2 }
+  else if (own.length) { const cs = own.map(u => H.center(u.hex)); x = cs.reduce((a, c) => a + c.x, 0) / cs.length; y = cs.reduce((a, c) => a + c.y, 0) / cs.length }
   const s = G.spec ? sMin() : clamp(S_WORK() * .8, sMin(), S_MAX);
   G.view.x = x; G.view.y = y; G.view.s = s; clampView();
   CAM.x = G.view.x; CAM.y = G.view.y; CAM.s = G.view.s; CAM.ax = null; CAM.moving = false;
 }
 function deployHexes() {
-  const md = MAPS[G.mapId] || {}, z = G.scen ? G.scen.deploy : md.deploy ? md.deploy[G.side] : DEPLOY_X[G.side], out = [], hx = Hex.build(G.mapId).hexes;
-  for (let h = 0; h < Hex.NH; h++) { const x = Hex.center(h).x; if (z && x >= z[0] && x <= z[1] && hx[h].t !== 'lake') out.push(h) }
+  const md = MAPS[G.mapId] || {}, z = G.scen ? G.scen.deploy : md.deploy ? md.deploy[G.side] : DEPLOY_X[G.side], out = [], hx = H.build(G.mapId).hexes;
+  for (let h = 0; h < H.NH; h++) { const x = H.center(h).x; if (z && x >= z[0] && x <= z[1] && hx[h].t !== 'lake') out.push(h) }
   return out;
 }
 
 /** клетки для подкреплений: свои точки и соседние с ними, свободные, без противника рядом */
 function spawnHexes(k) {
   if (G.phase !== 'battle' || G.spec) return null;
-  const hx = Hex.build(G.mapId).hexes, occ = new Map(G.units.map(u => [u.hex, u])), out = new Set();
+  const hx = H.build(G.mapId).hexes, occ = new Map(G.units.map(u => [u.hex, u])), out = new Set();
   const enemyAt = h => { const o = occ.get(h); return o && o.side !== G.side };
   for (const p of G.pts) {
     if (p.owner !== G.side) continue;
-    for (const h of Hex.within(p.hex, 1)) {
+    for (const h of H.within(p.hex, 1)) {
       if (out.has(h) || occ.has(h) || hx[h].t === 'lake' || (hx[h].t === 'mount' && UT[k].cls !== 'foot' && !hx[h].road)) continue;
       if (h !== p.hex && enemyAt(p.hex)) continue;
-      if (Hex.neighbors(h).some(enemyAt)) continue;
+      if (H.neighbors(h).some(enemyAt)) continue;
       out.add(h);
     }
   }
@@ -206,14 +208,14 @@ function clientCtx() {
     const key = h.seat || h.side;
     if (!cmd.has(key)) cmd.set(key, new Set());
     const set = cmd.get(key);
-    for (const x of Hex.within(h.hex, UT.hq.cmd)) set.add(x);
+    for (const x of H.within(h.hex, UT.hq.cmd)) set.add(x);
   }
   if (G.mySeat && !cmd.has(G.mySeat)) cmd.set(G.mySeat, new Set());
   const mines = new Map(); for (const m of G.mines || []) mines.set(m.hex, { side: m.side });
   const wx = wxById(G.weather);
   const support = { n: new Set(), s: new Set() };
-  for (const u of G.units) if (u.support && UT[u.k].bomb) for (const h of Hex.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
-  return { map: Hex.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => Hex.within(p.hex, 1)))) : null };
+  for (const u of G.units) if (u.support && UT[u.k].bomb) for (const h of H.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
+  return { map: H.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => H.within(p.hex, 1)))) : null };
 }
 function computeSel() {
   G.reach = null; G.targets = []; G.selRiv = '';
@@ -226,12 +228,12 @@ function computeSel() {
   const foes = G.units.filter(e => e.side !== G.side).map(e => ({ ...e, org: e.org ?? 80, xp: e.xp ?? .2 }));
   if (T.bomb) {
     if (u.reload > 0) return;
-    for (const e of foes) if (Hex.hexDist(u.hex, e.hex) <= T.bomb.rng) {
+    for (const e of foes) if (H.hexDist(u.hex, e.hex) <= T.bomb.rng) {
       const b = Rules.bombardOdds(ctx, T.bomb.pow * u.str / MAX_STR * (.85 + .3 * u.xp), e, { th: T.th, barrage: !!G.barrage, sp: u.sp });
       G.targets.push({ hex: e.hex, id: e.id, lb: `огонь −${b.loss[0]}…${b.loss[1]}`, col: '#ffb070', bomb: b });
     }
   } else if (T.atk.soft >= 2 && u.k !== 'hq' && u.org >= 20) {
-    for (const e of foes) if (Hex.hexDist(u.hex, e.hex) === 1) {
+    for (const e of foes) if (H.hexDist(u.hex, e.hex) === 1) {
       const o = Rules.odds(ctx, u, e);
       G.targets.push({ hex: e.hex, id: e.id, lb: o.r.toFixed(1).replace('.', ',') + ' : 1', col: o.r >= 2 ? '#6fd18d' : o.r >= 1.2 ? '#ffd479' : '#ff6b55', odds: o });
     }
@@ -313,7 +315,7 @@ function bar(label, v, max, col, txt) {
   return `<div class="row"><span>${label}</span><b>${txt != null ? txt : Math.round(k * 100) + '%'}</b></div><div class="bar"><div style="width:${k * 100}%;background:${col}"></div></div>`;
 }
 function unitCard(u) {
-  const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = Hex.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
+  const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = H.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
   const head = `<div class="uhead">${iconHTML(u.k, 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
   allyUnit(u) ? ` <i class="allytag">союзник${seatName(u.seat) ? ' · ' + esc(seatName(u.seat)) : ''}</i>` : ''}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
@@ -721,7 +723,9 @@ function playHTML() {
 
     <div class="mlab">Карта</div>
     <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}">
-      <canvas data-prev="${id}" width="90" height="132"></canvas>
+${(() => { const d = Hex.dimsOf(id), wide = d[0] > d[1];
+        const cw = wide ? 132 : 90, ch = wide ? Math.round(132 * d[1] / d[0]) : 132;
+        return `<canvas data-prev="${id}" width="${cw}" height="${ch}"${wide ? ' class="wide"' : ''}></canvas>` })()}
       <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
 
     <div class="macts"><button class="btn pri big" data-a="go"${err ? ' disabled' : ''}>${M.me ? 'В бой' : 'Смотреть'}</button></div></div>`;
@@ -770,7 +774,9 @@ function showMenu() {
 const PREV = new Map();
 function mapPreview(id) {
   if (PREV.has(id)) return PREV.get(id);
-  const T = Terrain.get(id), def = T.def, k = 3, w = Math.round(WW / k), h = Math.round(WH / k);
+  /* размеры берём у превьюируемой карты: H — это сетка текущей, она здесь не подходит */
+  const dims = Hex.dimsOf(id), MW = dims[0], MH = dims[1];
+  const T = Terrain.get(id), def = T.def, k = 3, w = Math.round(MW / k), h = Math.round(MH / k);
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d'), img = g.createImageData(w, h), D = img.data;
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -850,7 +856,7 @@ function nextUnit() {
   const list = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted));
   if (!list.length) { toast('Все части отработали — можно завершать ход'); return }
   const i = list.findIndex(u => u.id === G.sel), u = list[(i + 1) % list.length];
-  camTo(Hex.center(u.hex));
+  camTo(H.center(u.hex));
   setSel(u.id);
 }
 function endTurn() {
@@ -878,7 +884,7 @@ function loop(now) {
     }
     camTick(rdt);
     /* клетка под курсором — и когда карта едет сама */
-    if (G.mouse && G.mouse.inside && (CAM.moving || KEYS.size)) { const w = s2w(G.mouse); G.hover = Hex.hexAt(w.x, w.y); renderTip(G.mouse); hexInfo(G.hover) }
+    if (G.mouse && G.mouse.inside && (CAM.moving || KEYS.size)) { const w = s2w(G.mouse); G.hover = H.hexAt(w.x, w.y); renderTip(G.mouse); hexInfo(G.hover) }
     if (G.pendingSnap && G.pendingAt && performance.now() - G.pendingAt > 15000) { skipAnims(); const v = G.pendingSnap; G.pendingSnap = null; applySnapshot(v) }
     const t0 = performance.now();
     draw(dt);
@@ -913,7 +919,7 @@ function bind() {
     renderUI();
   });
   document.querySelectorAll('#right .tabs button').forEach(b => b.onclick = () => { G.tabR = b.dataset.tab; syncTabs(); renderUI() });
-  $('#lc_pts').addEventListener('click', e => { const r = e.target.closest('[data-go]'); if (r) camTo(Hex.center(+r.dataset.go), Math.max(G.view.s, S_WORK())) });
+  $('#lc_pts').addEventListener('click', e => { const r = e.target.closest('[data-go]'); if (r) camTo(H.center(+r.dataset.go), Math.max(G.view.s, S_WORK())) });
   $('#rc').addEventListener('click', e => {
     const b = e.target.closest('[data-buy]');
     if (b) { if (b.classList.contains('off')) return toast('Не хватает очков'); G.mode = 'buy:' + b.dataset.buy; G.sel = null; G.spawn = spawnHexes(b.dataset.buy); hint(G.phase === 'deploy' ? 'Кликните по клетке в зоне расстановки (Shift — несколько).' : 'Кликните по подсвеченной клетке у своего города или узла (Shift — несколько).'); renderUI(); return }
@@ -1000,7 +1006,7 @@ function bind() {
     const a = mapArea(), c = { x: (a.l + a.r) / 2, y: (a.t + a.b) / 2 };
     if (b.dataset.z === 'in') zoomAt(c, 1.45); else if (b.dataset.z === 'out') zoomAt(c, 1 / 1.45);
     else if (b.dataset.z === 'fit') camFit(); else if (b.dataset.z === 'types') { G.showTypes = !G.showTypes; b.classList.toggle('on', G.showTypes) }
-    else if (b.dataset.z === 'sel') { const u = selUnit(); if (u) camTo(Hex.center(u.hex), Math.max(G.view.s, S_WORK())) }
+    else if (b.dataset.z === 'sel') { const u = selUnit(); if (u) camTo(H.center(u.hex), Math.max(G.view.s, S_WORK())) }
   });
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return;
@@ -1023,7 +1029,7 @@ function bind() {
     else if (e.key === 'h' || e.key === 'р') { G.showCmd = !G.showCmd; renderUI() }
     else if (e.key === 't' || e.key === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
     else if (e.key === 'f' || e.key === 'а') camFit();
-    else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(Hex.center(selUnit().hex));
+    else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(H.center(selUnit().hex));
     else if (e.key === '?') showHelp();
   });
   window.addEventListener('keyup', e => KEYS.delete(e.key));
@@ -1035,7 +1041,7 @@ function bindPointer() {
   let drag = null, pinch = null, mini = false, longT = 0;
   const local = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } };
   const inMini = sp => { const m = miniRect(); return MINI && G.roomId && sp.x >= m.x - 4 && sp.x <= m.x + m.w + 4 && sp.y >= m.y - 4 && sp.y <= m.y + m.h + 4 };
-  const miniGo = sp => { const m = miniRect(); panTo(clamp((sp.x - m.x) / m.w, 0, 1) * WW, clamp((sp.y - m.y) / m.h, 0, 1) * WH) };
+  const miniGo = sp => { const m = miniRect(); panTo(clamp((sp.x - m.x) / m.w, 0, 1) * H.WW, clamp((sp.y - m.y) / m.h, 0, 1) * H.WH) };
   const cancel = () => { G.mode = null; G.spawn = null; hint(''); setSel(null) };
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('pointerdown', e => {
@@ -1067,7 +1073,7 @@ function bindPointer() {
       if (!drag.moved && Math.hypot(sp.x - drag.x0, sp.y - drag.y0) > lim) { drag.moved = true; clearTimeout(longT); cv.classList.add('grab') }
       if (drag.moved) { panTo(drag.vx - (sp.x - drag.x0) / G.view.s, drag.vy - (sp.y - drag.y0) / G.view.s); return }
     }
-    const w = s2w(sp), h = inMini(sp) ? -1 : Hex.hexAt(w.x, w.y);
+    const w = s2w(sp), h = inMini(sp) ? -1 : H.hexAt(w.x, w.y);
     if (h !== G.hover) { G.hover = h; hexInfo(h) }
     renderTip(sp);
   });
@@ -1082,8 +1088,8 @@ function bindPointer() {
     if (d.btn === 2) { cancel(); return }
     if (d.btn !== 0) return;
     const w = s2w(sp);
-    clickHex(Hex.hexAt(w.x, w.y), e);
-    if (p && p.touch) { G.hover = Hex.hexAt(w.x, w.y); hexInfo(G.hover) }
+    clickHex(H.hexAt(w.x, w.y), e);
+    if (p && p.touch) { G.hover = H.hexAt(w.x, w.y); hexInfo(G.hover) }
   };
   cv.addEventListener('pointerup', up);
   cv.addEventListener('pointercancel', up);
@@ -1098,7 +1104,7 @@ function hexInfo(h) {
   if (h === hexInfoLast) return;
   hexInfoLast = h;
   if (h < 0 || !G.mapId || !G.roomId) { el.hidden = true; return }
-  const m = Hex.build(G.mapId), hx = m.hexes[h], T = Rules.TCOST, d = Rules.TDEF[hx.t];
+  const m = H.build(G.mapId), hx = m.hexes[h], T = Rules.TCOST, d = Rules.TDEF[hx.t];
   const riv = [0, 1, 2, 3, 4, 5].filter(i => m.edge[h * 6 + i] & Hex.RIV).length;
   const fort = new Map(G.forts || []).get(h), p = G.pts.find(q => q.hex === h);
   const c = v => v === Infinity ? '—' : v;
@@ -1106,7 +1112,7 @@ function hexInfo(h) {
     <span>${Math.round(hx.h)} м</span>${hx.road ? '<span>дорога</span>' : ''}${riv ? '<span class="bl">река</span>' : ''}${fort ? `<span class="ac">укрепления ${fort}</span>` : ''}
     <span title="Множитель обороны в этой клетке">оборона ×${String(d).replace('.', ',')}</span>
     <span class="mu" title="Стоимость входа: пешие / колёсные / гусеничные">ход ${c(T.foot[hx.t])}/${c(T.wheel[hx.t])}/${c(T.track[hx.t])}</span>
-    <span class="mu">${String(Hex.colOf(h) + 1).padStart(2, '0')}${String(Hex.rowOf(h) + 1).padStart(2, '0')}</span>`;
+    <span class="mu">${String(H.colOf(h) + 1).padStart(2, '0')}${String(H.rowOf(h) + 1).padStart(2, '0')}</span>`;
   el.hidden = false;
 }
 

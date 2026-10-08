@@ -12,13 +12,13 @@ let ANIM = 0;
 
 /* ---------- геометрия ---------- */
 function hexPath(id, k) {
-  const cs = Hex.corners(id, k);
+  const cs = H.corners(id, k);
   cx.beginPath();
   for (let i = 0; i < 6; i++) { const p = w2s(cs[i]); i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y) }
   cx.closePath();
 }
 function addHex(id, k) {
-  const cs = Hex.corners(id, k);
+  const cs = H.corners(id, k);
   for (let i = 0; i < 6; i++) { const p = w2s(cs[i]); i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y) }
   cx.closePath();
 }
@@ -27,11 +27,11 @@ const EDGE_V = [[0, 1], [5, 0], [4, 5], [3, 4], [2, 3], [1, 2]];
 function regionEdges(has, list) {
   cx.beginPath();
   for (const h of list) {
-    const c = Hex.center(h), q = w2s(c);
+    const c = H.center(h), q = w2s(c);
     if (!onScreen(q, 60)) continue;
-    const cs = Hex.corners(h);
+    const cs = H.corners(h);
     for (let d = 0; d < 6; d++) {
-      const n = Hex.nb(h, d);
+      const n = H.nb(h, d);
       if (n >= 0 && has(n)) continue;
       const [i, j] = EDGE_V[d], a = w2s(cs[i]), b = w2s(cs[j]);
       cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y);
@@ -47,16 +47,16 @@ let FOGW = null, fogKey = '';
 const FK = 3;
 function drawFog() {
   if (!G.vis || G.spec || G.phase !== 'battle') return;
-  if (!FOGW) { FOGW = document.createElement('canvas'); FOGW.width = WW * FK; FOGW.height = WH * FK }
+  if (!FOGW) { FOGW = document.createElement('canvas'); FOGW.width = H.WW * FK; FOGW.height = H.WH * FK }
   const key = G.mapId + '|' + G.visV;
   if (key !== fogKey) {
     fogKey = key;
     const t = document.createElement('canvas'); t.width = FOGW.width; t.height = FOGW.height;
     const g = t.getContext('2d');
     g.scale(FK, FK); g.fillStyle = 'rgb(5,9,14)'; g.beginPath();
-    for (let id = 0; id < Hex.NH; id++) {
+    for (let id = 0; id < H.NH; id++) {
       if (G.vis.has(id)) continue;
-      const cs = Hex.corners(id, 1.04);
+      const cs = H.corners(id, 1.04);
       cs.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)); g.closePath();
     }
     g.fill();
@@ -67,7 +67,7 @@ function drawFog() {
   cx.save();
   cx.translate(CW / 2, CH / 2); cx.scale(G.view.s, G.view.s); cx.translate(-G.view.x, -G.view.y);
   cx.globalAlpha = .64; cx.imageSmoothingEnabled = true;
-  cx.drawImage(FOGW, 0, 0, WW, WH);
+  cx.drawImage(FOGW, 0, 0, H.WW, H.WH);
   cx.restore();
   /* граница обзора */
   cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1;
@@ -80,19 +80,19 @@ function drawSupplyOverlay() {
   if (!G.showSupply || !G.supply) return;
   cx.save();
   cx.fillStyle = 'rgba(255,70,50,.16)'; cx.beginPath();
-  for (let id = 0; id < Hex.NH; id++) { if (G.supply.has(id)) continue; const c = w2s(Hex.center(id)); if (onScreen(c, 40)) addHex(id, 1) }
+  for (let id = 0; id < H.NH; id++) { if (G.supply.has(id)) continue; const c = w2s(H.center(id)); if (onScreen(c, 40)) addHex(id, 1) }
   cx.fill();
   if (G.dist) {
     const by = new Map();
     for (const [h, i] of G.dist) { if (!by.has(i)) by.set(i, []); by.get(i).push(h) }
     for (const [i, list] of by) {
       const col = DIST_COL[i % DIST_COL.length];
-      cx.beginPath(); for (const h of list) { const c = w2s(Hex.center(h)); if (onScreen(c, 40)) addHex(h, 1) } cx.fillStyle = `rgba(${col},.07)`; cx.fill();
+      cx.beginPath(); for (const h of list) { const c = w2s(H.center(h)); if (onScreen(c, 40)) addHex(h, 1) } cx.fillStyle = `rgba(${col},.07)`; cx.fill();
       regionEdges(n => G.dist.get(n) === i, list); cx.strokeStyle = `rgba(${col},.65)`; cx.lineWidth = 1.6; cx.stroke();
     }
     (G.districts || []).forEach((d, i) => {
       if (d.hex < 0) return;
-      const q = w2s(Hex.center(d.hex)), txt = `снабж. ${d.used}/${d.cap}`;
+      const q = w2s(H.center(d.hex)), txt = `снабж. ${d.used}/${d.cap}`;
       cx.font = '700 11px system-ui'; cx.textAlign = 'center';
       const w = cx.measureText(txt).width + 10, y = q.y + Hex.R * G.view.s * .95;
       cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, y, w, 16, 4); cx.fill();
@@ -112,17 +112,17 @@ function drawCmdSectors() {
   for (const hq of hqs) {
     const mine = !hq.seat || hq.seat === G.mySeat;
     const col = mine ? '242,179,61' : '111,209,141';
-    const list = Hex.within(hq.hex, UT.hq.cmd).filter(h => h >= 0);
+    const list = H.within(hq.hex, UT.hq.cmd).filter(h => h >= 0);
     const set = new Set(list);
     cx.beginPath();
-    for (const h of list) { const c = w2s(Hex.center(h)); if (onScreen(c, 40)) addHex(h, 1) }
+    for (const h of list) { const c = w2s(H.center(h)); if (onScreen(c, 40)) addHex(h, 1) }
     cx.fillStyle = `rgba(${col},${hq.moved ? .04 : .09})`; cx.fill();
     regionEdges(n => set.has(n), list);
     cx.strokeStyle = `rgba(${col},${hq.moved ? .35 : .8})`; cx.lineWidth = 1.8;
     if (hq.moved) cx.setLineDash([5, 4]);
     cx.stroke(); cx.setLineDash([]);
     /* подпись: чей сектор и держит ли он управление */
-    const q = w2s(Hex.center(hq.hex));
+    const q = w2s(H.center(hq.hex));
     if (onScreen(q, 60)) {
       const who = mine ? 'ваша ставка' : (typeof seatName === 'function' && seatName(hq.seat)) || 'союзник';
       const txt = hq.moved ? who + ' · на марше' : who;
@@ -138,7 +138,7 @@ function drawCmdSectors() {
 /* ---------- линия фронта: сглажена, стороны чуть подкрашены ---------- */
 function drawFront() {
   if (!G.frontY || !G.frontY.length) return;
-  const fy = chaikin(G.frontY, 2).map(w2s), a = w2s({ x: 0, y: 0 }), b = w2s({ x: WW, y: WH });
+  const fy = chaikin(G.frontY, 2).map(w2s), a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
   cx.save();
   const own = G.spec ? N : G.side;
   for (const [side, edgeX] of [[N, a.x], [S, b.x]]) {
@@ -158,7 +158,7 @@ function drawPontoons() {
   const s = G.view.s;
   for (const [key, st] of G.br || []) {
     if (st !== 'pontoon') continue;
-    const [a, b] = key.split('-').map(Number), A = Hex.center(a), B = Hex.center(b), q = w2s({ x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 });
+    const [a, b] = key.split('-').map(Number), A = H.center(a), B = H.center(b), q = w2s({ x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 });
     if (!onScreen(q, 40)) continue;
     const ang = Math.atan2(B.y - A.y, B.x - A.x), L = clamp(s * 2.6, 12, 40), Wd = clamp(s * .8, 4, 11);
     cx.save(); cx.translate(q.x, q.y); cx.rotate(ang);
@@ -171,7 +171,7 @@ function drawPontoons() {
 function drawMines() {
   const s = G.view.s;
   for (const m of G.mines || []) {
-    const q = w2s(Hex.center(m.hex));
+    const q = w2s(H.center(m.hex));
     if (!onScreen(q, 30)) continue;
     const own = G.spec ? m.side === N : m.side === G.side, col = own ? '#d8bf88' : '#ff6b55';
     /* условный знак минного поля: ряд «колышков» с проволокой */
@@ -189,10 +189,10 @@ function drawMines() {
 function drawWorks() {
   const s = G.view.s;
   for (const [h, lvl] of G.forts || []) {
-    const c = Hex.center(h);
+    const c = H.center(h);
     if (!onScreen(w2s(c), 60)) continue;
     for (let ring = 0; ring < lvl; ring++) {
-      const cs = Hex.corners(h, .84 - ring * .14).map(w2s);
+      const cs = H.corners(h, .84 - ring * .14).map(w2s);
       const zig = () => {
         cx.beginPath();
         for (let i = 0; i < 6; i++) {
@@ -211,7 +211,7 @@ function drawWorks() {
   }
   /* противотанковые «ежи» */
   for (const h of G.obst || []) {
-    const c = w2s(Hex.center(h));
+    const c = w2s(H.center(h));
     if (!onScreen(c, 60)) continue;
     const r = Hex.R * s * .55, z = clamp(s * .8, 3, 8);
     for (let i = -2; i <= 2; i++) for (const row of [-1, 1]) {
@@ -227,7 +227,7 @@ function drawWorks() {
 function drawPoints() {
   const s = G.view.s, own0 = G.spec ? N : G.side;
   for (const p of G.pts) {
-    const q = w2s(Hex.center(p.hex));
+    const q = w2s(H.center(p.hex));
     if (!onScreen(q, 80)) continue;
     const col = !p.owner ? '#c8c8b8' : p.owner === N ? '#6cc3ff' : '#ff8a72';
     hexPath(p.hex, .95);
@@ -262,9 +262,9 @@ function drawSelection() {
   const s = G.view.s, T = utFor(u.side)[u.k];
   /* выбранная клетка: золотой контур с пульсом */
   hexPath(u.hex, .98); cx.strokeStyle = `rgba(242,179,61,${.75 + .25 * Math.sin(ANIM * 5)})`; cx.lineWidth = 2.6; cx.stroke();
-  if (T.cmd) { const set = new Set(Hex.within(u.hex, T.cmd)); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(200,160,255,.55)'; cx.setLineDash([6, 5]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
-  if (T.bomb) { const set = new Set(Hex.within(u.hex, T.bomb.rng)); cx.beginPath(); for (const h of set) addHex(h, 1); cx.fillStyle = 'rgba(255,140,90,.05)'; cx.fill(); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(255,150,100,.6)'; cx.setLineDash([4, 4]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
-  if (T.aa) { const set = new Set(Hex.within(u.hex, T.aa)); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(160,220,255,.5)'; cx.setLineDash([2, 4]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
+  if (T.cmd) { const set = new Set(H.within(u.hex, T.cmd)); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(200,160,255,.55)'; cx.setLineDash([6, 5]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
+  if (T.bomb) { const set = new Set(H.within(u.hex, T.bomb.rng)); cx.beginPath(); for (const h of set) addHex(h, 1); cx.fillStyle = 'rgba(255,140,90,.05)'; cx.fill(); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(255,150,100,.6)'; cx.setLineDash([4, 4]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
+  if (T.aa) { const set = new Set(H.within(u.hex, T.aa)); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(160,220,255,.5)'; cx.setLineDash([2, 4]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }
   if (G.reach && G.isMyTurn) {
     const list = [];
     for (const [h, r] of G.reach) if (h !== u.hex && !r.through) list.push(h);
@@ -279,7 +279,7 @@ function drawSelection() {
     cx.strokeStyle = 'rgba(140,210,255,.9)'; cx.lineWidth = 1.6; cx.stroke();
     /* путь под курсором: стрелка и стоимость */
     if (G.hover >= 0 && G.reach.has(G.hover) && G.hover !== u.hex && !G.reach.get(G.hover).through) {
-      const raw = Rules.pathTo(G.reach, G.hover).map(h => Hex.center(h));
+      const raw = Rules.pathTo(G.reach, G.hover).map(h => H.center(h));
       const p = chaikin(raw, 2).map(w2s);
       cx.lineJoin = 'round'; cx.lineCap = 'round';
       cx.beginPath(); p.forEach((q, i) => i ? cx.lineTo(q.x, q.y) : cx.moveTo(q.x, q.y));
@@ -292,7 +292,7 @@ function drawSelection() {
       const r = G.reach.get(G.hover), left = Math.max(0, u.mp - r.c);
       const txt = r.ford ? 'брод · весь ход' : `${fmtMp(r.c)} оч. · ост. ${fmtMp(left)}`;
       cx.font = '700 11px system-ui'; cx.textAlign = 'center';
-      const tw = cx.measureText(txt).width + 12, tq = w2s(Hex.center(G.hover)), ty = tq.y + Hex.R * s * .55;
+      const tw = cx.measureText(txt).width + 12, tq = w2s(H.center(G.hover)), ty = tq.y + Hex.R * s * .55;
       cx.fillStyle = 'rgba(6,10,14,.92)'; rr(cx, tq.x - tw / 2, ty, tw, 17, 5); cx.fill();
       cx.strokeStyle = 'rgba(255,230,160,.5)'; cx.lineWidth = 1; rr(cx, tq.x - tw / 2 + .5, ty + .5, tw - 1, 16, 5); cx.stroke();
       cx.fillStyle = '#ffe6a0'; cx.fillText(txt, tq.x, ty + 12.5);
@@ -300,7 +300,7 @@ function drawSelection() {
   }
   /* цели: перекрестие и плашка с соотношением сил */
   for (const t of G.targets || []) {
-    const q = w2s(Hex.center(t.hex)), R = Hex.R * s * .78, hot = t.hex === G.hover;
+    const q = w2s(H.center(t.hex)), R = Hex.R * s * .78, hot = t.hex === G.hover;
     cx.strokeStyle = t.col; cx.lineWidth = hot ? 2.6 : 1.8;
     cx.beginPath(); cx.arc(q.x, q.y, R, 0, 7); cx.stroke();
     cx.beginPath();
@@ -318,8 +318,8 @@ const fmtMp = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
 
 /* ---------- фишки ---------- */
 function drawUnits() {
-  for (const g of G.ghosts || []) { const q = w2s(Hex.center(g.hex)); if (onScreen(q, 60)) counter({ ...g, ghost: 1, side: G.side === N ? S : N }, q, .65) }
-  const list = G.units.filter(u => !ANIMS.hidden.has(u.id)).map(u => ({ u, p: ANIMS.pos.get(u.id) || Hex.center(u.hex) }));
+  for (const g of G.ghosts || []) { const q = w2s(H.center(g.hex)); if (onScreen(q, 60)) counter({ ...g, ghost: 1, side: G.side === N ? S : N }, q, .65) }
+  const list = G.units.filter(u => !ANIMS.hidden.has(u.id)).map(u => ({ u, p: ANIMS.pos.get(u.id) || H.center(u.hex) }));
   list.sort((a, b) => (a.u.id === G.sel) - (b.u.id === G.sel) || a.p.y - b.p.y);
   for (const { u, p } of list) { const q = w2s(p); if (onScreen(q, 70)) counter(u, q) }
   for (const d of ANIMS.dying) { const k = clamp((RT() - d.t0) / .9, 0, 1); counter(d.u, w2s(d.p), 1 - k, 1 - k * .25) }
@@ -342,7 +342,7 @@ function animTick() {
 function floatText(p, txt, col, big) { ANIMS.floats.push({ p: { ...p }, txt, col, big, t0: RT() }) }
 const unitKind = id => { const u = G.units.find(x => x.id === id); return u ? u.k : null };
 function startAnim(e) {
-  const now = RT(), k = 1 / PACE(), center = Hex.center;
+  const now = RT(), k = 1 / PACE(), center = H.center;
   if (e.e === 'move') {
     const u = G.units.find(x => x.id === e.id);
     const pts = e.path.map(center);
@@ -391,7 +391,7 @@ function startAnim(e) {
     if (e.big) for (let i = 0; i < 3; i++) fxBoom(ringPt(D, 1.5, 4.5), .7, .14 + i * .1, {});
     if (e.ld !== undefined) setTimeout(() => { floatText(D, e.ld ? '−' + e.ld : 'мимо', e.ld ? '#ff8f80' : '#cfe0ea', e.ld >= 3); upd(e.id, -e.ld) }, 250 * k);
     ANIMS.cur = { end: now + .5 * k };
-    if (e.hex >= 0 && G.mapId && Hex.build(G.mapId).hexes[e.hex].t === 'city') addFire(e.hex);
+    if (e.hex >= 0 && G.mapId && H.build(G.mapId).hexes[e.hex].t === 'city') addFire(e.hex);
     Sound.boom({ ...D, w: e.big ? 90 : 40 }, false);
   } else if (e.e === 'dead') {
     const u = G.units.find(x => x.id === e.id), p = center(e.hex);
@@ -429,7 +429,7 @@ function startAnim(e) {
     ANIMS.cur = { end: now + .25 * k };
   } else if (e.e === 'smoke') {
     floatText(center(e.hex), 'дым', '#d8dadc');
-    if (!G.smoke.includes(e.hex)) G.smoke = G.smoke.concat(Hex.within(e.hex, 1));
+    if (!G.smoke.includes(e.hex)) G.smoke = G.smoke.concat(H.within(e.hex, 1));
     ANIMS.cur = { end: now + .25 * k };
   } else if (e.e === 'promote') {
     floatText(center(e.hex), e.lv >= 2 ? 'ветераны ★★' : 'обстреляны ★', '#f2c94c');
@@ -457,7 +457,7 @@ function drawFloats() {
 /* ---------- следы боя: остовы и пожары ---------- */
 const MARKS = { wrecks: [], fires: [] };
 function marksReset() { MARKS.wrecks.length = 0; MARKS.fires.length = 0; fxReset() }
-function addWreck(hex, k, side) { const c = Hex.center(hex); MARKS.wrecks.push({ x: c.x + (Math.random() - .5) * 3, y: c.y + (Math.random() - .5) * 2, k, side, turn: G.turn, seed: Math.random() * 9 }) }
+function addWreck(hex, k, side) { const c = H.center(hex); MARKS.wrecks.push({ x: c.x + (Math.random() - .5) * 3, y: c.y + (Math.random() - .5) * 2, k, side, turn: G.turn, seed: Math.random() * 9 }) }
 function addFire(hex) { if (!MARKS.fires.some(f => f.hex === hex)) MARKS.fires.push({ hex, turn: G.turn, seed: Math.random() * 9 }) }
 function drawWrecks() {
   const s = G.view.s;
@@ -471,13 +471,13 @@ function drawWrecks() {
 function drawBurning() {
   MARKS.fires = MARKS.fires.filter(f => G.turn - f.turn < 3);
   for (const w of MARKS.wrecks) { const age = G.turn - w.turn; if (age < 2) drawFire(w, age < 1 ? .55 : .25, .7, w.seed) }
-  for (const f of MARKS.fires) drawFire(Hex.center(f.hex), clamp(1 - (G.turn - f.turn) / 3, .2, 1), 1, f.seed);
+  for (const f of MARKS.fires) drawFire(H.center(f.hex), clamp(1 - (G.turn - f.turn) / 3, .2, 1), 1, f.seed);
 }
 /** дымовые завесы — плотные клубы над клетками */
 function drawSmokeScreens() {
   const s = G.view.s, T = RT();
   for (const h of G.smoke || []) {
-    const c = Hex.center(h), q = w2s(c);
+    const c = H.center(h), q = w2s(c);
     if (!onScreen(q, 100)) continue;
     for (let i = 0; i < 4; i++) {
       const a = T * .25 + i * 1.6 + h, R = Hex.R * s * (.62 + .1 * Math.sin(T * .6 + i));
@@ -512,7 +512,7 @@ function draw(dt) {
   drawWorks();
   if (G.phase === 'deploy' && G.deploy) {
     const set = new Set(G.deploy);
-    cx.beginPath(); for (const h of G.deploy) { const q = w2s(Hex.center(h)); if (onScreen(q, 40)) addHex(h, 1) } cx.fillStyle = 'rgba(242,179,61,.06)'; cx.fill();
+    cx.beginPath(); for (const h of G.deploy) { const q = w2s(H.center(h)); if (onScreen(q, 40)) addHex(h, 1) } cx.fillStyle = 'rgba(242,179,61,.06)'; cx.fill();
     regionEdges(n => set.has(n), G.deploy); cx.strokeStyle = 'rgba(242,179,61,.75)'; cx.lineWidth = 2; cx.setLineDash([8, 5]); cx.stroke(); cx.setLineDash([]);
   }
   if (G.spawn) { cx.beginPath(); for (const h of G.spawn) addHex(h, .92); cx.fillStyle = 'rgba(111,209,141,.18)'; cx.fill(); cx.strokeStyle = 'rgba(111,209,141,.7)'; cx.lineWidth = 1.4; cx.stroke() }
@@ -532,19 +532,19 @@ function draw(dt) {
 }
 
 /* ---------- мини-карта ---------- */
-function miniRect() { const a = mapArea(), h = CW < 700 ? clamp(CH * .15, 80, 130) : clamp(CH * .24, 110, 210), w = h * WW / WH; return { x: a.l + 12, y: CH - h - 14, w, h } }
+function miniRect() { const a = mapArea(), h = CW < 700 ? clamp(CH * .15, 80, 130) : clamp(CH * .24, 110, 210), w = h * H.WW / H.WH; return { x: a.l + 12, y: CH - h - 14, w, h } }
 function drawMini() {
   if (!MINI || !G.roomId) return;
-  const m = miniRect(), k = m.w / WW;
+  const m = miniRect(), k = m.w / H.WW;
   cx.save();
   cx.fillStyle = 'rgba(0,0,0,.5)'; rr(cx, m.x - 4, m.y - 4, m.w + 10, m.h + 10, 8); cx.fill();
   cx.fillStyle = 'rgba(8,13,18,.95)'; rr(cx, m.x - 5, m.y - 5, m.w + 10, m.h + 10, 8); cx.fill();
   cx.strokeStyle = 'rgba(120,150,170,.35)'; cx.lineWidth = 1; rr(cx, m.x - 4.5, m.y - 4.5, m.w + 9, m.h + 9, 8); cx.stroke();
   cx.globalAlpha = .92; cx.drawImage(MINI, m.x, m.y, m.w, m.h); cx.globalAlpha = 1;
-  if (G.vis && !G.spec && G.phase === 'battle') { cx.fillStyle = 'rgba(4,8,12,.42)'; cx.beginPath(); for (let h = 0; h < Hex.NH; h++) if (!G.vis.has(h)) { const c = Hex.center(h); cx.rect(m.x + (c.x - Hex.HW / 2) * k, m.y + (c.y - Hex.R) * k, Hex.HW * k + .6, Hex.VS * k + .8) } cx.fill() }
+  if (G.vis && !G.spec && G.phase === 'battle') { cx.fillStyle = 'rgba(4,8,12,.42)'; cx.beginPath(); for (let h = 0; h < H.NH; h++) if (!G.vis.has(h)) { const c = H.center(h); cx.rect(m.x + (c.x - Hex.HW / 2) * k, m.y + (c.y - Hex.R) * k, Hex.HW * k + .6, Hex.VS * k + .8) } cx.fill() }
   if (G.frontY) { cx.strokeStyle = '#f2b33d'; cx.lineWidth = 1.4; cx.beginPath(); G.frontY.forEach((p, i) => i ? cx.lineTo(m.x + p.x * k, m.y + p.y * k) : cx.moveTo(m.x + p.x * k, m.y + p.y * k)); cx.stroke() }
-  for (const p of G.pts) { const c = Hex.center(p.hex), z = p.city ? 5 : 3.5; cx.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; cx.strokeStyle = '#000'; cx.lineWidth = 1; cx.fillRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z); cx.strokeRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z) }
-  for (const u of G.units) { const c = Hex.center(u.hex); cx.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; cx.fillRect(m.x + c.x * k - 1.5, m.y + c.y * k - 1.5, 3, 3) }
+  for (const p of G.pts) { const c = H.center(p.hex), z = p.city ? 5 : 3.5; cx.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; cx.strokeStyle = '#000'; cx.lineWidth = 1; cx.fillRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z); cx.strokeRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z) }
+  for (const u of G.units) { const c = H.center(u.hex); cx.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; cx.fillRect(m.x + c.x * k - 1.5, m.y + c.y * k - 1.5, 3, 3) }
   const a = s2w({ x: 0, y: 0 }), b = s2w({ x: CW, y: CH });
   cx.beginPath(); cx.rect(m.x, m.y, m.w, m.h); cx.clip();
   cx.strokeStyle = 'rgba(255,255,255,.85)'; cx.lineWidth = 1.2; cx.strokeRect(m.x + a.x * k, m.y + a.y * k, (b.x - a.x) * k, (b.y - a.y) * k);

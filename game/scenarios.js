@@ -83,7 +83,7 @@ module.exports = {
     this.units = []; this._cs = { n: 0, s: 0 };
     for (const [pid, side] of Object.entries(sc.owner || {})) { const p = this.pts.find(q => q.id === pid); if (p) p.owner = p.home = side }
     for (const side of [N, S]) for (const [k, x, y, o] of sc.forces[side]) this.placeAt(side, k, x, y, o);
-    for (const [side, x, y] of sc.mines || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
+    for (const [side, x, y] of sc.mines || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
     this.raidV = this.units.filter(u => u.raid).reduce((s, u) => s + UT[u.k].price, 0);
     this.events = [];
     this.log('*', `${sc.n}. ${sc.brief}`, 'hq');

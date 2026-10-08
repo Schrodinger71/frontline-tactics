@@ -19,6 +19,12 @@
    ============================================================ */
 
 let cv, cx, CW = 0, CH = 0, DPR = 1;
+/* Сетка текущей карты: размеры у карт разные (широкие шире, чем выше),
+   поэтому вся геометрия идёт через H, а не через общие WW/WH. */
+let H = Hex.grid(WW, WH);
+function useMap(id) { H = Hex.gridFor(id); return H }
+/** размеры текущей карты */
+const mapW = () => H.WW, mapH = () => H.WH;
 const CAM = { x: 150, y: 220, s: 5, ax: null, ay: 0, sx: 0, sy: 0, moving: false };
 const S_MAX = 10.5;
 const w2s = p => ({ x: (p.x - G.view.x) * G.view.s + CW / 2, y: (p.y - G.view.y) * G.view.s + CH / 2 });

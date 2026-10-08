@@ -27,15 +27,15 @@ const MAPGEO = { id: null, edges: null, rivers: null, roads: null, bridges: null
 /** геометрия карты, которую рисуем вектором: один раз на карту */
 function mapGeo(id) {
   if (MAPGEO.id === id) return MAPGEO;
-  const T = Terrain.get(id), m = Hex.build(id);
+  const T = Terrain.get(id), m = H.build(id);
   /* рёбра сетки — каждое по разу */
   const E = [];
-  for (let h = 0; h < Hex.NH; h++) {
-    const cs = Hex.corners(h);
+  for (let h = 0; h < H.NH; h++) {
+    const cs = H.corners(h);
     for (let i = 0; i < 6; i++) {
       /* ребро между вершинами i и i+1; сосед за ним — по направлению */
       const d = [0, 5, 4, 3, 2, 1][i];
-      const n = Hex.nb(h, d);
+      const n = H.nb(h, d);
       if (n >= 0 && n < h) continue;
       const a = cs[i], b = cs[(i + 1) % 6];
       const lake = m.hexes[h].t === 'lake' && (n < 0 || m.hexes[n].t === 'lake');
@@ -54,7 +54,7 @@ function mapGeo(id) {
     }
     return best || 0;
   };
-  MAPGEO.bridges = Hex.bridgeList(id).map(b => {
+  MAPGEO.bridges = H.bridgeList(id).map(b => {
     let p = null, pd = 49;
     for (const q of nat) { const d = (q.x - b.x) ** 2 + (q.y - b.y) ** 2; if (d < pd) { pd = d; p = q } }
     const x = p ? p.x : b.x, y = p ? p.y : b.y;
@@ -119,7 +119,7 @@ function renderBase(s) {
   const bg = cx.createRadialGradient(CW / 2, CH / 2, 0, CW / 2, CH / 2, Math.max(CW, CH) * .75);
   bg.addColorStop(0, '#0b1116'); bg.addColorStop(1, '#030507');
   cx.fillStyle = bg; cx.fillRect(0, 0, CW, CH);
-  const a = w2s({ x: 0, y: 0 }), b = w2s({ x: WW, y: WH });
+  const a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
   /* Тень под листом карты. На приближении лист больше экрана в разы, а размытие
      по такому прямоугольнику стоит десятки миллисекунд — поэтому тень рисуем
      только когда край листа вообще виден, а подложку заливаем обрезанной. */
@@ -142,16 +142,16 @@ function renderBase(s) {
      видимый кусок. Раньше в каждый кадр отдавалась вся текстура целиком — на
      максимальном приближении это растягивание в несколько раз стоило десятки
      миллисекунд и ощущалось рывками при перемещении. */
-  const lv = terLevel(WW * s * DPR);
+  const lv = terLevel(H.WW * s * DPR);
   const halfW = CW / 2 / s + 2, halfH = CH / 2 / s + 2;
-  const x0 = clamp(G.view.x - halfW, 0, WW), x1 = clamp(G.view.x + halfW, 0, WW);
-  const y0 = clamp(G.view.y - halfH, 0, WH), y1 = clamp(G.view.y + halfH, 0, WH);
+  const x0 = clamp(G.view.x - halfW, 0, H.WW), x1 = clamp(G.view.x + halfW, 0, H.WW);
+  const y0 = clamp(G.view.y - halfH, 0, H.WH), y1 = clamp(G.view.y + halfH, 0, H.WH);
   if (x1 - x0 > .01 && y1 - y0 > .01) {
     /* при растягивании дорогое сглаживание не окупается — картинка всё равно мягкая */
-    const upscale = lv.width < WW * s * DPR;
+    const upscale = lv.width < H.WW * s * DPR;
     cx.imageSmoothingEnabled = true;
     cx.imageSmoothingQuality = upscale ? 'low' : 'high';
-    const kx = lv.width / WW, ky = lv.height / WH;
+    const kx = lv.width / H.WW, ky = lv.height / H.WH;
     cx.drawImage(lv, x0 * kx, y0 * ky, (x1 - x0) * kx, (y1 - y0) * ky, x0, y0, x1 - x0, y1 - y0);
   }
   cx.restore();
@@ -190,13 +190,13 @@ function drawFrame(a, b, s) {
   cx.fillStyle = 'rgba(190,206,216,.5)'; cx.strokeStyle = 'rgba(190,206,216,.4)';
   cx.font = '600 10px ui-monospace,Consolas,monospace';
   cx.beginPath();
-  for (let x = 0; x <= WW; x += step) {
+  for (let x = 0; x <= H.WW; x += step) {
     const q = w2s({ x, y: 0 }), big = x % 50 === 0, L = big ? 7 : 4;
     if (q.x < -20 || q.x > CW + 20) continue;
     const X = Math.round(q.x) + .5;
     cx.moveTo(X, a.y - 1); cx.lineTo(X, a.y - 1 - L); cx.moveTo(X, b.y + 1); cx.lineTo(X, b.y + 1 + L);
   }
-  for (let y = 0; y <= WH; y += step) {
+  for (let y = 0; y <= H.WH; y += step) {
     const q = w2s({ x: 0, y }), big = y % 50 === 0, L = big ? 7 : 4;
     if (q.y < -20 || q.y > CH + 20) continue;
     const Y = Math.round(q.y) + .5;
@@ -204,11 +204,11 @@ function drawFrame(a, b, s) {
   }
   cx.stroke();
   cx.textAlign = 'center';
-  for (let x = 50; x < WW; x += 50) { const q = w2s({ x, y: 0 }); if (q.x > 0 && q.x < CW) { cx.fillText(x, q.x, a.y - 11); cx.fillText(x, q.x, b.y + 19) } }
+  for (let x = 50; x < H.WW; x += 50) { const q = w2s({ x, y: 0 }); if (q.x > 0 && q.x < CW) { cx.fillText(x, q.x, a.y - 11); cx.fillText(x, q.x, b.y + 19) } }
   cx.textAlign = 'right';
-  for (let y = 50; y < WH; y += 50) { const q = w2s({ x: 0, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, a.x - 10, q.y + 3) }
+  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: 0, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, a.x - 10, q.y + 3) }
   cx.textAlign = 'left';
-  for (let y = 50; y < WH; y += 50) { const q = w2s({ x: WW, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, b.x + 10, q.y + 3) }
+  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: H.WW, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, b.x + 10, q.y + 3) }
 }
 
 /* ---------- кроны деревьев: вблизи лес из отдельных крон с тенью ----------
@@ -347,18 +347,18 @@ function drawGrid(geo, s) {
   if (hw > 74) {
     cx.font = `500 ${Math.round(clamp(hw * .11, 8, 11))}px ui-monospace,Consolas,monospace`;
     cx.fillStyle = `rgba(220,228,210,${clamp((hw - 74) / 50, 0, .2)})`; cx.textAlign = 'center';
-    for (let h = 0; h < Hex.NH; h++) {
-      const c = Hex.center(h);
+    for (let h = 0; h < H.NH; h++) {
+      const c = H.center(h);
       if (c.x < a.x || c.x > b.x || c.y < a.y || c.y > b.y) continue;
       const q = w2s(c);
-      cx.fillText(String(Hex.colOf(h) + 1).padStart(2, '0') + String(Hex.rowOf(h) + 1).padStart(2, '0'), q.x, q.y - Hex.R * s * .72);
+      cx.fillText(String(H.colOf(h) + 1).padStart(2, '0') + String(H.rowOf(h) + 1).padStart(2, '0'), q.x, q.y - Hex.R * s * .72);
     }
   }
 }
 /* ---------- тонировка типов клеток ---------- */
 const TYPE_TINT = { forest: 'rgba(40,140,70,.26)', hill: 'rgba(210,160,90,.24)', city: 'rgba(200,200,200,.24)', marsh: 'rgba(70,170,170,.24)', mount: 'rgba(235,225,210,.28)', lake: 'rgba(60,120,200,.2)', open: null };
 function drawTypeTint(s) {
-  const m = Hex.build(G.mapId);
+  const m = H.build(G.mapId);
   for (const t in TYPE_TINT) {
     if (!TYPE_TINT[t]) continue;
     cx.beginPath();
@@ -366,7 +366,7 @@ function drawTypeTint(s) {
       if (hx.t !== t) continue;
       const q = w2s(hx);
       if (!onScreen(q, 60)) continue;
-      Hex.corners(hx.id, .96).forEach((p, i) => { const r = w2s(p); i ? cx.lineTo(r.x, r.y) : cx.moveTo(r.x, r.y) }); cx.closePath();
+      H.corners(hx.id, .96).forEach((p, i) => { const r = w2s(p); i ? cx.lineTo(r.x, r.y) : cx.moveTo(r.x, r.y) }); cx.closePath();
     }
     cx.fillStyle = TYPE_TINT[t]; cx.fill();
   }
@@ -388,15 +388,15 @@ function drawTypeTint(s) {
 }
 /** рёбра-реки (по правилам) — когда выбрана часть: видно, где брод */
 function drawRiverEdges(s) {
-  const m = Hex.build(G.mapId), st = new Map(G.br || []);
+  const m = H.build(G.mapId), st = new Map(G.br || []);
   cx.lineCap = 'round';
-  for (let h = 0; h < Hex.NH; h++) for (let d = 0; d < 3; d++) {
+  for (let h = 0; h < H.NH; h++) for (let d = 0; d < 3; d++) {
     const e = m.edge[h * 6 + d];
     if (!(e & Hex.RIV)) continue;
-    const n = Hex.nb(h, d), q = w2s(Hex.center(h));
+    const n = H.nb(h, d), q = w2s(H.center(h));
     if (!onScreen(q, 60)) continue;
     const key = Hex.edgeKey(h, n), bridge = ((e & Hex.BR) && st.get(key) !== 'down') || st.get(key) === 'pontoon';
-    const [p1, p2] = Hex.edgeEnds(h, d).map(w2s);
+    const [p1, p2] = H.edgeEnds(h, d).map(w2s);
     cx.strokeStyle = bridge ? 'rgba(220,210,160,.7)' : 'rgba(120,200,255,.75)'; cx.lineWidth = 2.2;
     cx.setLineDash(bridge ? [3, 4] : []);
     cx.beginPath(); cx.moveTo(p1.x, p1.y); cx.lineTo(p2.x, p2.y); cx.stroke();

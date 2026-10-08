@@ -44,7 +44,7 @@
   function edgeOf(ctx, a, d) {
     let e = ctx.map.edge[a * 6 + d];
     if (!(e & RIV) || !ctx.br) return e;
-    const b = Hex.nb(a, d), st = ctx.br.get(Hex.edgeKey(a, b));
+    const b = ctx.H.nb(a, d), st = ctx.br.get(Hex.edgeKey(a, b));
     if (st === 'down') e &= ~(BR | RD);
     else if (st === 'pontoon') e |= BR;
     return e;
@@ -73,7 +73,7 @@
   /** клетки, где стоит наземная часть противника, и её зона контроля */
   function zocOf(ctx, side) {
     const z = new Set();
-    for (const [h, u] of ctx.occ) if (u.side !== side) for (const n of Hex.neighbors(h)) z.add(n);
+    for (const [h, u] of ctx.occ) if (u.side !== side) for (const n of ctx.H.neighbors(h)) z.add(n);
     return z;
   }
   /**
@@ -93,7 +93,7 @@
       if (a !== u.hex && zoc.has(a)) continue;          /* в зоне контроля — дальше нельзя */
       if (out.get(a).stop) continue;
       for (let d = 0; d < 6; d++) {
-        const b = Hex.nb(a, d);
+        const b = ctx.H.nb(a, d);
         if (b < 0) continue;
         const occ = ctx.occ.get(b);
         if (occ && occ.side !== u.side) continue;
@@ -146,15 +146,15 @@
     const mods = [];
     const am = (t, v) => { if (Math.abs(v - 1) > .001) { A *= v; mods.push({ t, v, who: 'a' }) } };
     const dm = (t, v) => { if (Math.abs(v - 1) > .001) { D *= v; mods.push({ t, v, who: 'd' }) } };
-    const d = Hex.dirTo(att.hex, def.hex);
+    const d = ctx.H.dirTo(att.hex, def.hex);
     if (d >= 0 && !crossable(edgeOf(ctx, att.hex, d))) am('через реку', .5);
     /* охват: другие свои части рядом с целью; удар с двух сторон */
     let n = 0, opposite = false;
     for (let k = 0; k < 6; k++) {
-      const h = Hex.nb(def.hex, k), o = h >= 0 && ctx.occ.get(h);
+      const h = ctx.H.nb(def.hex, k), o = h >= 0 && ctx.occ.get(h);
       if (!o || o.side !== att.side || o.id === att.id || !UT[o.k].atk.soft) continue;
       n++;
-      if (Hex.nb(def.hex, (Hex.dirTo(def.hex, att.hex) + 3) % 6) === h) opposite = true;
+      if (ctx.H.nb(def.hex, (ctx.H.dirTo(def.hex, att.hex) + 3) % 6) === h) opposite = true;
     }
     if (n) am(`охват (${n})`, Math.min(1.36, 1 + .12 * n));
     if (ctx.counter && ctx.counter.has(def.hex)) am('контрудар', 1.3);

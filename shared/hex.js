@@ -15,8 +15,12 @@
   const node = typeof module !== 'undefined' && module.exports;
   const W = node ? require('./world') : g;
   const TerrainM = node ? require('./terrain') : g.Terrain;
-  const { WW, WH } = W;
+  const MAPSM = node ? require('./maps') : g;
 
+  /* Сетка строится под размеры КАРТЫ: широкие карты шире, чем выше, поэтому
+     COLS/ROWS/NH и вся геометрия у каждой карты свои. Сетки кешируются по
+     размеру, так что сервер спокойно держит комнаты с разными картами. */
+  function make(WW, WH) {
   const R = 5, HW = Math.sqrt(3) * R, VS = 1.5 * R;
   const COLS = Math.floor((WW - HW / 2) / HW), ROWS = Math.floor((WH - R) / VS) + 1;
   const NH = COLS * ROWS;
@@ -166,7 +170,32 @@
   }
   const edgeKey = (a, b) => Math.min(a, b) + '-' + Math.max(a, b);
 
-  const api = { R, HW, VS, COLS, ROWS, NH, RIV, BR, RD, center, nb, neighbors, dirTo, hexDist, hexAt, within, corners, edgeEnds, build, bridgeList, edgeKey, colOf, rowOf };
+  return { WW, WH, R, HW, VS, COLS, ROWS, NH, RIV, BR, RD, center, nb, neighbors, dirTo, hexDist, hexAt, within, corners, edgeEnds, build, bridgeList, edgeKey, colOf, rowOf };
+  }
+
+  const GRIDS = new Map();
+  /** сетка под размеры w×h (кешируется) */
+  function grid(w, h) {
+    const k = w + 'x' + h;
+    let v = GRIDS.get(k);
+    if (!v) GRIDS.set(k, v = make(w, h));
+    return v;
+  }
+  /** размеры карты: из её описания, иначе общие */
+  function dimsOf(id) {
+    const d = ((MAPSM && MAPSM.MAPS) || {})[id] || {};
+    return [d.w || W.WW, d.h || W.WH];
+  }
+  /** сетка нужной карты */
+  function gridFor(id) { const d = dimsOf(id); return grid(d[0], d[1]) }
+
+  /* По умолчанию наружу смотрит сетка общих размеров — так работает всё, что
+     ещё не знает про размеры карты. build/bridgeList всегда берут сетку карты. */
+  const api = Object.assign({}, grid(W.WW, W.WH), {
+    grid, gridFor, dimsOf,
+    build: id => gridFor(id).build(id),
+    bridgeList: id => gridFor(id).bridgeList(id)
+  });
   if (node) module.exports = api;
   else g.Hex = api;
 })(typeof window !== 'undefined' ? window : globalThis);

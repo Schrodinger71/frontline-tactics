@@ -382,3 +382,6 @@ span.tiny{min-width:3.4em;display:inline-block}
 .srow .snm2{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow .smon{font:600 .9em ui-monospace,Consolas,monospace;color:var(--ac)}
 .srow .sst{color:var(--mu);font-size:.85em;min-width:4.4em;text-align:right}
+/* превью широких карт шире и ниже — пропорции настоящие */
+.mapc canvas.wide{align-self:center}
+@media (max-width:760px){ .mapc canvas.wide{width:84px;height:auto} }

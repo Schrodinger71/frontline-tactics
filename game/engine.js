@@ -58,7 +58,10 @@ class Game {
     const scen = require('./scenarios').SCEN[mode];
     this.mapId = scen ? scen.map || 'valley' : typeof mapId === 'string' && Object.prototype.hasOwnProperty.call(MAPS, mapId) ? mapId : 'valley';
     this.mapDef = MAPS[this.mapId];
-    this.map = Hex.build(this.mapId);
+    /* сетка под размеры этой карты: широкие карты шире, чем выше */
+    this.H = Hex.gridFor(this.mapId);
+    this.WW = this.H.WW; this.WH = this.H.WH;
+    this.map = this.H.build(this.mapId);
     this.mode = mode;
     this.role = { n: 'both', s: 'both' };
     if (mode === 'defense') { this.role[creatorSide] = 'defender'; this.role[oppOf(creatorSide)] = 'attacker' }
@@ -78,10 +81,10 @@ class Game {
     this.recon = { n: new Set(), s: new Set() };
     this.weather = wxById('clear'); this.wxLeft = 3 + Math.floor(this.rnd() * 4);
     this.commanders = { n: this.makeCommander(), s: this.makeCommander() };
-    this.pts = this.mapDef.points.map(p => ({ ...p, hex: Hex.hexAt(p.x, p.y), home: p.owner }));
-    for (const [side, x, y, lvl] of this.mapDef.forts || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.forts.set(h, lvl || 1) }
-    for (const [side, x, y] of this.mapDef.obst || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.obst.set(h, side) }
-    for (const [side, x, y] of this.mapDef.mines || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
+    this.pts = this.mapDef.points.map(p => ({ ...p, hex: this.H.hexAt(p.x, p.y), home: p.owner }));
+    for (const [side, x, y, lvl] of this.mapDef.forts || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.forts.set(h, lvl || 1) }
+    for (const [side, x, y] of this.mapDef.obst || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.obst.set(h, side) }
+    for (const [side, x, y] of this.mapDef.mines || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
     /* ============================================================
        МЕСТА (командиры). Сторона — это команда; на стороне от одного
        до MAX_SEATS мест, каждое ведёт свои части и свой бюджет.
@@ -122,7 +125,7 @@ class Game {
     for (const side of [N, S]) {
       const mine = this.seatsOf(side), x = side === N ? 45 : 255;
       mine.forEach((st, i) => {
-        const y = Math.round(W.WH * (i + 1) / (mine.length + 1));
+        const y = Math.round(this.WH * (i + 1) / (mine.length + 1));
         this.spawn('hq', side, this.freeHex(x, y, 'hq'), { seat: st.id });
         /* sited: командир обязан сам выбрать место пункта до начала партии */
         this.spawn('fob', side, this.freeHex(side === N ? x - 12 : x + 12, y, 'fob'), { seat: st.id, sited: false, ent: 2 });
@@ -168,9 +171,9 @@ class Game {
   }
   /** ближайшая свободная проходимая клетка к точке */
   freeHex(x, y, k) {
-    let h = Hex.hexAt(x, y);
+    let h = this.H.hexAt(x, y);
     if (h >= 0 && !this.unitAt(h) && this.passable(k, h)) return h;
-    for (let r = 1; r < 6; r++) for (const n of Hex.within(h, r)) if (!this.unitAt(n) && this.passable(k, n)) return n;
+    for (let r = 1; r < 6; r++) for (const n of this.H.within(h, r)) if (!this.unitAt(n) && this.passable(k, n)) return n;
     return h;
   }
   unitAt(hex) { return this.units.find(u => u.hex === hex && u.str > 0) }
@@ -185,9 +188,9 @@ class Game {
       if (truth || u.side === side || this.vis[side].has(u.hex) && this.seen(side, u)) occ.set(u.hex, u);
     }
     const support = { n: new Set(), s: new Set() };
-    for (const u of this.units) if (u.support && u.str > 0 && (truth || u.side === side || occ.get(u.hex) === u)) for (const h of Hex.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
+    for (const u of this.units) if (u.support && u.str > 0 && (truth || u.side === side || occ.get(u.hex) === u)) for (const h of this.H.within(u.hex, UT[u.k].bomb.rng)) support[u.side].add(h);
     return {
-      map: this.map, br: this.br, occ, mines: this.mines, forts: this.forts, obst: this.obst, support, side, smoke: this.smoke,
+      H: this.H, map: this.map, br: this.br, occ, mines: this.mines, forts: this.forts, obst: this.obst, support, side, smoke: this.smoke,
       mud: !!this.weather.mud && this.weather.mud < .8, night: isNight(this.turn), acc: this.weather.acc || 1,
       cmd: this.cmdHexes(side), counter: this.counterHexes(side)
     };
@@ -196,7 +199,7 @@ class Game {
   counterHexes(side) {
     if (!this.counter || !this.counter[side]) return null;
     const set = new Set();
-    for (const p of this.pts) if (p.home === side) for (const h of Hex.within(p.hex, 1)) set.add(h);
+    for (const p of this.pts) if (p.home === side) for (const h of this.H.within(p.hex, 1)) set.add(h);
     return set;
   }
   /** клетки под управлением штабов стороны */
@@ -211,7 +214,7 @@ class Game {
       if (h.side !== side || h.str <= 0 || !UT[h.k].cmd) continue;
       if (!UT[h.k].fob && h.moved) continue;        /* подвижный штаб в ход марша сектора не держит */
       const set = by.get(h.seat) || by.set(h.seat, new Set()).get(h.seat);
-      for (const x of Hex.within(h.hex, UT[h.k].cmd)) set.add(x);
+      for (const x of this.H.within(h.hex, UT[h.k].cmd)) set.add(x);
     }
     return by;
   }
@@ -224,12 +227,12 @@ class Game {
     if (u.side === side) return true;
     if (!this.vis[side].has(u.hex)) return false;
     if (u.revealed === this.turn || u.revealed === this.turn - 1) return true;
-    if (this.smoke.has(u.hex)) return this.units.some(v => v.side === side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= 1);
+    if (this.smoke.has(u.hex)) return this.units.some(v => v.side === side && v.str > 0 && this.H.hexDist(v.hex, u.hex) <= 1);
     const t = this.map.hexes[u.hex].t, hidden = UT[u.k].stl || t === 'forest' || t === 'city';
     if (!hidden) return true;
     for (const v of this.units) {
       if (v.side !== side || v.str <= 0) continue;
-      const d = Hex.hexDist(v.hex, u.hex);
+      const d = this.H.hexDist(v.hex, u.hex);
       if (d <= 1 || (v.k === 'rec' && d <= 2)) return true;
     }
     return this.recon[side].has(u.hex);
@@ -240,9 +243,9 @@ class Game {
       if (u.side !== side || u.str <= 0) continue;
       const T = UT[u.k], hx = this.map.hexes[u.hex];
       let r = T.vis + (hx.t === 'hill' ? 1 : 0) - (night && !T.th ? 1 : 0) - (this.weather.vis < .7 ? 1 : 0);
-      for (const h of Hex.within(u.hex, Math.max(1, r))) vis.add(h);
+      for (const h of this.H.within(u.hex, Math.max(1, r))) vis.add(h);
     }
-    for (const p of this.pts) if (p.owner === side) for (const h of Hex.within(p.hex, 1)) vis.add(h);
+    for (const p of this.pts) if (p.owner === side) for (const h of this.H.within(p.hex, 1)) vis.add(h);
     for (const h of this.recon[side]) vis.add(h);
     this.vis[side] = vis;
     const mem = this.mem[side];
@@ -319,7 +322,7 @@ class Game {
 
   /* ---------- расстановка и закупка ---------- */
   inDeploy(side, hex) {
-    if (hex < 0 || hex >= Hex.NH) return false;
+    if (hex < 0 || hex >= this.H.NH) return false;
     const x = this.map.hexes[hex].x, z = this.scen && this.scen.deploy ? this.scen.deploy[side] : this.mapDef.deploy ? this.mapDef.deploy[side] : W.DEPLOY_X[side];
     return x >= z[0] && x <= z[1];
   }
@@ -329,8 +332,10 @@ class Game {
     if (!side) return { ok: false, error: 'нет такого места' };
     const T = typeof k === 'string' && Object.prototype.hasOwnProperty.call(UT, k) ? UT[k] : null;
     if (!T) return { ok: false, error: 'неизвестный тип' };
-    if (!(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'нет клетки' };
+    if (!(hex >= 0 && hex < this.H.NH)) return { ok: false, error: 'нет клетки' };
     if (this.units.filter(u => u.side === side && u.str > 0).length >= W.MAX_UNITS) return { ok: false, error: `лимит частей — ${W.MAX_UNITS}` };
+    /* стационарный пункт — один на командира: второй не нужен, а сектор он не удваивает */
+    if (T.fob && this.units.some(u => u.seat === seat && u.k === k && u.str > 0)) return { ok: false, error: 'командный пункт уже есть — он один на командира' };
     if (this.budget[seat] < T.price) return { ok: false, error: 'не хватает очков' };
     if (this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
     if (!this.passable(k, hex)) return { ok: false, error: 'сюда эта часть не встанет' };
@@ -345,20 +350,20 @@ class Game {
   /** точка, у которой можно высадить подкрепления: сама точка или соседняя клетка */
   spawnPt(side, hex) {
     return this.pts.find(p => p.owner === side && p.hex === hex) ||
-      this.pts.find(p => p.owner === side && Hex.hexDist(p.hex, hex) === 1 && !(this.unitAt(p.hex) && this.unitAt(p.hex).side !== side));
+      this.pts.find(p => p.owner === side && this.H.hexDist(p.hex, hex) === 1 && !(this.unitAt(p.hex) && this.unitAt(p.hex).side !== side));
   }
   spawnErr(side, hex, k) {
-    if (!(hex >= 0 && hex < Hex.NH)) return 'нет клетки';
+    if (!(hex >= 0 && hex < this.H.NH)) return 'нет клетки';
     if (this.unitAt(hex)) return 'клетка занята';
     if (!this.passable(k, hex)) return 'сюда эта часть не встанет';
     if (!this.spawnPt(side, hex)) return 'подкрепления — в своём городе или узле либо на соседней с ним клетке';
-    if (Hex.neighbors(hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return 'рядом противник — высадка невозможна';
+    if (this.H.neighbors(hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return 'рядом противник — высадка невозможна';
     return null;
   }
   /** клетки, где сторона может высадить подкрепления такого типа */
   spawnHexes(side, k) {
     const out = [];
-    for (const p of this.pts) if (p.owner === side) for (const h of Hex.within(p.hex, 1)) if (!out.includes(h) && !this.spawnErr(side, h, k)) out.push(h);
+    for (const p of this.pts) if (p.owner === side) for (const h of this.H.within(p.hex, 1)) if (!out.includes(h) && !this.spawnErr(side, h, k)) out.push(h);
     return out;
   }
 
@@ -373,7 +378,7 @@ class Game {
     const u = O.tgt === 'unit' ? this.byId(+a.id) : null, hex = +a.hex;
     if (O.tgt === 'unit' && (!u || u.side !== side)) return { ok: false, error: 'укажите свою часть' };
     if (O.tgt === 'unit' && u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
-    if (O.tgt === 'hex' && !(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'укажите клетку' };
+    if (O.tgt === 'hex' && !(hex >= 0 && hex < this.H.NH)) return { ok: false, error: 'укажите клетку' };
     if (k === 'barrage') {
       if (this.barrage[side]) return { ok: false, error: 'артподготовка уже идёт' };
       if (!this.units.some(v => v.side === side && v.str > 0 && UT[v.k].bomb && !v.acted)) return { ok: false, error: 'нет готовой артиллерии' };
@@ -384,7 +389,7 @@ class Game {
       if (!this.pts.some(p => p.home === side && p.owner !== side)) return { ok: false, error: 'все исходные точки и так наши' };
       this.counter[side] = true;
       const zone = this.counterHexes(side);
-      for (const v of this.units) if (v.side === side && v.str > 0 && Hex.neighbors(v.hex).some(h => zone.has(h))) v.org = Math.min(100, v.org + 10);
+      for (const v of this.units) if (v.side === side && v.str > 0 && this.H.neighbors(v.hex).some(h => zone.has(h))) v.org = Math.min(100, v.org + 10);
       this.log(side, 'Контрудар! Вернуть наши города — любой ценой.', 'hq');
     } else if (k === 'march') {
       if (u.march) return { ok: false, error: 'часть уже на марше' };
@@ -397,8 +402,8 @@ class Game {
       u.hold = true;
       this.say(u, 'hold', {}, 'g');
     } else if (k === 'smoke') {
-      if (!this.units.some(v => v.side === side && v.str > 0 && Hex.hexDist(v.hex, hex) <= 3)) return { ok: false, error: 'дым ставят у своих частей — до 3 клеток' };
-      for (const h of Hex.within(hex, 1)) this.smoke.set(h, side);
+      if (!this.units.some(v => v.side === side && v.str > 0 && this.H.hexDist(v.hex, hex) <= 3)) return { ok: false, error: 'дым ставят у своих частей — до 3 клеток' };
+      for (const h of this.H.within(hex, 1)) this.smoke.set(h, side);
       this.ev({ e: 'smoke', to: '*', hex });
       this.log(side, 'Дымовая завеса поставлена.', 'g');
       this.updateVision(oppOf(side));
@@ -540,8 +545,8 @@ class Game {
         this.loss(u, u.cut >= 4 ? 2 : 1, null);
         if (u.str > 0 && u.cut >= 4) this.say(u, 'attrition', {}, 'w');
         if (u.str > 0 && u.org <= 0) {
-          const by = this.units.filter(e => e.side !== side && e.str > 0).sort((a, b) => Hex.hexDist(a.hex, u.hex) - Hex.hexDist(b.hex, u.hex))[0];
-          this.loss(u, u.str, by && Hex.hexDist(by.hex, u.hex) <= 4 ? by : null, 'surrender');
+          const by = this.units.filter(e => e.side !== side && e.str > 0).sort((a, b) => this.H.hexDist(a.hex, u.hex) - this.H.hexDist(b.hex, u.hex))[0];
+          this.loss(u, u.str, by && this.H.hexDist(by.hex, u.hex) <= 4 ? by : null, 'surrender');
         }
       } else u.dry = false;
     }
@@ -590,8 +595,8 @@ class Game {
       const m = this.mines.get(h);
       if (m && m.side !== u.side) { stopped = 'mine'; mineHex = h; break }
       /* вошли в зону контроля невидимого противника — встаём */
-      if (i < path.length - 1 && Hex.neighbors(h).some(n => { const e = this.unitAt(n); return e && e.side !== u.side })) {
-        const e = Hex.neighbors(h).map(n => this.unitAt(n)).find(e => e && e.side !== u.side);
+      if (i < path.length - 1 && this.H.neighbors(h).some(n => { const e = this.unitAt(n); return e && e.side !== u.side })) {
+        const e = this.H.neighbors(h).map(n => this.unitAt(n)).find(e => e && e.side !== u.side);
         if (e) e.revealed = this.turn;
         stopped = 'zoc'; break;
       }
@@ -635,7 +640,7 @@ class Game {
   militia(u) {
     for (const p of this.pts) {
       if (!p.city || !p.owner || p.owner === u.side || this.militiaUsed.has(p.id)) continue;
-      if (Hex.hexDist(p.hex, u.hex) !== 1 || this.unitAt(p.hex)) continue;
+      if (this.H.hexDist(p.hex, u.hex) !== 1 || this.unitAt(p.hex)) continue;
       this.militiaUsed.add(p.id);
       const m = this.spawn('inf', p.owner, p.hex, { str: 3 + Math.round(p.w), org: 70, xp: 0, ent: 1, mp: 0, acted: true, moved: true, militia: true });
       this.log(p.owner, `${p.n}: жители взялись за оружие — ополчение заняло оборону.`, 'g');
@@ -658,12 +663,12 @@ class Game {
   /* ---------- бой ---------- */
   /** штаб без охраны: рядом нет ни одной живой части своей стороны */
   hqAlone(e) {
-    return !Hex.neighbors(e.hex).some(h => { const v = this.unitAt(h); return v && v.side === e.side && v.str > 0 });
+    return !this.H.neighbors(e.hex).some(h => { const v = this.unitAt(h); return v && v.side === e.side && v.str > 0 });
   }
   /** Захват ставки: брошенный штаб не уничтожают, а берут — вместе со штабными
       документами. Захватчику командные очки и вскрытый сектор противника. */
   captureHQ(e, u) {
-    const seat = e.seat || e.side, zone = Hex.within(e.hex, UT[e.k].cmd);
+    const seat = e.seat || e.side, zone = this.H.within(e.hex, UT[e.k].cmd);
     this.ev({ e: 'dead', to: '*', id: e.id, hex: e.hex, k: e.k, side: e.side, how: 'captured' });
     e.str = 0;
     const st = this.stats[e.side], price = UT[e.k].price;
@@ -678,7 +683,7 @@ class Game {
     for (const h of zone) this.recon[u.side].add(h);
     this.updateVision(u.side);
     /* части бывшего сектора теряют управление и мораль */
-    for (const v of this.units) if (v.side === e.side && v.str > 0 && Hex.hexDist(v.hex, e.hex) <= UT[e.k].cmd) v.org = Math.max(0, v.org - 20);
+    for (const v of this.units) if (v.side === e.side && v.str > 0 && this.H.hexDist(v.hex, e.hex) <= UT[e.k].cmd) v.org = Math.max(0, v.org - 20);
     this.log(e.side, `Ставка командира ${this.seatById.get(seat) ? this.seatById.get(seat).n : ''} захвачена! Документы у противника, части без управления.`, 'crit');
     this.log(u.side, `Взята ставка противника: +${W.HQ_CAPTURE_CP}★ и вскрытый сектор.`, 'g');
     return { ok: true, captured: 1 };
@@ -689,7 +694,7 @@ class Game {
     if (!e || e.side === u.side) return { ok: false, error: 'нет цели' };
     if (u.acted) return { ok: false, error: 'часть уже атаковала' };
     if (T.bomb) return { ok: false, error: 'артиллерия бьёт огнём — «Огонь»' };
-    if (Hex.hexDist(u.hex, e.hex) !== 1) return { ok: false, error: 'цель не рядом' };
+    if (this.H.hexDist(u.hex, e.hex) !== 1) return { ok: false, error: 'цель не рядом' };
     if (!this.seen(u.side, e)) return { ok: false, error: 'цель не видна' };
     if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
     if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
@@ -714,7 +719,7 @@ class Game {
     this.lastVacated = null;
     /* огонь поддержки: своя артиллерия защитника бьёт по атакующим */
     if (o.mods.some(m => m.t === 'огонь поддержки')) {
-      const art = this.units.find(a => a.side === e.side && a.support && a.str > 0 && Hex.hexDist(a.hex, e.hex) <= UT[a.k].bomb.rng);
+      const art = this.units.find(a => a.side === e.side && a.support && a.str > 0 && this.H.hexDist(a.hex, e.hex) <= UT[a.k].bomb.rng);
       if (art) {
         art.support = false; art.revealed = this.turn;
         this.ev({ e: 'shell', to: '*', from: art.hex, hex: u.hex, k: art.k });
@@ -740,8 +745,8 @@ class Game {
   /** занять освободившуюся клетку после боя (отход, гибель или захват ставки) */
   advanceAfterFight(u, T, fresh) {
     const vac = this.lastVacated;
-    if (u.str > 0 && T.cap && vac !== undefined && vac !== null && !this.unitAt(vac) && Hex.hexDist(u.hex, vac) === 1) {
-      const d = Hex.dirTo(u.hex, vac);
+    if (u.str > 0 && T.cap && vac !== undefined && vac !== null && !this.unitAt(vac) && this.H.hexDist(u.hex, vac) === 1) {
+      const d = this.H.dirTo(u.hex, vac);
       /* через реку без моста — по тому же правилу, что и при движении (shared/rules.js):
          колёсным нельзя вовсе, пешим и гусеничным — только с полным запасом хода,
          и брод съедает ход. Иначе выбитый противник открывал бесплатный переход. */
@@ -788,22 +793,22 @@ class Game {
     this.log(u.side, how === 'surrender' ? `«${u.cs}» (${un}) в окружении сложил оружие.` : `«${u.cs}» (${un}) уничтожен.`, 'crit');
     if (by && by.str > 0 && by.side !== u.side) this.say(by, how === 'surrender' ? 'prisoners' : 'kill', { lb: un }, 'g');
     if (UT[u.k].cmd) {
-      for (const v of this.units) if (v.side === u.side && v.str > 0 && Hex.hexDist(v.hex, u.hex) <= UT[u.k].cmd) v.org = Math.max(0, v.org - 15);
+      for (const v of this.units) if (v.side === u.side && v.str > 0 && this.H.hexDist(v.hex, u.hex) <= UT[u.k].cmd) v.org = Math.max(0, v.org - 15);
       this.log(u.side, 'Штаб уничтожен! Части без управления.', 'crit');
     }
     /* бегство заразно */
-    for (const v of this.units) if (v.side === u.side && v.str > 0 && Hex.hexDist(v.hex, u.hex) === 1) v.org = Math.max(0, v.org - 6);
+    for (const v of this.units) if (v.side === u.side && v.str > 0 && this.H.hexDist(v.hex, u.hex) === 1) v.org = Math.max(0, v.org - 6);
   }
   /** отход на клетку от атакующего; отрезанным — потери или плен */
   retreat(e, by) {
     const ctx = this.ctxFor(e.side, true), zoc = Rules.zocOf(ctx, e.side);
     let best = -1, bs = -1e9;
     for (let d = 0; d < 6; d++) {
-      const h = Hex.nb(e.hex, d);
+      const h = this.H.nb(e.hex, d);
       if (h < 0 || this.unitAt(h) || !this.passable(e.k, h)) continue;
       const ed = Rules.edgeOf(ctx, e.hex, d);
       if (!Rules.crossable(ed) && UT[e.k].cls === 'wheel') continue;
-      const s = Hex.hexDist(h, by.hex) * 3 - (zoc.has(h) ? 4 : 0) + (this.supplyHex[e.side] && this.supplyHex[e.side].has(h) ? 2 : 0) + (Rules.crossable(ed) ? 0 : -3);
+      const s = this.H.hexDist(h, by.hex) * 3 - (zoc.has(h) ? 4 : 0) + (this.supplyHex[e.side] && this.supplyHex[e.side].has(h) ? 2 : 0) + (Rules.crossable(ed) ? 0 : -3);
       if (s > bs) { bs = s; best = h }
     }
     if (best < 0) {
@@ -819,7 +824,7 @@ class Game {
     this.ev({ e: 'move', to: '*', id: e.id, side: e.side, path: [from, best], k: e.k, retreat: 1 });
     this.say(e, 'retreat', {}, 'w');
     /* отход под огнём: клетка в зоне контроля двух и больше частей противника */
-    const around = Hex.neighbors(best).filter(h => { const o = this.unitAt(h); return o && o.side !== e.side }).length;
+    const around = this.H.neighbors(best).filter(h => { const o = this.unitAt(h); return o && o.side !== e.side }).length;
     if (around >= 2 && e.str > 0) { this.loss(e, 1, by); if (e.str > 0) this.log(e.side, `«${e.cs}»: отходили под перекрёстным огнём — потери.`, 'w') }
   }
 
@@ -830,14 +835,14 @@ class Game {
     if (u.acted) return { ok: false, error: 'уже стреляли' };
     if (u.reload > 0) return { ok: false, error: 'перезарядка' };
     if (u.sp <= 0) return { ok: false, error: 'нет снарядов — запасы кончились' };
-    if (Hex.hexDist(u.hex, hex) > T.bomb.rng) return { ok: false, error: `далеко: дальность ${T.bomb.rng} клетки` };
+    if (this.H.hexDist(u.hex, hex) > T.bomb.rng) return { ok: false, error: `далеко: дальность ${T.bomb.rng} клетки` };
     const e = this.unitAt(hex);
     if (!e || e.side === u.side || !this.seen(u.side, e)) return { ok: false, error: 'цели не видно' };
     const ctx = this.ctxFor(u.side, true);
     this.ev({ e: 'shell', to: '*', from: u.hex, hex, k: u.k });
     const bar = this.barrage[u.side];
     this.hitByFire(ctx, T.bomb.pow * u.str / MAX_STR * (.85 + .3 * u.xp), e, u, { th: T.th, barrage: bar, sp: u.sp });
-    if (T.bomb.area) for (const h of Hex.neighbors(hex)) { const x = this.unitAt(h); if (x && x.side !== u.side) this.hitByFire(ctx, T.bomb.pow * .45 * u.str / MAX_STR, x, u, { barrage: bar, sp: u.sp }) }
+    if (T.bomb.area) for (const h of this.H.neighbors(hex)) { const x = this.unitAt(h); if (x && x.side !== u.side) this.hitByFire(ctx, T.bomb.pow * .45 * u.str / MAX_STR, x, u, { barrage: bar, sp: u.sp }) }
     u.acted = true; u.mp = 0; u.revealed = this.turn; u.reload = T.bomb.reload;
     this.say(u, 'fire', {});
     this.counterBattery(u);
@@ -846,7 +851,7 @@ class Game {
   /** контрбатарейная борьба: артиллерия противника, не стрелявшая в свой ход, отвечает по засечённой батарее */
   counterBattery(u) {
     if (u.str <= 0) return;
-    const art = this.units.filter(a => a.side !== u.side && a.str > 0 && a.support && UT[a.k].bomb && Hex.hexDist(a.hex, u.hex) <= UT[a.k].bomb.rng)
+    const art = this.units.filter(a => a.side !== u.side && a.str > 0 && a.support && UT[a.k].bomb && this.H.hexDist(a.hex, u.hex) <= UT[a.k].bomb.rng)
       .sort((a, b) => UT[b.k].bomb.pow * b.str - UT[a.k].bomb.pow * a.str)[0];
     if (!art) return;
     art.support = false; art.revealed = this.turn;
@@ -867,12 +872,12 @@ class Game {
   airAct(seat, kind, hex) {
     const side = this.sideOf(seat);
     if (!side) return { ok: false, error: 'нет такого места' };
-    if (!(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'нет клетки' };
+    if (!(hex >= 0 && hex < this.H.NH)) return { ok: false, error: 'нет клетки' };
     if (!this.weather.fly) return { ok: false, error: 'погода нелётная' };
     if (kind === 'recon') {
       if (this.air[seat].recon < 1) return { ok: false, error: 'разведчиков в этот ход больше нет' };
       this.air[seat].recon--;
-      for (const h of Hex.within(hex, 3)) this.recon[side].add(h);
+      for (const h of this.H.within(hex, 3)) this.recon[side].add(h);
       this.updateVision(side);
       this.ev({ e: 'air', to: side, hex, kind });
       this.log(side, 'Авиаразведка прошла над районом — данные на карте.', 'q');
@@ -886,7 +891,7 @@ class Game {
     this.ev({ e: 'air', to: '*', hex, kind, side });
     /* ПВО противника рядом может сорвать удар */
     for (const a of this.units) {
-      if (a.side === side || a.str <= 0 || !UT[a.k].aa || Hex.hexDist(a.hex, hex) > UT[a.k].aa) continue;
+      if (a.side === side || a.str <= 0 || !UT[a.k].aa || this.H.hexDist(a.hex, hex) > UT[a.k].aa) continue;
       if (this.chance(.35 + .03 * a.str)) {
         this.ev({ e: 'aa', to: '*', hex: a.hex, target: hex });
         this.log(side, 'Удар сорван: ПВО противника отогнала штурмовики.', 'w');
@@ -905,7 +910,7 @@ class Game {
     if (u.str >= MAX_STR) return { ok: false, error: 'часть полная' };
     if (u.acted || u.moved) return { ok: false, error: 'пополнение — вместо действий в этот ход' };
     if (!u.supplied) return { ok: false, error: 'нет снабжения' };
-    if (Hex.neighbors(u.hex).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'противник рядом' };
+    if (this.H.neighbors(u.hex).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'противник рядом' };
     const can = Math.min(3, MAX_STR - u.str, Math.floor(this.budget[u.side] / cost));
     if (can < 1) return { ok: false, error: 'не хватает очков' };
     this.budget[u.side] -= can * cost; this.stats[u.side].spent += can * cost;
@@ -921,12 +926,12 @@ class Game {
     if (!UT[u.k].eng) return { ok: false, error: 'это не сапёры' };
     if (u.acted) return { ok: false, error: 'уже работали в этот ход' };
     if (task === 'dig') return this.digIn(u);
-    const d = Hex.dirTo(u.hex, hex);
+    const d = this.H.dirTo(u.hex, hex);
     if (d < 0 && !['mine', 'fort', 'obst'].includes(task)) return { ok: false, error: 'только у соседней клетки' };
     if (task === 'repair') {
       const key = Hex.edgeKey(u.hex, hex);
       if (this.br.get(key) !== 'down') return { ok: false, error: 'здесь нет взорванного моста' };
-      if (Hex.neighbors(hex).concat([hex]).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'под огнём мост не восстановить' };
+      if (this.H.neighbors(hex).concat([hex]).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'под огнём мост не восстановить' };
       this.br.delete(key);
       this.say(u, 'repaired', {}, 'g');
       this.log(oppOf(u.side), `Противник восстановил мост, кв. ${W.sq(this.map.hexes[hex])}.`, 'w');
@@ -990,7 +995,7 @@ class Game {
   ambushOn(u, h) {
     let hit = false;
     for (const a of this.units) {
-      if (a.side === u.side || !a.amb || a.ambUsed || a.str <= 0 || Hex.hexDist(a.hex, h) !== 1) continue;
+      if (a.side === u.side || !a.amb || a.ambUsed || a.str <= 0 || this.H.hexDist(a.hex, h) !== 1) continue;
       a.ambUsed = true; a.revealed = this.turn;
       const x = Rules.ambushHit(this.ctxFor(a.side, true), a, { ...u, hex: h });
       const n = Math.min(u.str, Math.round(x * this.R(.6, 1.4)));
@@ -1007,7 +1012,7 @@ class Game {
   digIn(u) {
     if (u.acted || u.moved) return { ok: false, error: 'окапываются вместо движения и боя' };
     const list = [u];
-    if (UT[u.k].eng) for (const h of Hex.neighbors(u.hex)) { const v = this.unitAt(h); if (v && v.side === u.side) list.push(v) }
+    if (UT[u.k].eng) for (const h of this.H.neighbors(u.hex)) { const v = this.unitAt(h); if (v && v.side === u.side) list.push(v) }
     for (const v of list) v.ent = Math.min(UT[v.k].arm === 'soft' ? 3 : 2, v.ent + 1);
     u.acted = true; u.mp = 0;
     this.ev({ e: 'eng', to: '*', id: u.id, hex: u.hex, task: 'dig' });
@@ -1020,8 +1025,8 @@ class Game {
     const SP = W.SUPPLY, ctx = this.ctxFor(side, true), zoc = Rules.zocOf(ctx, side);
     const srcs = [];
     for (const p of this.pts) if (p.owner === side && p.city) srcs.push({ id: p.id, n: p.n, hex: p.hex, seeds: [p.hex], cap: Math.round(SP.cityCap(p.w)), r: SP.cityR(p.w), used: 0 });
-    const ex = side === N ? 0 : Hex.COLS - 1, edge = [];
-    for (let r = 0; r < Hex.ROWS; r++) edge.push(r * Hex.COLS + ex);
+    const ex = side === N ? 0 : this.H.COLS - 1, edge = [];
+    for (let r = 0; r < this.H.ROWS; r++) edge.push(r * this.H.COLS + ex);
     srcs.push({ id: 'edge', n: 'Тыл', hex: -1, seeds: edge, cap: SP.edgeCap, r: SP.edgeR, used: 0 });
     /* подвоз от каждого источника: шаг — 2 (дорога — 1), не через противника и его зоны контроля */
     const blocked = h => { const o = this.unitAt(h); return o && o.side !== side };
@@ -1031,7 +1036,7 @@ class Game {
       for (let c = 0; c <= R; c++) for (const a of buckets[c]) {
         if (cost.get(a) !== c) continue;
         for (let d = 0; d < 6; d++) {
-          const b = Hex.nb(a, d);
+          const b = this.H.nb(a, d);
           if (b < 0) continue;
           const e = Rules.edgeOf(ctx, a, d);
           if (!Rules.crossable(e) || blocked(b)) continue;
@@ -1076,14 +1081,14 @@ class Game {
       for (const u of this.units) { if (u.str <= 0) continue; const h = this.map.hexes[u.hex]; v += (u.side === N ? 1 : -1) * 4 * u.str / MAX_STR / ((x - h.x) ** 2 + (y - h.y) ** 2 + 160) }
       return v;
     };
-    for (let y = 0; y <= W.WH; y += 6) {
-      let lo = 6, hi = W.WW - 6;
+    for (let y = 0; y <= this.WH; y += 6) {
+      let lo = 6, hi = this.WW - 6;
       for (let i = 0; i < 12; i++) { const m = (lo + hi) / 2; if (inf(m, y) > 0) lo = m; else hi = m }
       xs.push({ x: +((lo + hi) / 2).toFixed(1), y });
     }
     this.frontY = xs;
   }
-  frontXAt(y) { const f = this.frontY, i = clamp(Math.round(y / 6), 0, f.length - 1); return f[i] ? f[i].x : W.WW / 2 }
+  frontXAt(y) { const f = this.frontY, i = clamp(Math.round(y / 6), 0, f.length - 1); return f[i] ? f[i].x : this.WW / 2 }
   checkEnd() {
     if (this.over || this.phase !== 'battle') return;
     let over = this.scen ? this.scenarioEnd() : null;

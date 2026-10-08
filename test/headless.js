@@ -245,6 +245,23 @@ for (const map of require('../shared/maps').MAP_ORDER) {
     assert.strictEqual(fob[0].mp, 0, 'у пункта нет очков хода');
   }
 
+  /* стационарный пункт — один на командира; после потери можно поставить новый */
+  {
+    const g = new Game('both', N, 19, 'steppe');
+    const spot = h => g.map.hexes.findIndex((x, i) => g.inDeploy(N, i) && !g.unitAt(i));
+    const first = g.units.find(u => u.k === 'fob' && u.seat === N);
+    assert(first, 'пункт выдан сразу');
+    const r = g.buy(N, 'fob', spot(), true);
+    assert.strictEqual(r.ok, false, 'второй пункт купить нельзя');
+    assert(/один на командира/.test(r.error), 'понятная причина: ' + r.error);
+    /* потеряли — можно поставить новый */
+    first.str = 0;
+    assert.strictEqual(g.buy(N, 'fob', spot(), true).ok, true, 'взамен потерянного пункт покупается');
+    /* у союзника свой — он не мешает */
+    const g2 = new Game('both', N, 19, 'steppe', { teams: { n: [{}, {}], s: [{ bot: 1 }] } });
+    assert.strictEqual(g2.units.filter(u => u.k === 'fob' && u.side === N).length, 2, 'по пункту каждому командиру');
+  }
+
   /* пункт обязателен: без него «Готов» не принимается */
   {
     const g = new Game('both', N, 17, 'steppe');
@@ -380,7 +397,7 @@ console.log('\n════════ БАЛАНС ════════');
   console.log(`всего свободных партий ${free.length}: ${W.SIDE_NAME.n} ${wn}, ${W.SIDE_NAME.s} ${ws}, ничьи ${dr} · средняя длина ${f1(avg(free.map(g => g.turns)))} ходов`);
   const notes = [];
   /* перекос сторон во встречном бою — там силы равны, значит должно быть близко к 50/50 */
-  const both = games.filter(g => g.mode === 'both');
+  const both = games.filter(g => g.mode === 'both' && !g.sweep);
   if (both.length >= 6) {
     const bn = both.filter(g => g.w === N).length, bs = both.filter(g => g.w === S).length;
     if (Math.max(bn, bs) / both.length > .8) notes.push(`во встречном бою перекос ${bn}:${bs} — силы равны, ожидается примерно поровну`);

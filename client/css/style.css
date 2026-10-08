@@ -340,3 +340,34 @@ body.spec #right .tabs button[data-tab="buy"]{display:none}
   .lbox{padding:1em 1.1em}
   .lbox .acts .btn{width:100%;min-height:44px}
 }
+
+/* ---------- ростер команд при создании партии ---------- */
+.tcols{display:grid;grid-template-columns:1fr 1fr;gap:.8em}
+.tcol{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:.7em .8em}
+.tcol.n{border-left:3px solid var(--bl)}
+.tcol.s{border-left:3px solid var(--rd)}
+.thd{font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.85em;
+  display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.5em}
+.thd i{font-style:normal;color:var(--mu);font-size:.85em;text-transform:none;letter-spacing:0}
+.slot{display:flex;align-items:center;gap:.45em;margin:.3em 0}
+.slot .sn{color:var(--mu);font:600 .85em ui-monospace,monospace;width:1.1em}
+.slot .btn.sl{flex:1;text-align:center;padding:.42em .5em}
+.slot.off .btn.sl{color:var(--mu);border-style:dashed}
+.slot.bot .btn.sl{border-color:#2b3f4e}
+.slot.human .btn.sl{border-color:var(--ac);color:#ffd37a}
+.slot.mine .btn.sl{background:var(--ac);color:#17120a;font-weight:600}
+.btn.tiny{padding:.2em .45em;font-size:.8em;min-width:3.4em;text-align:center}
+.btn.tiny.on{background:var(--ac);color:#17120a;border-color:var(--ac);font-weight:600}
+span.tiny{min-width:3.4em;display:inline-block}
+.tsum{color:var(--mu);font-size:.85em;margin-top:.5em;text-align:right}
+.mjoin.sub{margin-top:-.4em;font-size:.95em}
+.mjoin.sub .mrow{gap:.35em}
+.mjoin.sub .btn.ch{padding:.35em .7em;min-height:0}
+@media (max-width:760px){
+  .tcols{grid-template-columns:1fr;gap:.6em}
+  .slot .btn.sl{min-height:40px}
+  .btn.tiny{min-height:44px;min-width:4.6rem;font-size:.85em}
+  span.tiny{min-width:4.6rem}
+  .mjoin.sub{flex-direction:column;align-items:stretch}
+  .mjoin.sub .btn.ch{flex:1 1 auto;min-height:40px}
+}

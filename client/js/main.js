@@ -466,11 +466,6 @@ const SCEN_TXT = {
   breakthrough: { n: 'Прорыв к Красногору', d: 'За 30 ходов взять Красногор через мины и волны резервов.' },
   night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Союза под Заречьем.' }
 };
-const OPP_TXT = {
-  bot: { n: 'Против бота', d: 'Одиночная партия — вторую сторону держит бот-командир.' },
-  human: { n: 'Против игрока', d: 'Создаст партию и даст код из четырёх букв — передайте его противнику.' },
-  watch: { n: 'Бот против бота', d: 'Наблюдение без тумана войны: скорость ×1/×2/×4 и пауза.' }
-};
 const MODE_TXT = {
   both: { n: 'Встречный бой', d: 'Силы равны, первый ход — по жребию. Кто удержит больше городов — у того перевес.' },
   attack: { n: 'Наступление', d: 'Вы наступаете и ходите первым, бюджет +12%. Противник встречает в окопах, его точки укреплены.' },
@@ -492,6 +487,10 @@ function setMyName(v) {
 }
 
 /* состояние меню: экран + выбор, выбор помнится между запусками */
+/* состояния слота: выключен · живой игрок · бот (кнопка их перебирает) */
+const SLOT_NEXT = { off: 'human', human: 'bot', bot: 'off' };
+const SLOT_TXT = { off: '—', human: 'Игрок', bot: 'Бот' };
+
 /* Ростер свободной игры: по три слота на сторону.
    Слот: 'off' — выключен, 'human' — живой игрок, 'bot' — бот.
    M.me — слот, на котором сидите вы: { side, i }; null — вы только смотрите. */
@@ -515,8 +514,6 @@ function mSave() {
   } catch (e) { /* приватный режим */ }
 }
 /* ---------- ростер ---------- */
-const SLOT_NEXT = { off: 'human', human: 'bot', bot: 'off' };
-const SLOT_TXT = { off: '—', human: 'Игрок', bot: 'Бот' };
 function rosterFix() {
   for (const sd of [N, S]) {
     const a = M.roster[sd];
@@ -565,20 +562,6 @@ function scenPlan(id) {
   return { [my]: ['me'].concat(Array(Math.max(0, T.a - 1)).fill(ally)), [foe]: ['bot'] };
 }
 
-/** план мест для сервера: 'me' — я, 'bot' — бот, 'open' — ждём игрока */
-function seatPlan() {
-  const T = TEAMS[M.team] || TEAMS['1x1'];
-  const my = M.side, foe = my === N ? S : N;
-  if (M.opp === 'watch') return { [my]: Array(T.a).fill('bot'), [foe]: Array(T.b).fill('bot') };
-  /* моё место — первое на своей стороне; союзные места и места противника
-     заполняются по отдельности: ботом или ожиданием живого игрока */
-  const ally = M.fill === 'bot' ? 'bot' : 'open';
-  const enemy = M.opp === 'bot' ? 'bot' : 'open';
-  return {
-    [my]: ['me'].concat(Array(Math.max(0, T.a - 1)).fill(ally)),
-    [foe]: Array(T.b).fill(enemy)
-  };
-}
 
 /** ряд взаимоисключающих кнопок: key — поле в M, opts — [значение, подпись] */
 function mPick(key, opts, dis) {
@@ -587,7 +570,9 @@ function mPick(key, opts, dis) {
 }
 const joinHTML = () => `<div class="mjoin"><span>Код партии:</span>
   <input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false">
-  <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>`;
+  <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>
+  <div class="mjoin sub"><span>В команду:</span>
+    ${mPick('joinSide', [['any', 'Любую'], [N, SIDE_NAME[N]], [S, SIDE_NAME[S]]])}</div>`;
 const backHTML = t => `<div class="mhead"><button class="btn" data-nav="root">‹ Назад</button><h1>${esc(t)}</h1></div>`;
 
 function menuHTML() {
@@ -733,7 +718,14 @@ function drawPreviews() {
   next();
 }
 function hideMenu() { $('#menu').classList.remove('on') }
-function leaveToMenu() { netSend({ t: 'leave' }); G.roomId = null; G.units = []; G.sel = null; $('#lc_log').innerHTML = ''; showMenu() }
+function leaveToMenu() {
+  netSend({ t: 'leave' });
+  G.roomId = null; G.units = []; G.sel = null; G.lobby = null; G.mySeat = null; G.lobbyHidden = false;
+  $('#lc_log').innerHTML = '';
+  renderLobby();   /* иначе оверлей лобби останется поверх меню */
+  M.view = 'root'; /* из партии выходим в главное меню, а не на экран настройки */
+  showMenu();
+}
 
 /* ---------- ввод ---------- */
 function setSel(id) { G.sel = id; G.mode = null; G.spawn = null; hint(''); if (id) { G.tabR = 'unit'; syncTabs() } computeSel(); renderUI() }
@@ -860,6 +852,20 @@ function bind() {
     /* переход между экранами меню */
     const nav = e.target.closest('[data-nav]');
     if (nav) { M.view = nav.dataset.nav; showMenu(); return }
+    /* слот команды: — · Игрок · Бот */
+    const sl = e.target.closest('[data-slot]');
+    if (sl) {
+      const [sd, i] = sl.dataset.slot.split(':');
+      M.roster[sd][+i] = SLOT_NEXT[M.roster[sd][+i]] || 'off';
+      rosterFix(); mSave(); showMenu(); return;
+    }
+    /* пересесть на другое место или в другую команду */
+    const me = e.target.closest('[data-me]');
+    if (me) {
+      const [sd, i] = me.dataset.me.split(':');
+      M.me = { side: sd, i: +i };
+      rosterFix(); mSave(); showMenu(); return;
+    }
     /* выбор в ряду кнопок */
     const pk = e.target.closest('[data-pick]');
     if (pk) { M[pk.dataset.pick] = pk.dataset.val; mSave(); showMenu(); return }
@@ -874,14 +880,21 @@ function bind() {
     const el = e.target.closest('[data-a]'); if (!el) return;
     const a = el.dataset.a, code = ($('#joinCode') || {}).value || '';
     if (a === 'go') {
-      if (M.opp === 'watch') netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick, seats: seatPlan() });
-      else netSend({ t: 'create', mode: M.mode, side: M.side, vsBot: M.opp === 'bot', map: G.mapPick, seats: seatPlan(), name: myName });
+      const err = rosterErr();
+      if (err) return toast(err);
+      const plan = rosterPlan();
+      if (!M.me) netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick, seats: plan });
+      else netSend({ t: 'create', mode: M.mode, side: M.me.side, map: G.mapPick, seats: plan, name: myName });
     }
     else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'join' || a === 'spec') {
       if (code.trim().length !== 4) return toast('Код — четыре буквы');
-      netSend({ t: 'join', room: code.trim().toUpperCase(), spec: a === 'spec', name: myName });
+      netSend({
+        t: 'join', room: code.trim().toUpperCase(), spec: a === 'spec', name: myName,
+        /* сервер посадит в выбранную команду, а если там занято — в свободную */
+        side: M.joinSide === 'any' ? undefined : M.joinSide
+      });
     }
   });
   bindPointer();

@@ -98,9 +98,14 @@ function renderBase(s, fast) {
   cx.beginPath(); cx.rect(a.x, a.y, b.x - a.x, b.y - a.y); cx.clip();
   cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
   cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
-  cx.drawImage(TER, 0, 0, WW, WH);
+  /* берём уровень по нужному размеру на экране: на отдалении это в разы дешевле,
+     чем каждый кадр масштабировать полную текстуру */
+  cx.drawImage(terLevel(WW * s * DPR), 0, 0, WW, WH);
   cx.restore();
-  if (!fast) drawTrees(s);
+  /* деревья рисуем и в движении: раньше быстрый кадр их пропускал, и на время
+     прокрутки зума лес пропадал, возвращаясь рывком. Перебор идёт по клеткам
+     сетки, поэтому это уже недорого. */
+  drawTrees(s);
   cx.save();
   cx.beginPath(); cx.rect(a.x, a.y, b.x - a.x, b.y - a.y); cx.clip();
   drawRivers(geo, s);
@@ -179,12 +184,25 @@ function drawTrees(s) {
   const al = clamp((s - 6) / 1.5, 0, 1), a = s2w({ x: -20, y: -20 }), b = s2w({ x: CW + 20, y: CH + 20 });
   const T = TREES, ox = CW / 2 - G.view.x * s, oy = CH / 2 - G.view.y * s;
   cx.globalAlpha = al;
-  for (let i = 0; i < T.length; i += 3) {
+  /* один и тот же радиус у соседних деревьев — держим спрайт под рукой,
+     чтобы не искать его в карте на каждое дерево */
+  let lastRp = -1, lastSp = null;
+  const put = i => {
     const x = T[i], y = T[i + 1];
-    if (x < a.x || x > b.x || y < a.y || y > b.y) continue;
-    const rp = Math.max(2, Math.round(T[i + 2] * s * DPR)), sp = treeSprite(rp);
+    if (x < a.x || x > b.x || y < a.y || y > b.y) return;
+    const rp = Math.max(2, Math.round(T[i + 2] * s * DPR));
+    const sp = rp === lastRp ? lastSp : (lastSp = treeSprite(lastRp = rp));
     cx.drawImage(sp, x * s + ox - sp.off / DPR, y * s + oy - sp.off / DPR, sp.width / DPR, sp.height / DPR);
-  }
+  };
+  if (TREE_GRID) {
+    /* только клетки, попавшие в кадр: перебор всех деревьев карты стоил дороже самой отрисовки */
+    const x0 = Math.max(0, a.x / TG_CELL | 0), x1 = Math.min(TG_W - 1, b.x / TG_CELL | 0);
+    const y0 = Math.max(0, a.y / TG_CELL | 0), y1 = Math.min(TG_H - 1, b.y / TG_CELL | 0);
+    for (let cy = y0; cy <= y1; cy++) for (let cx0 = x0; cx0 <= x1; cx0++) {
+      const cell = TREE_GRID[cy * TG_W + cx0];
+      if (cell) for (let k = 0; k < cell.length; k++) put(cell[k]);
+    }
+  } else for (let i = 0; i < T.length; i += 3) put(i);
   cx.globalAlpha = 1;
 }
 

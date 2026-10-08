@@ -559,6 +559,8 @@ class Game {
     const o = Rules.odds(this.ctxFor(u.side, true), u, e);
     const la = Math.min(u.str, Math.round(o.expA * this.R(.6, 1.4)));
     let ld = Math.min(e.str, Math.round(o.expD * this.R(.6, 1.4)));
+    /* брод при занятии клетки разрешён только «с места» — атака ниже съест очки хода */
+    const fresh = !u.moved && u.mp >= T.mp;
     u.acted = true; u.mp = T.mp > 5 && u.k !== 'rec' ? Math.min(u.mp, 1) : 0; u.ent = 0; u.revealed = this.turn;
     e.revealed = this.turn; e.hitThisTurn = true; e.hb = (e.hb || 0) | Rules.ARMBIT[T.arm];
     this.ev({ e: 'fight', to: '*', a: u.id, d: e.id, ah: u.hex, dh: e.hex, la, ld, r: +o.r.toFixed(2) });
@@ -590,9 +592,15 @@ class Game {
     const vac = this.lastVacated;
     if (u.str > 0 && T.cap && vac !== undefined && vac !== null && !this.unitAt(vac) && Hex.hexDist(u.hex, vac) === 1) {
       const d = Hex.dirTo(u.hex, vac);
-      if (Rules.crossable(Rules.edgeOf(this.ctxFor(u.side, true), u.hex, d)) || T.cls !== 'wheel') {
+      /* через реку без моста — по тому же правилу, что и при движении (shared/rules.js):
+         колёсным нельзя вовсе, пешим и гусеничным — только с полным запасом хода,
+         и брод съедает ход. Иначе выбитый противник открывал бесплатный переход. */
+      const edge = Rules.edgeOf(this.ctxFor(u.side, true), u.hex, d);
+      const ford = !Rules.crossable(edge);
+      if (!ford || (T.cls !== 'wheel' && fresh)) {
         const from = u.hex;
         u.hex = vac; u.moved = true;
+        if (ford) u.mp = 0;
         this.ev({ e: 'move', to: '*', id: u.id, side: u.side, path: [from, vac], k: u.k, adv: 1 });
         this.capture(u);
         /* прорыв: подвижные части развивают успех */

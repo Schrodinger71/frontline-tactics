@@ -26,6 +26,11 @@
 
 const TPX = 4;
 let TER = null, TER_ID = null, MINI = null, TREES = null;
+/* TER_MIP — уменьшенные копии топоосновы: на отдалении рисуем из подходящей,
+   а не масштабируем 1200×1760 каждый кадр. TREE_GRID — деревья по клеткам
+   10×10 км, чтобы не перебирать все 60–70 тысяч ради видимых трёх. */
+let TER_MIP = [], TREE_GRID = null;
+const TG_CELL = 10, TG_W = Math.ceil(WW / TG_CELL), TG_H = Math.ceil(WH / TG_CELL);
 
 function bakeTerrain(id) {
   const T = Terrain.get(id), def = T.def, sd = def.seed || 0;
@@ -223,7 +228,43 @@ function bakeTerrain(id) {
   }
   TREES = new Float32Array(tr);
   TER = c; TER_ID = id;
+  buildTreeGrid();
+  buildMips();
   bakeMini(T);
+}
+
+/** деревья по клеткам карты: в каждой — индексы в TREES */
+function buildTreeGrid() {
+  const cells = new Array(TG_W * TG_H);
+  for (let i = 0; i < TREES.length; i += 3) {
+    const cx0 = Math.min(TG_W - 1, Math.max(0, TREES[i] / TG_CELL | 0));
+    const cy0 = Math.min(TG_H - 1, Math.max(0, TREES[i + 1] / TG_CELL | 0));
+    const k = cy0 * TG_W + cx0;
+    (cells[k] || (cells[k] = [])).push(i);
+  }
+  TREE_GRID = cells.map(a => a ? Int32Array.from(a) : null);
+}
+
+/** мип-пирамида топоосновы: каждый уровень вдвое меньше предыдущего */
+function buildMips() {
+  TER_MIP = [TER];
+  let prev = TER;
+  while (prev.width > 160 && prev.height > 160 && TER_MIP.length < 5) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, prev.width >> 1); c.height = Math.max(1, prev.height >> 1);
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(prev, 0, 0, c.width, c.height);
+    TER_MIP.push(c);
+    prev = c;
+  }
+}
+
+/** уровень, чей размер ближе всего к нужному на экране (но не меньше) */
+function terLevel(pxWide) {
+  if (!TER_MIP.length) return TER;
+  for (let i = TER_MIP.length - 1; i > 0; i--) if (TER_MIP[i].width >= pxWide) return TER_MIP[i];
+  return TER_MIP[0];
 }
 
 /** мини-карта: подложка с реками и дорогами, один раз на карту */

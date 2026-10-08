@@ -19,7 +19,7 @@ const Sound = (() => {
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('line.sound') || '{}')) } catch (e) { /* без настроек */ }
   const save = () => { try { localStorage.setItem('line.sound', JSON.stringify(cfg)) } catch (e) { /* приватный режим */ } };
 
-  let ac = null, out, comp, verb, bus = {}, noiseBuf, brownBuf, crush, amb = null;
+  let ac = null, out, comp, verb, bus = {}, send = {}, noiseBuf, brownBuf, crush, amb = null;
   let lastBoom = 0, boomsNow = 0, lastShot = 0, lastRadio = 0, musT = 0, musBar = 0;
   const voices = new Map();
   const ready = () => ac && cfg.on && ac.state === 'running';
@@ -36,7 +36,12 @@ const Sound = (() => {
     comp.connect(shelf); shelf.connect(out); out.connect(ac.destination);
     verb = ac.createConvolver(); verb.buffer = impulse(3.2, 2.6);
     const vg = ac.createGain(); vg.gain.value = .45; verb.connect(vg); vg.connect(comp);
-    for (const k of ['sfx', 'radio', 'amb', 'music']) { const g = ac.createGain(); g.gain.value = cfg[k]; g.connect(comp); bus[k] = g }
+    /* у каждой категории — сухая шина и свой посыл на общий ревер: иначе ползунок
+       категории не управляет хвостом отражений, и слышен только «Общая» */
+    for (const k of ['sfx', 'radio', 'amb', 'music']) {
+      const g = ac.createGain(); g.gain.value = cfg[k]; g.connect(comp); bus[k] = g;
+      const sg = ac.createGain(); sg.gain.value = cfg[k]; sg.connect(verb); send[k] = sg;
+    }
     noiseBuf = makeNoise(4); brownBuf = makeBrown(4); crush = softClip(2.6);
     startAmbient();
   }
@@ -108,7 +113,7 @@ const Sound = (() => {
     let tail = lp;
     if (ac.createStereoPanner) { const pn = ac.createStereoPanner(); pn.pan.value = s.pan; lp.connect(pn); tail = pn }
     tail.connect(bus[busName]);
-    const w = ac.createGain(); w.gain.value = (wet || .5) * (1.2 - s.near); tail.connect(w); w.connect(verb);
+    const w = ac.createGain(); w.gain.value = (wet || .5) * (1.2 - s.near); tail.connect(w); w.connect(send[busName] || verb);
     g.gain.value = .2 + .8 * s.near;
     return { g, s };
   }
@@ -257,7 +262,7 @@ const Sound = (() => {
     /* музыкальная подложка: два органных тона, меняются по аккордам */
     amb.pad = [0, 1, 2].map(() => {
       const o = ac.createOscillator(), g = ac.createGain(), lp = filt('lowpass', 700, .5);
-      o.type = 'sawtooth'; g.gain.value = 0; o.connect(lp); lp.connect(g); g.connect(bus.music); g.connect(verb); o.start();
+      o.type = 'sawtooth'; g.gain.value = 0; o.connect(lp); lp.connect(g); g.connect(bus.music); g.connect(send.music); o.start();
       return { o, g };
     });
   }
@@ -308,7 +313,10 @@ const Sound = (() => {
   function apply() {
     if (!ac) return;
     out.gain.setTargetAtTime(cfg.on ? cfg.master : 0, ac.currentTime, .05);
-    for (const k of ['sfx', 'radio', 'amb', 'music']) bus[k].gain.setTargetAtTime(cfg[k], ac.currentTime, .05);
+    for (const k of ['sfx', 'radio', 'amb', 'music']) {
+      bus[k].gain.setTargetAtTime(cfg[k], ac.currentTime, .05);
+      if (send[k]) send[k].gain.setTargetAtTime(cfg[k], ac.currentTime, .05);
+    }
   }
   function set(k, v) { cfg[k] = v; save(); apply(); syncBtn() }
   function syncBtn() { const b = document.getElementById('btnSound'); if (b) b.textContent = cfg.on ? '🔊' : '🔇' }
@@ -332,5 +340,12 @@ const Sound = (() => {
   }
   function toggle() { set('on', !cfg.on) }
 
-  return { init, update, boom: (o, s) => boom(o, s), gun, launch, outgoing, thunder, radio, busy, panelHTML, toggle };
+  /** текущие усиления узлов — для диагностики: видно, что ползунок дошёл до графа */
+  function levels() {
+    if (!ac) return { ready: false };
+    const r = { ready: true, master: out.gain.value };
+    for (const k of ['sfx', 'radio', 'amb', 'music']) r[k] = { bus: bus[k].gain.value, send: send[k] ? send[k].gain.value : null };
+    return r;
+  }
+  return { init, update, boom: (o, s) => boom(o, s), gun, launch, outgoing, thunder, radio, busy, panelHTML, toggle, levels };
 })();

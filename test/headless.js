@@ -47,21 +47,29 @@ function play(mode, seed, map) {
     score: Math.round(g.score), lost: g.stats.n.lostV + '/' + g.stats.s.lostV, caps: g.stats.n.caps + '/' + g.stats.s.caps,
     lostN: g.stats.n.lostV || 0, lostS: g.stats.s.lostV || 0, capsN: g.stats.n.caps || 0, capsS: g.stats.s.caps || 0,
     att: g.role.n === 'attacker' ? N : g.role.s === 'attacker' ? S : null,
-    limit: g.scen ? g.scen.turns : W.TURN_LIMIT, scen: !!g.scen,
-    /* дошло до срока, а не решилось раньше */
-    timeout: g.turn >= (g.scen ? g.scen.turns : W.TURN_LIMIT) };
+    /* срок движок считает как start + turns (game/scenarios.js), поэтому берём g.limit;
+       игроку же сценарий обещает turns ходов от своего начала — это elapsed/span */
+    limit: g.limit, span: g.scen ? g.scen.turns : g.limit, start: g.scen ? g.scen.start || 0 : 0,
+    elapsed: g.turn - (g.scen ? g.scen.start || 0 : 0), scen: !!g.scen,
+    sweep: !!map,
+    timeout: g.turn >= g.limit };
 }
+const SCENS = ['bridge', 'breakthrough', 'night'];
+const FREE = ['both', 'attack', 'defense'];
 const per = +process.argv[2] || 2;
+/* партий на сценарий кампании: по умолчанию столько же, сколько на режим */
+const perScen = +(process.env.FT_SCEN_GAMES || per);
 let seed = 1;
-const wins = { n: 0, s: 0, '—': 0 };
-for (const mode of ['both', 'attack', 'defense', 'bridge', 'breakthrough', 'night']) for (let i = 0; i < (['bridge', 'breakthrough', 'night'].includes(mode) ? 1 : per); i++) {
-  const r = play(mode, seed++);
-  if (!['bridge', 'breakthrough', 'night'].includes(mode)) wins[r.w]++;
-  console.log(`${mode.padEnd(12)} #${r.seed}  ходов ${String(r.turns).padStart(2)}  победа ${r.w}  перевес ${String(r.score).padStart(4)}  точки ${r.caps}  потери ${r.lost}  ${r.ms} мс — ${r.t}`);
+const games = [];
+const run = (mode, map) => { const r = play(mode, seed++, map); games.push(r); return r };
+
+for (const mode of FREE.concat(SCENS)) for (let i = 0; i < (SCENS.includes(mode) ? perScen : per); i++) {
+  const r = run(mode);
+  console.log(`${mode.padEnd(12)} #${r.seed}  ходов ${String(r.elapsed).padStart(2)}/${r.span}  победа ${r.w}  перевес ${String(r.score).padStart(4)}  точки ${r.caps}  потери ${r.lost}  ${r.ms} мс — ${r.t}`);
 }
 /* все карты: встречный бой ботов */
 for (const map of require('../shared/maps').MAP_ORDER) {
-  const r = play(map === 'fortline' ? 'attack' : 'both', seed++, map);
+  const r = run(map === 'fortline' ? 'attack' : 'both', map);
   console.log(`карта ${map.padEnd(10)} ходов ${String(r.turns).padStart(2)}  победа ${r.w}  перевес ${String(r.score).padStart(4)}  точки ${r.caps}  потери ${r.lost}  ${r.ms} мс`);
 }
 /* механики 1.2: высадка у точки, котёл, приказы */
@@ -120,5 +128,123 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(g.act(side, { t: 'order', k: 'counter' }).ok && g.ctxFor(side, true).counter.has(home.hex), 'приказ «Контрудар»');
   console.log('механики 2.0: ok');
 }
-console.log(`итого свободных: Запад ${wins.n}, Восток ${wins.s}, ничьи ${wins['—']}`);
+/* взорванный мост не открывает бесплатный переход: выбив противника за рекой,
+   занять его клетку можно только «с места» — как брод при обычном движении.
+   Колёсным брод закрыт вовсе. Регрессия: раньше пешие и гусеничные переходили
+   даже после марша, обходя правило о полном запасе хода. */
+{
+  const Hex = require('../shared/hex'), Rules = require('../shared/rules');
+  const ford = (kind, fresh) => {
+    const g = new Game('both', N, 31, 'valley');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    const side = g.active, en = side === N ? S : N;
+    const br = Hex.bridgeList('valley').find(x => !g.unitAt(x.a) && !g.unitAt(x.b));
+    g.br.set(br.key, 'down');
+    const u = g.spawn(kind, side, br.a), e = g.spawn('inf', en, br.b);
+    assert(!Rules.crossable(Rules.edgeOf(g.ctxFor(side, true), u.hex, Hex.dirTo(u.hex, e.hex))),
+      'грань у снесённого моста должна быть непроходимой');
+    e.str = 10; e.org = 1;                    /* выживет, но отойдёт: org < 15 */
+    u.str = 10; u.org = 100; u.sp = 3; u.acted = false;
+    u.moved = !fresh; u.mp = fresh ? W.UT[kind].mp : 1;
+    g.active = side; g.updateVision(side);
+    assert(g.act(side, { t: 'attack', id: u.id, target: e.id }).ok, 'атака через реку возможна');
+    return u.hex === br.b;
+  };
+  assert.strictEqual(ford('mot', true), false, 'колёсные не переходят снесённый мост');
+  assert.strictEqual(ford('inf', false), false, 'пешие после марша брод не проходят');
+  assert.strictEqual(ford('tnk', false), false, 'гусеничные после марша брод не проходят');
+  assert.strictEqual(ford('inf', true), true, 'пешие с места брод проходят');
+  assert.strictEqual(ford('tnk', true), true, 'гусеничные с места брод проходят');
+  console.log('переход через взорванный мост: ok');
+}
+/* ============================================================
+   ОТЧЁТ ПО БАЛАНСУ: сводка по всем сыгранным партиям.
+   Цифры — от ботов, поэтому это не истина, а индикатор: резкий
+   сдвиг доли побед или длины партий виден сразу, в том числе в CI.
+   ============================================================ */
+const MODE_RU = { both: 'встречный бой', attack: 'наступление', defense: 'оборона' };
+const SCEN_RU = { bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
+const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+const pct = (k, n) => n ? Math.round(k * 100 / n) + '%' : '—';
+const f1 = x => x.toFixed(1);
+
+function row(cells, w) { return cells.map((c, i) => i ? String(c).padStart(w[i]) : String(c).padEnd(w[i])).join('  ') }
+function table(head, rows, w) {
+  console.log(row(head, w));
+  console.log(w.map(n => '─'.repeat(n)).join('  '));
+  for (const r of rows) console.log(row(r, w));
+}
+
+console.log('\n════════ БАЛАНС ════════');
+
+/* --- свободные режимы --- */
+{
+  const w = [14, 6, 5, 6, 5, 9, 7, 8, 13];
+  const rows = FREE.map(m => {
+    const list = games.filter(g => g.mode === m && !g.scen && !g.sweep);
+    const n = list.length;
+    const wn = list.filter(g => g.w === N).length, ws = list.filter(g => g.w === S).length;
+    const dr = list.filter(g => g.w === '—').length;
+    const attWins = list.filter(g => g.att && g.w === g.att).length;
+    const attGames = list.filter(g => g.att).length;
+    return [MODE_RU[m], n, wn, ws, dr, attGames ? pct(attWins, attGames) : '—',
+      f1(avg(list.map(g => g.turns))), pct(list.filter(g => g.timeout).length, n),
+      Math.round(avg(list.map(g => g.lostN))) + '/' + Math.round(avg(list.map(g => g.lostS)))];
+  });
+  table(['режим', 'партий', 'Зап', 'Вост', 'ничьи', 'атакующий', 'ходов', 'до срока', 'потери З/В'], rows, w);
+}
+
+/* --- кампания --- */
+{
+  console.log('');
+  const w = [22, 6, 7, 8, 9, 13];
+  const rows = SCENS.map(id => {
+    const list = games.filter(g => g.mode === id);
+    const n = list.length;
+    const wins = list.filter(g => g.w === N).length;
+    const solved = list.filter(g => g.w === N);
+    return [SCEN_RU[id], n, pct(wins, n), (list[0] || {}).span || '—',
+      solved.length ? f1(avg(solved.map(g => g.elapsed))) : '—',
+      pct(list.filter(g => g.timeout).length, n)];
+  });
+  table(['сценарий кампании', 'партий', 'взят', 'срок', 'ходов*', 'до срока'], rows, w);
+  console.log('* ходов — в среднем по выигранным партиям: сколько реально нужно, чтобы уложиться в срок.');
+}
+
+/* --- карты --- */
+{
+  console.log('');
+  const list = games.filter(g => g.sweep);
+  const byMap = [...new Set(list.map(g => g.map))];
+  const w = [12, 6, 5, 6, 7, 13];
+  const rows = byMap.map(m => {
+    const gs = list.filter(g => g.map === m), n = gs.length;
+    return [m, n, gs.filter(g => g.w === N).length, gs.filter(g => g.w === S).length,
+      f1(avg(gs.map(g => g.turns))), Math.round(avg(gs.map(g => g.lostN))) + '/' + Math.round(avg(gs.map(g => g.lostS)))];
+  });
+  table(['карта', 'партий', 'Зап', 'Вост', 'ходов', 'потери З/В'], rows, w);
+}
+
+/* --- общий итог и предупреждения --- */
+{
+  console.log('');
+  const free = games.filter(g => !g.scen && !g.sweep);
+  const wn = free.filter(g => g.w === N).length, ws = free.filter(g => g.w === S).length, dr = free.filter(g => g.w === '—').length;
+  console.log(`всего свободных партий ${free.length}: Запад ${wn}, Восток ${ws}, ничьи ${dr} · средняя длина ${f1(avg(free.map(g => g.turns)))} ходов`);
+  const notes = [];
+  /* перекос сторон во встречном бою — там силы равны, значит должно быть близко к 50/50 */
+  const both = games.filter(g => g.mode === 'both');
+  if (both.length >= 6) {
+    const bn = both.filter(g => g.w === N).length, bs = both.filter(g => g.w === S).length;
+    if (Math.max(bn, bs) / both.length > .8) notes.push(`во встречном бою перекос ${bn}:${bs} — силы равны, ожидается примерно поровну`);
+  }
+  /* сценарий, который боты не берут ни разу, скорее всего непроходим по сроку */
+  for (const id of SCENS) {
+    const list = games.filter(g => g.mode === id);
+    if (list.length >= 2 && !list.some(g => g.w === N)) notes.push(`«${SCEN_RU[id]}» не взят ни в одной из ${list.length} партий — срок ${list[0].span} ходов может быть слишком жёстким`);
+  }
+  if (notes.length) { console.log(''); for (const t of notes) console.log('  ⚠ ' + t) }
+  else console.log('резких перекосов не видно');
+}
+console.log('');
 console.log('headless: ok');

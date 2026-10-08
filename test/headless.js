@@ -43,7 +43,13 @@ function play(mode, seed, map) {
   }
   assert(g.over, 'партия не закончилась');
   for (const u of g.units) for (const f of ['hex', 'str', 'org', 'mp']) assert(Number.isFinite(u[f]), `${u.k}.${f}`);
-  return { mode, seed, ms: Date.now() - t0, turns: g.turn, w: g.over.w || '—', t: g.over.t, score: Math.round(g.score), lost: g.stats.n.lostV + '/' + g.stats.s.lostV, caps: g.stats.n.caps + '/' + g.stats.s.caps };
+  return { mode, map: map || g.mapId, seed, ms: Date.now() - t0, turns: g.turn, w: g.over.w || '—', t: g.over.t,
+    score: Math.round(g.score), lost: g.stats.n.lostV + '/' + g.stats.s.lostV, caps: g.stats.n.caps + '/' + g.stats.s.caps,
+    lostN: g.stats.n.lostV || 0, lostS: g.stats.s.lostV || 0, capsN: g.stats.n.caps || 0, capsS: g.stats.s.caps || 0,
+    att: g.role.n === 'attacker' ? N : g.role.s === 'attacker' ? S : null,
+    limit: g.scen ? g.scen.turns : W.TURN_LIMIT, scen: !!g.scen,
+    /* дошло до срока, а не решилось раньше */
+    timeout: g.turn >= (g.scen ? g.scen.turns : W.TURN_LIMIT) };
 }
 const per = +process.argv[2] || 2;
 let seed = 1;

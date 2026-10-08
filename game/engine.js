@@ -117,7 +117,15 @@ class Game {
     this.history = [];
     this.limit = W.TURN_LIMIT;
     /* штаб каждой стороне — бесплатно, в глубине */
-    this.spawn('hq', N, this.freeHex(45, 220, 'hq')); this.spawn('hq', S, this.freeHex(255, 220, 'hq'));
+    /* штаб каждому командиру, разнесены по фронту: так сторона с несколькими
+       командирами сразу делится на направления */
+    for (const side of [N, S]) {
+      const mine = this.seatsOf(side), x = side === N ? 45 : 255;
+      mine.forEach((st, i) => {
+        const y = Math.round(W.WH * (i + 1) / (mine.length + 1));
+        this.spawn('hq', side, this.freeHex(x, y, 'hq'), { seat: st.id });
+      });
+    }
     this.log('*', 'Расстановка: купите части во вкладке «Закупка» и поставьте их в своей зоне. Потом — «Готов».', 'hq');
     if (require('./scenarios').SCEN[mode]) this.applyScenario(mode);
     this.rebuildFront();
@@ -638,6 +646,34 @@ class Game {
   }
 
   /* ---------- бой ---------- */
+  /** штаб без охраны: рядом нет ни одной живой части своей стороны */
+  hqAlone(e) {
+    return !Hex.neighbors(e.hex).some(h => { const v = this.unitAt(h); return v && v.side === e.side && v.str > 0 });
+  }
+  /** Захват ставки: брошенный штаб не уничтожают, а берут — вместе со штабными
+      документами. Захватчику командные очки и вскрытый сектор противника. */
+  captureHQ(e, u) {
+    const seat = e.seat || e.side, zone = Hex.within(e.hex, UT.hq.cmd);
+    this.ev({ e: 'dead', to: '*', id: e.id, hex: e.hex, k: e.k, side: e.side, how: 'captured' });
+    e.str = 0;
+    const st = this.stats[e.side], price = UT.hq.price;
+    st.lost.hq = (st.lost.hq || 0) + 1; st.lostV += price;
+    const ks = this.stats[u.side];
+    ks.killed.hq = (ks.killed.hq || 0) + 1; ks.killedV += price;
+    this.lastVacated = e.hex;
+    /* трофей: командные очки захватившему командиру */
+    const mySeat = u.seat || u.side;
+    this.cp[mySeat] = Math.min(W.CP.max, (this.cp[mySeat] || 0) + W.HQ_CAPTURE_CP);
+    /* штабные документы: сектор противника вскрыт до конца его следующего хода */
+    for (const h of zone) this.recon[u.side].add(h);
+    this.updateVision(u.side);
+    /* части бывшего сектора теряют управление и мораль */
+    for (const v of this.units) if (v.side === e.side && v.str > 0 && Hex.hexDist(v.hex, e.hex) <= UT.hq.cmd) v.org = Math.max(0, v.org - 20);
+    this.log(e.side, `Ставка командира ${this.seatById.get(seat) ? this.seatById.get(seat).n : ''} захвачена! Документы у противника, части без управления.`, 'crit');
+    this.log(u.side, `Взята ставка противника: +${W.HQ_CAPTURE_CP}★ и вскрытый сектор.`, 'g');
+    return { ok: true, captured: 1 };
+  }
+
   attack(u, e) {
     const T = UT[u.k];
     if (!e || e.side === u.side) return { ok: false, error: 'нет цели' };
@@ -647,6 +683,14 @@ class Game {
     if (!this.seen(u.side, e)) return { ok: false, error: 'цель не видна' };
     if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
     if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
+    /* штаб без охраны берут в плен, а не вышибают: за это командные очки и документы */
+    if (e.k === 'hq' && T.cap && this.hqAlone(e)) {
+      u.acted = true; u.mp = 0; u.revealed = this.turn;
+      const res = this.captureHQ(e, u);
+      this.advanceAfterFight(u, T, true);
+      this.updateVision(u.side); this.updateVision(oppOf(u.side));
+      return res;
+    }
     const o = Rules.odds(this.ctxFor(u.side, true), u, e);
     const la = Math.min(u.str, Math.round(o.expA * this.R(.6, 1.4)));
     let ld = Math.min(e.str, Math.round(o.expD * this.R(.6, 1.4)));
@@ -679,7 +723,12 @@ class Game {
       if (retreat) this.retreat(e, u);
       else this.say(e, 'held', {}, '');
     }
-    /* занять освободившуюся клетку */
+    this.advanceAfterFight(u, T, fresh);
+    this.updateVision(u.side); this.updateVision(oppOf(u.side));
+    return { ok: true, la, ld };
+  }
+  /** занять освободившуюся клетку после боя (отход, гибель или захват ставки) */
+  advanceAfterFight(u, T, fresh) {
     const vac = this.lastVacated;
     if (u.str > 0 && T.cap && vac !== undefined && vac !== null && !this.unitAt(vac) && Hex.hexDist(u.hex, vac) === 1) {
       const d = Hex.dirTo(u.hex, vac);
@@ -703,8 +752,6 @@ class Game {
       }
     }
     this.lastVacated = null;
-    this.updateVision(u.side); this.updateVision(oppOf(u.side));
-    return { ok: true, la, ld };
   }
   /** опыт: на порогах 0,3 и 0,6 часть становится «обстрелянной» и «ветеранами» */
   gainXp(u, d) {

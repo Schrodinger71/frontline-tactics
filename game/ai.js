@@ -42,6 +42,8 @@ module.exports = {
     for (let h = 0; h < Hex.NH; h++) if (this.inDeploy(side, h) && !this.unitAt(h)) zone.push(h);
     if (!zone.length) { this.ready[seat] = true; return }
     const xs = zone.map(h => this.map.hexes[h].x), edge = dir > 0 ? Math.max(...xs) : Math.min(...xs);
+    /* ставка — в тылу своей полосы, поближе к своему городу: её захват дорого стоит */
+    this.placeHQ(seat, zone, dir);
     let guard = 0;
     while (this.budget[seat] >= 60 && guard++ < 40) {
       const k = this.wantKind(seat, mix);
@@ -58,6 +60,33 @@ module.exports = {
       if (best < 0 || !this.buy(seat, k, best, true).ok) break;
     }
     this.ready[seat] = true;
+  },
+  /** куда поставить ставку: глубокий тыл своей полосы, рядом с городом */
+  placeHQ(seat, zone, dir) {
+    const side = this.sideOf(seat) || seat;
+    const hq = this.units.find(u => u.k === 'hq' && u.seat === seat && u.str > 0);
+    if (!hq) return;
+    const mine = this.seatsOf(side), band = Math.max(0, mine.findIndex(st => st.id === seat));
+    const yband = W.WH * (band + 1) / (mine.length + 1);
+    const towns = this.pts.filter(p => p.owner === side);
+    const backX = dir > 0 ? Math.min(...zone.map(h => this.map.hexes[h].x)) : Math.max(...zone.map(h => this.map.hexes[h].x));
+    let best = hq.hex, bs = -1e9;
+    for (const h of zone) {
+      if (this.unitAt(h) && this.unitAt(h) !== hq) continue;
+      const hx = this.map.hexes[h];
+      /* чем глубже в тыл и ближе к своему городу в своей полосе, тем лучше */
+      const depth = -Math.abs(hx.x - backX) / Hex.HW;
+      const near = towns.length ? -Math.min(...towns.map(p => Hex.hexDist(h, p.hex))) : 0;
+      /* штабы союзников разводим по фронту: иначе оба садятся в один угол
+         и смысл направлений теряется */
+      const apart = Math.min(6, ...this.units
+        .filter(v => v.k === 'hq' && v.side === side && v.seat !== seat && v.str > 0)
+        .map(v => Hex.hexDist(h, v.hex)).concat([6]));
+      const sc = depth * 2.2 + near * 1.2 - Math.abs(hx.y - yband) / 6 + apart * .9
+        + (hx.t === 'city' ? 2 : 0) + this.rnd() * .8;
+      if (sc > bs) { bs = sc; best = h }
+    }
+    if (best !== hq.hex && !this.unitAt(best)) hq.hex = best;
   },
   wantKind(seat, mix) {
     const side = this.sideOf(seat) || seat;

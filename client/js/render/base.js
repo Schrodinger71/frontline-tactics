@@ -80,25 +80,35 @@ function todLook() {
 function drawBase() {
   const v = G.view, s = v.s;
   const brKey = (G.br || []).map(b => b.join(':')).join(',');
-  /* в ключе нет положения камеры: сдвиг гасится запасом, а не перерисовкой */
-  const key = [s.toFixed(4), CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
+  /* в ключе нет ни положения камеры, ни масштаба: сдвиг гасится запасом,
+     а масштаб — растягиванием готового слоя во время жеста */
+  const key = [CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
   const needW = Math.ceil((CW + PAD * 2) * DPR), needH = Math.ceil((CH + PAD * 2) * DPR);
   if (!BASE || BASE.width !== needW || BASE.height !== needH) {
     BASE = document.createElement('canvas'); BASE.width = needW; BASE.height = needH; baseKey = ''; baseAt = null;
   }
-  /* камера ушла за запас — печём заново от её нынешнего положения */
-  const strayed = !baseAt || baseAt.s !== s
-    || Math.abs((baseAt.x - v.x) * s) > PAD || Math.abs((baseAt.y - v.y) * s) > PAD;
-  if (key !== baseKey || strayed) {
-    baseKey = key; baseAt = { x: v.x, y: v.y, s };
+  const now = performance.now();
+  const k = baseAt ? s / baseAt.s : 1;                     /* во сколько раз тянем готовый слой */
+  const drift = baseAt ? Math.max(Math.abs((baseAt.x - v.x) * s), Math.abs((baseAt.y - v.y) * s)) : 0;
+  /* растянутый слой обязан закрывать экран целиком, иначе по краям будет пусто */
+  const covers = baseAt && (CW + PAD * 2) * k >= CW + drift * 2 + 4 && (CH + PAD * 2) * k >= CH + drift * 2 + 4;
+  const exact = baseAt && k === 1 && drift <= PAD;
+  /* печём заново, если слой не годится вовсе либо жест кончился и пора вернуть чёткость */
+  const stale = !baseAt || key !== baseKey || !covers || k < .55 || k > 2.2;
+  const settled = !exact && !stale && now - (baseAt.t || 0) > 140;
+  if (stale || settled) {
+    baseKey = key; baseAt = { x: v.x, y: v.y, s, t: now };
     /* печём на вьюпорт с запасом: w2s и слои читают CW/CH, поэтому подменяем их */
     const oCW = CW, oCH = CH;
     CW = oCW + PAD * 2; CH = oCH + PAD * 2;
     try { renderBaseTo(s) } finally { CW = oCW; CH = oCH }
   }
-  const dx = -PAD + (baseAt.x - v.x) * s, dy = -PAD + (baseAt.y - v.y) * s;
+  const kk = s / baseAt.s, wpx = (CW + PAD * 2) * kk, hpx = (CH + PAD * 2) * kk;
+  const dx = CW / 2 - wpx / 2 + (baseAt.x - v.x) * s;
+  const dy = CH / 2 - hpx / 2 + (baseAt.y - v.y) * s;
   cx.save(); cx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  cx.drawImage(BASE, dx, dy, CW + PAD * 2, CH + PAD * 2);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
+  cx.drawImage(BASE, dx, dy, wpx, hpx);
   cx.restore();
 }
 

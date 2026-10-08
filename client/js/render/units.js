@@ -13,8 +13,10 @@
    ============================================================ */
 
 const SIDE_TONE = {
-  own: { top: '#5fb6f0', g0: 'rgba(30,48,62,.96)', g1: 'rgba(10,18,26,.96)', bd: '#6cc3ff', txt: '#e6f3fb' },
-  enemy: { top: '#ff6b55', g0: 'rgba(64,30,24,.96)', g1: 'rgba(26,12,10,.96)', bd: '#ff8a72', txt: '#fde6dc' },
+  own: { top: '#5fb6f0', g0: 'rgba(30,48,62,.96)', g1: 'rgba(10,18,26,.96)', bd: '#6cc3ff', txt: '#e6f3fb', box: '#16354a' },
+  /* союзник: та же сторона, но другой командир — зелёным, чтобы не путать со своими */
+  ally: { top: '#6fd18d', g0: 'rgba(26,52,36,.96)', g1: 'rgba(10,22,15,.96)', bd: '#7ee0a0', txt: '#e2f7e8', box: '#1b4430' },
+  enemy: { top: '#ff6b55', g0: 'rgba(64,30,24,.96)', g1: 'rgba(26,12,10,.96)', bd: '#ff8a72', txt: '#fde6dc', box: '#5a2219' },
   ghost: { top: '#a08070', g0: 'rgba(40,26,20,.55)', g1: 'rgba(20,12,10,.55)', bd: '#b08a78', txt: '#e8d0c4' }
 };
 const strCol = s => s <= 3 ? '#ff6b55' : s <= 6 ? '#ffd479' : '#8fe0a2';
@@ -22,7 +24,9 @@ const strCol = s => s <= 3 ? '#ff6b55' : s <= 6 ? '#ffd479' : '#8fe0a2';
 function counter(u, q, alpha, scale) {
   const s = G.view.s, hw = Hex.HW * s * (scale || 1);
   const enemy = G.spec ? u.side === S : u.side !== G.side, T = utFor(u.side)[u.k] || UT.inf, ghost = u.ghost;
-  const tone = SIDE_TONE[ghost ? 'ghost' : enemy ? 'enemy' : 'own'];
+  /* союзная часть — своей стороны, но под другим командиром */
+  const ally = !enemy && !ghost && !G.spec && G.mySeat && u.seat && u.seat !== G.mySeat;
+  const tone = SIDE_TONE[ghost ? 'ghost' : enemy ? 'enemy' : ally ? 'ally' : 'own'];
   const sel = u.id === G.sel && !ghost;
   cx.save();
   if (alpha !== undefined) cx.globalAlpha = alpha;
@@ -126,7 +130,7 @@ function compact(u, q, hw, tone, sel, enemy) {
   const W = clamp(hw * .72, 11, 26), H = W * .78, x0 = q.x - W / 2, y0 = q.y - H / 2;
   cx.fillStyle = 'rgba(0,0,0,.45)'; rr(cx, x0 + 1.5, y0 + 2, W, H, 3); cx.fill();
   rr(cx, x0, y0, W, H, 3);
-  cx.fillStyle = u.ghost ? 'rgba(60,40,30,.5)' : enemy ? '#5a2219' : '#16354a'; cx.fill();
+  cx.fillStyle = u.ghost ? 'rgba(60,40,30,.5)' : (tone.box || '#16354a'); cx.fill();
   cx.lineWidth = sel ? 2 : 1; cx.strokeStyle = sel ? '#f2b33d' : tone.bd; if (u.ghost) cx.setLineDash([2, 2]); cx.stroke(); cx.setLineDash([]);
   cx.fillStyle = tone.top; cx.fillRect(x0 + 1, y0 + 1, W - 2, Math.max(2, H * .18));
   if (u.ghost) return;

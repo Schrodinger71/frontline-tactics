@@ -28,7 +28,16 @@ const G = {
 };
 function nightK() { return G.night ? 1 : 0 }
 const selUnit = () => G.units.find(u => u.id === G.sel);
-const myUnit = u => u && !G.spec && u.side === G.side;
+/* «моя» часть — под моим командованием; союзную видно и можно выбрать,
+   но приказы ей отдаёт её командир (сервер чужие приказы отклоняет) */
+const myUnit = u => u && !G.spec && u.side === G.side && (!G.mySeat || !u.seat || u.seat === G.mySeat);
+const allyUnit = u => u && !G.spec && u.side === G.side && !myUnit(u);
+/** как зовут командира места: ник из лобби, иначе «бот» или «Командир N» */
+function seatName(id) {
+  const x = (G.lobby || []).find(e => e.id === id);
+  if (!x) return '';
+  return x.who === 'bot' ? 'бот' : x.name || ('командир ' + x.n);
+}
 
 /* ---------- сеть ---------- */
 let ws = null, wsRetry = 0, queue = [], seq = 0;
@@ -67,6 +76,7 @@ function onJoined(m) {
   G.lobby = Array.isArray(m.seats) ? m.seats : [];
   /* лобби показываем, пока ждём живых игроков */
   G.lobbyHidden = !G.lobby.some(x => x.who === 'open');
+  G.lobbyOpen = false;
   hideMenu(); hideModal(); renderLobby();
 }
 /* ---------- лобби: кто на каком месте ---------- */
@@ -79,25 +89,41 @@ function lobbyHTML() {
       const who = x.who === 'bot' ? '<i class="lb bot">бот</i>'
         : x.who === 'open' ? '<i class="lb open">ждём игрока</i>'
         : `<b>${esc(x.name || 'Командир ' + x.n)}</b>${mine ? '<i class="lb me">вы</i>' : ''}`;
-      const st = x.who === 'open' ? '' : x.ready ? '<span class="good">готов</span>' : '<span class="mu">расставляет</span>';
+      let st = '';
+      if (x.who !== 'open') {
+        if (G.phase === 'battle') {
+          st = x.side !== G.active ? '<span class="mu">ждёт хода</span>'
+            : x.done ? '<span class="mu">закончил</span>' : '<span class="good">ходит</span>';
+        } else st = x.ready ? '<span class="good">готов</span>' : '<span class="mu">расставляет</span>';
+      }
       return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td><td>${st}</td></tr>`;
     }).join('');
     return `<div class="lcol"><div class="lhd" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}</div>
       <table class="ltab">${rows}</table></div>`;
   };
   const open = list.filter(x => x.who === 'open').length;
+  const sub = open
+    ? `Ждём игроков: ${open}. Передайте им код — кнопка «Войти» в меню.`
+    : G.phase === 'battle'
+      ? `Ходит ${esc(SIDE_NAME[G.active] || '')}.`
+      : 'Все места заняты.';
   return `<div class="lbox">
     <h2>Партия ${esc(G.roomId || '')}</h2>
-    <p class="mu">${open ? `Ждём игроков: ${open}. Передайте им код — кнопка «Войти» в меню.` : 'Все места заняты.'}</p>
+    <p class="mu">${sub}</p>
     <div class="lcols">${side(N)}${side(S)}</div>
-    <p class="acts"><button class="btn pri" id="btnLobbyClose">К расстановке</button></p></div>`;
+    <p class="acts"><button class="btn pri" id="btnLobbyClose">${G.phase === 'battle' ? 'Закрыть' : 'К расстановке'}</button></p></div>`;
 }
 function renderLobby() {
   const el = $('#lobby');
   if (!el) return;
-  const show = !!G.roomId && !G.spec && G.phase === 'deploy' && !G.lobbyHidden && (G.lobby || []).length > 1;
+  const has = !!G.roomId && (G.lobby || []).length > 1;
+  /* сам показывается, пока ждём игроков перед боем; в бою — по кнопке «Состав» */
+  const auto = has && !G.spec && G.phase === 'deploy' && !G.lobbyHidden;
+  const show = has && (G.lobbyOpen || auto);
   el.hidden = !show;
   if (show) el.innerHTML = lobbyHTML();
+  const b = $('#btnTeams');
+  if (b) b.style.display = has ? '' : 'none';
 }
 
 function skipAnims() { ANIMS.q.length = 0; ANIMS.cur = null; ANIMS.pos.clear(); G.pendingAt = 0 }
@@ -265,8 +291,9 @@ function bar(label, v, max, col, txt) {
   return `<div class="row"><span>${label}</span><b>${txt != null ? txt : Math.round(k * 100) + '%'}</b></div><div class="bar"><div style="width:${k * 100}%;background:${col}"></div></div>`;
 }
 function unitCard(u) {
-  const T = utFor(u.side)[u.k], own = myUnit(u) || G.spec, hx = Hex.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
-  const head = `<div class="uhead">${iconHTML(u.k, 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}</div>
+  const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = Hex.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
+  const head = `<div class="uhead">${iconHTML(u.k, 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
+  allyUnit(u) ? ` <i class="allytag">союзник${seatName(u.seat) ? ' · ' + esc(seatName(u.seat)) : ''}</i>` : ''}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
   if (!own) return `<div class="card">${head}
     ${bar('Сила', u.str, MAX_STR, u.str <= 3 ? 'var(--rd)' : 'var(--ac)', u.str + ' из 10 · ' + elCount(u.k, u.str) + ' ' + T.eln)}
@@ -720,7 +747,7 @@ function drawPreviews() {
 function hideMenu() { $('#menu').classList.remove('on') }
 function leaveToMenu() {
   netSend({ t: 'leave' });
-  G.roomId = null; G.units = []; G.sel = null; G.lobby = null; G.mySeat = null; G.lobbyHidden = false;
+  G.roomId = null; G.units = []; G.sel = null; G.lobby = null; G.mySeat = null; G.lobbyHidden = false; G.lobbyOpen = false;
   $('#lc_log').innerHTML = '';
   renderLobby();   /* иначе оверлей лобби останется поверх меню */
   M.view = 'root'; /* из партии выходим в главное меню, а не на экран настройки */
@@ -742,7 +769,7 @@ function clickHex(h, e) {
     if (u && myUnit(u) && !there) { act({ t: 'place', id: u.id, hex: h }); return }
     return setSel(there ? there.id : null);
   }
-  if (there && (myUnit(there) || G.spec)) return setSel(there.id === G.sel && !G.spec ? null : there.id);
+  if (there && (myUnit(there) || allyUnit(there) || G.spec)) return setSel(there.id === G.sel && !G.spec ? null : there.id);
   const tg = (G.targets || []).find(t => t.hex === h);
   if (u && tg) { act(UT[u.k].bomb ? { t: 'bombard', id: u.id, hex: h } : { t: 'attack', id: u.id, target: tg.id }); return }
   if (u && G.reach && G.reach.has(h) && !G.reach.get(h).through) { act({ t: 'move', id: u.id, to: h }); return }
@@ -816,7 +843,10 @@ function bind() {
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
   document.querySelectorAll('.colbtn').forEach(b => b.onclick = () => { const el = $('#' + b.dataset.col); el.classList.toggle('col'); setTimeout(() => { clampTo(CAM); CAM.moving = true }, 220) });
   $('#modal').addEventListener('click', e => { if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal(); if (e.target.id === 'btnNew') leaveToMenu() });
-  $('#lobby').addEventListener('click', e => { if (e.target.id === 'btnLobbyClose') { G.lobbyHidden = true; renderLobby() } });
+  $('#lobby').addEventListener('click', e => {
+    if (e.target.id === 'btnLobbyClose' || e.target.id === 'lobby') { G.lobbyHidden = true; G.lobbyOpen = false; renderLobby() }
+  });
+  $('#btnTeams').onclick = () => { G.lobbyOpen = !G.lobbyOpen; if (G.lobbyOpen) G.lobbyHidden = true; renderLobby() };
   document.querySelectorAll('#left .tabs button').forEach(b => b.onclick = () => {
     G.tabL = b.dataset.tab;
     document.querySelectorAll('#left .tabs button').forEach(x => x.classList.toggle('on', x === b));

@@ -371,3 +371,4 @@ span.tiny{min-width:3.4em;display:inline-block}
   .mjoin.sub{flex-direction:column;align-items:stretch}
   .mjoin.sub .btn.ch{flex:1 1 auto;min-height:40px}
 }
+.allytag{font-style:normal;font-size:.8em;color:#17120a;background:var(--gn);border-radius:4px;padding:.05em .4em;white-space:nowrap}

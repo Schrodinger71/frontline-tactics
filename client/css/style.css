@@ -289,7 +289,7 @@ body.spec #right .tabs button[data-tab="buy"]{display:none}
   /* карты — одной колонкой, превью слева от описания */
   .maps,.mgrid{grid-template-columns:1fr;gap:.5em}
   .mapc{flex-direction:row;align-items:center;gap:.8em;padding:.6em .7em}
-  .mapc canvas{flex:0 0 auto;width:54px;height:79px;border-radius:4px}
+  /* размер превью задан ниже одним правилом — здесь только отступ */
   .mapc .mtx{flex:1;min-width:0}
   .mapc span{font-size:.92em}
   .mcard{padding:.9em 1em}
@@ -382,6 +382,10 @@ span.tiny{min-width:3.4em;display:inline-block}
 .srow .snm2{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow .smon{font:600 .9em ui-monospace,Consolas,monospace;color:var(--ac)}
 .srow .sst{color:var(--mu);font-size:.85em;min-width:4.4em;text-align:right}
-/* превью широких карт шире и ниже — пропорции настоящие */
-.mapc canvas.wide{align-self:center}
-@media (max-width:760px){ .mapc canvas.wide{width:84px;height:auto} }
+/* превью карт: рамка одинаковая, растягивать нельзя — иначе форма карты врёт */
+@media (max-width:760px){ .mapc canvas{width:64px;height:64px} }
+/* размер и форма карты в карточке выбора */
+.mapc .msize{display:inline-block;font-style:normal;font-size:.76em;letter-spacing:.03em;
+  border-radius:4px;padding:.05em .4em;margin:.1em 0 .15em}
+.mapc .msize.tall{background:#16283a;color:#9fd8ff}
+.mapc .msize.wide{background:#2a2113;color:#ffd37a}

@@ -724,10 +724,11 @@ function playHTML() {
 
     <div class="mlab">Карта</div>
     <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}">
-${(() => { const d = Hex.dimsOf(id), wide = d[0] > d[1];
-        const cw = wide ? 132 : 90, ch = wide ? Math.round(132 * d[1] / d[0]) : 132;
-        return `<canvas data-prev="${id}" width="${cw}" height="${ch}"${wide ? ' class="wide"' : ''}></canvas>` })()}
-      <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
+<canvas data-prev="${id}" width="112" height="112"></canvas>
+      <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i>
+        ${(() => { const d = Hex.dimsOf(id);
+          return `<em class="msize ${d[0] > d[1] ? 'wide' : 'tall'}">${d[0]}×${d[1]} км · ${d[0] > d[1] ? 'широкая' : 'высокая'}</em>` })()}
+        <span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
 
     <div class="macts"><button class="btn pri big" data-a="go"${err ? ' disabled' : ''}>${M.me ? 'В бой' : 'Смотреть'}</button></div></div>`;
 }
@@ -799,7 +800,21 @@ function mapPreview(id) {
   return c;
 }
 function drawPreviews() {
-  const put = el => { try { const c = mapPreview(el.dataset.prev); el.getContext('2d').drawImage(c, 0, 0, el.width, el.height) } catch (e) { /* без холста */ } };
+  /* рамка у всех одна, а карта внутри — в своих пропорциях: сразу видно,
+     какая карта вытянута в высоту, а какая в ширину */
+  const put = el => {
+    try {
+      const c = mapPreview(el.dataset.prev), g = el.getContext('2d');
+      g.clearRect(0, 0, el.width, el.height);
+      g.fillStyle = '#0a1016'; g.fillRect(0, 0, el.width, el.height);
+      const k = Math.min(el.width / c.width, el.height / c.height);
+      const w = Math.max(1, Math.round(c.width * k)), h = Math.max(1, Math.round(c.height * k));
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(c, Math.round((el.width - w) / 2), Math.round((el.height - h) / 2), w, h);
+      g.strokeStyle = 'rgba(120,150,170,.35)'; g.lineWidth = 1;
+      g.strokeRect(Math.round((el.width - w) / 2) + .5, Math.round((el.height - h) / 2) + .5, w - 1, h - 1);
+    } catch (e) { /* без холста */ }
+  };
   /* уже испечённые — сразу, чтобы меню не мигало при каждом выборе */
   const list = [...document.querySelectorAll('canvas[data-prev]')].filter(el => PREV.has(el.dataset.prev) ? (put(el), false) : true);
   const next = () => {

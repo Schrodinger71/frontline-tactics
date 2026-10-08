@@ -420,10 +420,36 @@ function statRows(a, b, la, lb) {
   if (!ks.length) return '<p class="hint">Потерь пока нет.</p>';
   return `<table class="st"><tr><th></th><th>${la}</th><th>${lb}</th></tr>${ks.map(k => `<tr><td>${iconHTML(k, 'ic sm')}${UT[k].sh}</td><td class="bad">${(a && a[k]) || ''}</td><td class="good">${(b && b[k]) || ''}</td></tr>`).join('')}</table>`;
 }
+/** состав партии для вкладки «Сводка»: кто за какую команду, ник, очки, состояние */
+function rosterCard() {
+  const list = G.lobby || [];
+  if (list.length < 2) return '';
+  const row = x => {
+    const ec = (G.team || []).find(t => t.id === x.id);
+    const mine = x.id === G.mySeat;
+    const who = x.who === 'bot' ? '<i class="lb bot">бот</i>'
+      : x.who === 'open' ? '<i class="lb open">ждём</i>'
+      : `${esc(x.name || 'Командир ' + x.n)}${mine ? '<i class="lb me">вы</i>' : ''}`;
+    let st = '';
+    if (x.who !== 'open') {
+      if (G.phase === 'battle') st = x.side !== G.active ? '' : x.done ? 'закончил' : 'ходит';
+      else st = x.ready ? 'готов' : 'ставит';
+    }
+    const money = ec && x.side === G.side && !G.spec ? `${ec.budget}` : '';
+    return `<div class="srow ${mine ? 'on' : ''}"><span class="sdot" style="background:${COL[x.side]}"></span>
+      <span class="snm2">${who}</span><span class="smon">${money}</span><span class="sst">${st}</span></div>`;
+  };
+  const col = sd => `<div class="lbl" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}</div>`
+    + list.filter(x => x.side === sd).map(row).join('');
+  return `<div class="card">${col(N)}${col(S)}
+    ${(G.team || []).length > 1 && !G.spec
+      ? `<p class="hint">Очки у каждого командира свои: доход стороны (${G.sideIncome}/ход) делится поровну между ${G.team.length} командирами.</p>`
+      : ''}</div>`;
+}
 function renderSum() {
   const st = G.stats;
   if (!st) return;
-  $('#lc_sum').innerHTML = `<div class="card">
+  $('#lc_sum').innerHTML = rosterCard() + `<div class="card">
     <div class="row"><span>Потеряно / уничтожено</span><b><span class="bad">${st.lostV}</span> / <span class="good">${st.killedV}</span></b></div>
     <div class="row"><span>Взято точек</span><b>${st.caps}</b></div><div class="row"><span>Отступлений</span><b>${st.routs}</b></div>
     <div class="row"><span>Пленных</span><b>${st.prisoners}</b></div>

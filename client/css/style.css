@@ -375,3 +375,10 @@ span.tiny{min-width:3.4em;display:inline-block}
 .ltab .lmon{text-align:right;white-space:nowrap;font:600 .92em ui-monospace,Consolas,monospace;color:var(--ac)}
 .ltab .lmon i{font-style:normal;color:var(--mu);font-size:.85em;margin-left:.3em}
 .lnote{color:var(--mu);font-size:.9em;line-height:1.45;margin:.2em 0 0}
+/* состав партии во вкладке «Сводка» */
+.srow{display:flex;align-items:center;gap:.4em;padding:.22em 0;font-size:.95em}
+.srow.on{background:#15212b;border-radius:4px;padding-left:.3em;margin-left:-.3em}
+.srow .sdot{width:.5em;height:.5em;border-radius:50%;flex:0 0 auto}
+.srow .snm2{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .smon{font:600 .9em ui-monospace,Consolas,monospace;color:var(--ac)}
+.srow .sst{color:var(--mu);font-size:.85em;min-width:4.4em;text-align:right}

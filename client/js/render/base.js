@@ -14,7 +14,12 @@
      освещение по времени суток: рассвет, день, закат, ночь.
    ============================================================ */
 
-let BASE = null, baseKey = '';
+/* Подложку печём с запасом PAD вокруг экрана и держим вместе с положением
+   камеры, для которого она испечена. Пока камера не ушла за этот запас и
+   масштаб не менялся, кадр — просто копирование готового слоя (сотые доли мс)
+   вместо перерисовки (на максимальном приближении это были десятки мс). */
+const PAD = 170;
+let BASE = null, baseKey = '', baseAt = null;
 /** подложку печём в свой холст и дальше только копируем, пока вид не изменился */
 function renderBaseTo(s) { const main = cx; cx = BASE.getContext('2d'); try { renderBase(s) } finally { cx = main } }
 const MAPGEO = { id: null, edges: null, rivers: null, roads: null, bridges: null };
@@ -75,12 +80,26 @@ function todLook() {
 function drawBase() {
   const v = G.view, s = v.s;
   const brKey = (G.br || []).map(b => b.join(':')).join(',');
-  const key = [v.x.toFixed(3), v.y.toFixed(3), s.toFixed(4), CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
-  if (!BASE || BASE.width !== cv.width || BASE.height !== cv.height) { BASE = document.createElement('canvas'); BASE.width = cv.width; BASE.height = cv.height; baseKey = '' }
-  /* раньше здесь был второй, «полный» проход через 140 мс — он дорисовывал кроны.
-     Теперь кроны рисуются сразу, и второй проход лишь повторял ту же работу. */
-  if (key !== baseKey) { baseKey = key; renderBaseTo(s) }
-  cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.drawImage(BASE, 0, 0); cx.restore();
+  /* в ключе нет положения камеры: сдвиг гасится запасом, а не перерисовкой */
+  const key = [s.toFixed(4), CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, brKey, G.selRiv || ''].join('|');
+  const needW = Math.ceil((CW + PAD * 2) * DPR), needH = Math.ceil((CH + PAD * 2) * DPR);
+  if (!BASE || BASE.width !== needW || BASE.height !== needH) {
+    BASE = document.createElement('canvas'); BASE.width = needW; BASE.height = needH; baseKey = ''; baseAt = null;
+  }
+  /* камера ушла за запас — печём заново от её нынешнего положения */
+  const strayed = !baseAt || baseAt.s !== s
+    || Math.abs((baseAt.x - v.x) * s) > PAD || Math.abs((baseAt.y - v.y) * s) > PAD;
+  if (key !== baseKey || strayed) {
+    baseKey = key; baseAt = { x: v.x, y: v.y, s };
+    /* печём на вьюпорт с запасом: w2s и слои читают CW/CH, поэтому подменяем их */
+    const oCW = CW, oCH = CH;
+    CW = oCW + PAD * 2; CH = oCH + PAD * 2;
+    try { renderBaseTo(s) } finally { CW = oCW; CH = oCH }
+  }
+  const dx = -PAD + (baseAt.x - v.x) * s, dy = -PAD + (baseAt.y - v.y) * s;
+  cx.save(); cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cx.drawImage(BASE, dx, dy, CW + PAD * 2, CH + PAD * 2);
+  cx.restore();
 }
 
 function renderBase(s) {
@@ -91,16 +110,40 @@ function renderBase(s) {
   bg.addColorStop(0, '#0b1116'); bg.addColorStop(1, '#030507');
   cx.fillStyle = bg; cx.fillRect(0, 0, CW, CH);
   const a = w2s({ x: 0, y: 0 }), b = w2s({ x: WW, y: WH });
-  /* тень под листом карты */
-  cx.save(); cx.shadowColor = 'rgba(0,0,0,.7)'; cx.shadowBlur = 28; cx.fillStyle = '#10161a'; cx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); cx.restore();
+  /* Тень под листом карты. На приближении лист больше экрана в разы, а размытие
+     по такому прямоугольнику стоит десятки миллисекунд — поэтому тень рисуем
+     только когда край листа вообще виден, а подложку заливаем обрезанной. */
+  const edgeVisible = a.x > -40 || a.y > -40 || b.x < CW + 40 || b.y < CH + 40;
+  const cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const fx = cl(a.x, -40, CW + 40), fy = cl(a.y, -40, CH + 40);
+  const fw = cl(b.x, -40, CW + 40) - fx, fh = cl(b.y, -40, CH + 40) - fy;
+  if (fw > 0 && fh > 0) {
+    cx.save();
+    if (edgeVisible) { cx.shadowColor = 'rgba(0,0,0,.7)'; cx.shadowBlur = 28 }
+    cx.fillStyle = '#10161a';
+    cx.fillRect(fx, fy, fw, fh);
+    cx.restore();
+  }
   /* топооснова */
   cx.save();
   cx.beginPath(); cx.rect(a.x, a.y, b.x - a.x, b.y - a.y); cx.clip();
   cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
-  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
-  /* берём уровень по нужному размеру на экране: на отдалении это в разы дешевле,
-     чем каждый кадр масштабировать полную текстуру */
-  cx.drawImage(terLevel(WW * s * DPR), 0, 0, WW, WH);
+  /* Топооснова: берём мип-уровень по нужному размеру на экране и рисуем ТОЛЬКО
+     видимый кусок. Раньше в каждый кадр отдавалась вся текстура целиком — на
+     максимальном приближении это растягивание в несколько раз стоило десятки
+     миллисекунд и ощущалось рывками при перемещении. */
+  const lv = terLevel(WW * s * DPR);
+  const halfW = CW / 2 / s + 2, halfH = CH / 2 / s + 2;
+  const x0 = clamp(G.view.x - halfW, 0, WW), x1 = clamp(G.view.x + halfW, 0, WW);
+  const y0 = clamp(G.view.y - halfH, 0, WH), y1 = clamp(G.view.y + halfH, 0, WH);
+  if (x1 - x0 > .01 && y1 - y0 > .01) {
+    /* при растягивании дорогое сглаживание не окупается — картинка всё равно мягкая */
+    const upscale = lv.width < WW * s * DPR;
+    cx.imageSmoothingEnabled = true;
+    cx.imageSmoothingQuality = upscale ? 'low' : 'high';
+    const kx = lv.width / WW, ky = lv.height / WH;
+    cx.drawImage(lv, x0 * kx, y0 * ky, (x1 - x0) * kx, (y1 - y0) * ky, x0, y0, x1 - x0, y1 - y0);
+  }
   cx.restore();
   /* деревья рисуем и в движении: раньше быстрый кадр их пропускал, и на время
      прокрутки зума лес пропадал, возвращаясь рывком. Перебор идёт по клеткам

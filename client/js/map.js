@@ -40,14 +40,18 @@ function regionEdges(has, list) {
 }
 
 /* ---------- туман войны: мягкий край ----------
-   Слой тумана живёт в координатах карты (3 пикс. на км) и
-   перестраивается только при смене обзора; при прокрутке и
-   масштабе он просто рисуется с текущим преобразованием. */
-let FOGW = null, fogKey = '';
-const FK = 3;
+   Слой тумана живёт в координатах карты и перестраивается только при смене
+   обзора; при прокрутке и масштабе он просто рисуется с текущим
+   преобразованием. Маска всё равно размыта, поэтому печём её в 1,5 пикс.
+   на км (раньше 3): размытие на вчетверо меньшей площади и вдвое меньшим
+   радиусом — в разы дешевле, а после сглаживания на экране не отличить.
+   Граница обзора — готовый Path2D в координатах карты, а не обход всех
+   видимых клеток в каждом кадре. */
+let FOGW = null, fogKey = '', FOG_EDGE = null;
+const FK = 1.5;
 function drawFog() {
   if (!G.vis || G.spec || G.phase !== 'battle') return;
-  if (!FOGW) { FOGW = document.createElement('canvas'); FOGW.width = H.WW * FK; FOGW.height = H.WH * FK }
+  if (!FOGW) { FOGW = document.createElement('canvas'); FOGW.width = Math.ceil(H.WW * FK); FOGW.height = Math.ceil(H.WH * FK) }
   const key = G.mapId + '|' + G.visV;
   if (key !== fogKey) {
     fogKey = key;
@@ -62,16 +66,32 @@ function drawFog() {
     g.fill();
     const f = FOGW.getContext('2d');
     f.clearRect(0, 0, FOGW.width, FOGW.height);
-    f.filter = `blur(${(Hex.R * FK * .22).toFixed(1)}px)`; f.drawImage(t, 0, 0); f.filter = 'none';
+    f.filter = `blur(${(Hex.R * FK * .22).toFixed(2)}px)`; f.drawImage(t, 0, 0); f.filter = 'none';
+    /* граница обзора: рёбра видимых клеток, за которыми не видно */
+    FOG_EDGE = typeof Path2D === 'function' ? new Path2D() : null;
+    if (FOG_EDGE) for (const h of G.vis) {
+      const cs = H.corners(h);
+      for (let d = 0; d < 6; d++) {
+        const n = H.nb(h, d);
+        if (n >= 0 && G.vis.has(n)) continue;
+        const [i, j] = EDGE_V[d];
+        FOG_EDGE.moveTo(cs[i].x, cs[i].y); FOG_EDGE.lineTo(cs[j].x, cs[j].y);
+      }
+    }
   }
+  const s = G.view.s;
   cx.save();
-  cx.translate(CW / 2, CH / 2); cx.scale(G.view.s, G.view.s); cx.translate(-G.view.x, -G.view.y);
+  cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
   cx.globalAlpha = .64; cx.imageSmoothingEnabled = true;
-  cx.drawImage(FOGW, 0, 0, H.WW, H.WH);
+  cx.drawImage(FOGW, 0, 0, FOGW.width / FK, FOGW.height / FK);
+  cx.globalAlpha = 1;
+  /* граница обзора — в координатах карты, толщина и штрих в пикселях экрана */
+  if (FOG_EDGE) {
+    cx.setLineDash([2 / s, 5 / s]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1 / s;
+    cx.stroke(FOG_EDGE);
+  }
   cx.restore();
-  /* граница обзора */
-  cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1;
-  regionEdges(n => G.vis.has(n), G.vis); cx.stroke(); cx.restore();
+  if (!FOG_EDGE) { cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1; regionEdges(n => G.vis.has(n), G.vis); cx.stroke(); cx.restore() }
 }
 
 /* ---------- снабжение ---------- */
@@ -494,7 +514,7 @@ function draw(dt) {
   if (!TER || TER_ID !== G.mapId) {
     const el = document.getElementById('loading');
     if (el && el.hidden) { el.hidden = false; cx.fillStyle = '#04070a'; cx.fillRect(0, 0, CW, CH); return }
-    bakeTerrain(G.mapId); FOGW = null; fogKey = '';
+    bakeTerrain(G.mapId); FOGW = null; fogKey = ''; FOG_EDGE = null;
     if (el) el.hidden = true;
   }
   ANIM += dt;

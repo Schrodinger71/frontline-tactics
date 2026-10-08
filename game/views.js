@@ -43,6 +43,12 @@ module.exports = {
       forts: [...this.forts.entries()], obst: [...this.obst.keys()], role: this.role, phase: this.phase, ready: this.ready, over: this.over,
       /* состав команд: клиент показывает, кто на каком месте и кто ещё не закончил ход */
       seat: spec ? null : seat,
+      /* экономика союзников — только своей команде: сколько у кого очков и дохода.
+         Сумма долей равна доходу стороны (движок делит остаток без потерь). */
+      team: spec ? null : this.seatsOf(side).map(st => ({
+        id: st.id, budget: Math.floor(this.budget[st.id]), income: this.income[st.id] || 0, cp: this.cp[st.id] || 0
+      })),
+      sideIncome: spec ? null : ((this.sideIncome || {})[side] || 0),
       seats: (this.seats || []).map(st => ({ id: st.id, side: st.side, n: st.n, bot: !!this.bots[st.id], ready: !!this.ready[st.id], done: !!this.done[st.id] })),
       waiting: spec ? null : (this.pending ? this.pending(this.active).map(st => st.id) : []),
       turn: this.turn, limit: this.limit, active: this.active, clock: turnClock(this.turn), day: dayOfTurn(this.turn), night: isNight(this.turn),

@@ -99,14 +99,17 @@ class Game {
     this.seatById = new Map(this.seats.map(st => [st.id, st]));
     this.bots = {}; this.ready = {}; this.done = {};
     this.budget = {}; this.income = {}; this.cp = {}; this.air = {};
-    for (const st of this.seats) {
-      const share = this.seatsOf(st.side).length;
-      this.bots[st.id] = st.bot;
-      this.ready[st.id] = false; this.done[st.id] = false;
-      this.budget[st.id] = Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role[st.side]] || 1) / share);
-      this.income[st.id] = 0;
-      this.cp[st.id] = W.CP.start;
-      this.air[st.id] = { strike: 0, recon: 0 };
+    for (const side of [N, S]) {
+      const mine = this.seatsOf(side);
+      const start = Game.split(Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role[side]] || 1)), mine.length);
+      mine.forEach((st, i) => {
+        this.bots[st.id] = st.bot;
+        this.ready[st.id] = false; this.done[st.id] = false;
+        this.budget[st.id] = start[i];
+        this.income[st.id] = 0;
+        this.cp[st.id] = W.CP.start;
+        this.air[st.id] = { strike: 0, recon: 0 };
+      });
     }
     this.barrage = { n: false, s: false };
     this.counter = { n: false, s: false };
@@ -187,11 +190,22 @@ class Game {
     return set;
   }
   /** клетки под управлением штабов стороны */
+  /** Сектор каждого командира: клетки вокруг ЕГО штаба.
+      Командование даёт только свой штаб — так сторона с несколькими
+      командирами естественно делится на направления. Штаб на марше
+      в этот ход сектора не держит. */
   cmdHexes(side) {
-    const set = new Set();
-    for (const h of this.units) if (h.side === side && h.k === 'hq' && h.str > 0) for (const x of Hex.within(h.hex, UT.hq.cmd)) set.add(x);
-    return set;
+    const by = new Map();
+    for (const st of this.seatsOf(side)) by.set(st.id, new Set());
+    for (const h of this.units) {
+      if (h.side !== side || h.k !== 'hq' || h.str <= 0 || h.moved) continue;
+      const set = by.get(h.seat) || by.set(h.seat, new Set()).get(h.seat);
+      for (const x of Hex.within(h.hex, UT.hq.cmd)) set.add(x);
+    }
+    return by;
   }
+  /** клетки сектора для части (по её командиру) */
+  cmdFor(ctx, u) { return ctx.cmd && ctx.cmd.get ? ctx.cmd.get(u.seat || u.side) : null }
 
   /* ---------- обзор ---------- */
   /** видна ли чужая часть стороне (клетка в обзоре + не прячется) */
@@ -266,6 +280,11 @@ class Game {
   }
 
   /* ---------- места ---------- */
+  /** делёж суммы между местами без потери остатка: лишнее достаётся первым */
+  static split(total, n) {
+    const base = Math.floor(total / n), rest = total - base * n;
+    return Array.from({ length: n }, (_, i) => base + (i < rest ? 1 : 0));
+  }
   /** места стороны, по порядку */
   seatsOf(side) { return this.seats.filter(st => st.side === side) }
   /** сторона (команда) этого места */
@@ -434,14 +453,11 @@ class Game {
        сколько было у одного командира, поэтому делим между местами */
     const share = mySeats.length;
     const fly = this.weather.fly ? 1 : 0;
-    const air0 = { strike: AIR.strike[night ? 1 : 0] * fly, recon: AIR.recon[night ? 1 : 0] * fly };
+    const strikes = Game.split(AIR.strike[night ? 1 : 0] * fly, share);
+    const recons = Game.split(AIR.recon[night ? 1 : 0] * fly, share);
     mySeats.forEach((st, i) => {
       this.done[st.id] = false;
-      /* остаток от деления достаётся первым местам, чтобы вылеты не терялись */
-      this.air[st.id] = {
-        strike: Math.floor(air0.strike / share) + (i < air0.strike % share ? 1 : 0),
-        recon: Math.floor(air0.recon / share) + (i < air0.recon % share ? 1 : 0)
-      };
+      this.air[st.id] = { strike: strikes[i], recon: recons[i] };
     });
     this.updateSupply(side);
     const hqAlive = this.units.some(v => v.side === side && v.k === 'hq' && v.str > 0);
@@ -454,7 +470,8 @@ class Game {
       if (u.side !== side || u.str <= 0) continue;
       const T = UT[u.k];
       let mp = T.mp;
-      if (!cmd.has(u.hex) && u.k !== 'hq') mp -= 1;
+      const cz = cmd.get(u.seat) || cmd.get(u.side);
+      if (!(cz && cz.has(u.hex)) && u.k !== 'hq') mp -= 1;
       if (u.sp <= 0) mp = 1; else if (u.sp === 1) mp = Math.ceil(mp / 2); else if (u.sp === 2) mp -= 1;
       if (u.sup) mp -= 1;
       if (u.org < 25) mp = Math.min(mp, 2);
@@ -462,12 +479,13 @@ class Game {
       u.amb = false; u.ambUsed = false; u.support = false; u.hold = false; u.march = false; u.exploit = false;
       u.startHex = u.hex;
     }
-    /* доход стороны делится между её местами */
+    /* доход стороны — от удержанных точек; делится между её местами поровну,
+       остаток достаётся первым, так что сумма по команде ровно равна доходу стороны */
     const inc = Math.round((W.BASE_INCOME + this.heldWeight(side, true) * W.INCOME_PER_WEIGHT) * (W.ROLE_INCOME_MUL[this.role[side]] || 1));
-    for (const st of mySeats) {
-      this.income[st.id] = Math.round(inc / share);
-      this.budget[st.id] += this.income[st.id];
-    }
+    this.sideIncome = this.sideIncome || {};
+    this.sideIncome[side] = inc;
+    const parts = Game.split(inc, share);
+    mySeats.forEach((st, i) => { this.income[st.id] = parts[i]; this.budget[st.id] += parts[i] });
     this.updateVision(side); this.updateVision(oppOf(side));
     this.ev({ e: 'turn', to: '*', side, turn: this.turn, clock: turnClock(this.turn), night });
   }

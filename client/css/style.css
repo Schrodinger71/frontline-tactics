@@ -372,3 +372,6 @@ span.tiny{min-width:3.4em;display:inline-block}
   .mjoin.sub .btn.ch{flex:1 1 auto;min-height:40px}
 }
 .allytag{font-style:normal;font-size:.8em;color:#17120a;background:var(--gn);border-radius:4px;padding:.05em .4em;white-space:nowrap}
+.ltab .lmon{text-align:right;white-space:nowrap;font:600 .92em ui-monospace,Consolas,monospace;color:var(--ac)}
+.ltab .lmon i{font-style:normal;color:var(--mu);font-size:.85em;margin-left:.3em}
+.lnote{color:var(--mu);font-size:.9em;line-height:1.45;margin:.2em 0 0}

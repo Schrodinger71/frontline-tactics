@@ -167,8 +167,10 @@
     /* взаимодействие родов войск: цель уже связана боем с частью другого рода */
     const ARMB = { soft: 1, light: 2, hard: 4 }, hb = def.hb || 0;
     if (hb && (hb & ~ARMB[TA.arm])) am('взаимодействие', 1.15);
-    if (ctx.cmd && !ctx.cmd.has(att.hex)) am('вне штаба', .9);
-    else if (ctx.cmd) am('штаб рядом', 1.1);
+    /* командование — от штаба своего командира: ctx.cmd это места → клетки сектора */
+    const cz = ctx.cmd && (ctx.cmd.get ? ctx.cmd.get(att.seat || att.side) : ctx.cmd);
+    if (cz && !cz.has(att.hex)) am('вне штаба', .9);
+    else if (cz) am('штаб рядом', 1.1);
     const spA = att.sp === undefined ? 3 : att.sp, spD = def.sp === undefined ? 3 : def.sp;
     if (spA < 3) am(`запасы ${spA}/3`, SUPK.att[spA]);
     if (ctx.smoke && ctx.smoke.has(def.hex)) am('цель в дыму', .8);

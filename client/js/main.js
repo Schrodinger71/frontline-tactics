@@ -89,6 +89,7 @@ function lobbyHTML() {
       const who = x.who === 'bot' ? '<i class="lb bot">бот</i>'
         : x.who === 'open' ? '<i class="lb open">ждём игрока</i>'
         : `<b>${esc(x.name || 'Командир ' + x.n)}</b>${mine ? '<i class="lb me">вы</i>' : ''}`;
+      const ec = (G.team || []).find(t => t.id === x.id);
       let st = '';
       if (x.who !== 'open') {
         if (G.phase === 'battle') {
@@ -96,7 +97,9 @@ function lobbyHTML() {
             : x.done ? '<span class="mu">закончил</span>' : '<span class="good">ходит</span>';
         } else st = x.ready ? '<span class="good">готов</span>' : '<span class="mu">расставляет</span>';
       }
-      return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td><td>${st}</td></tr>`;
+      const money = ec && x.side === G.side && !G.spec
+        ? `<td class="lmon">${ec.budget}<i>+${ec.income}</i></td>` : '<td></td>';
+      return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td>${money}<td>${st}</td></tr>`;
     }).join('');
     return `<div class="lcol"><div class="lhd" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}</div>
       <table class="ltab">${rows}</table></div>`;
@@ -111,6 +114,9 @@ function lobbyHTML() {
     <h2>Партия ${esc(G.roomId || '')}</h2>
     <p class="mu">${sub}</p>
     <div class="lcols">${side(N)}${side(S)}</div>
+    ${(G.team || []).length > 1 && !G.spec ? `<p class="lnote">Очки у каждого командира свои: доход стороны
+      (${G.sideIncome} за ход) делится поровну между ${G.team.length} командирами. Покупает каждый на своё,
+      чужой частью не командует. У вашей команды сейчас ${G.team.reduce((a, x) => a + x.budget, 0)} очк.</p>` : ''}
     <p class="acts"><button class="btn pri" id="btnLobbyClose">${G.phase === 'battle' ? 'Закрыть' : 'К расстановке'}</button></p></div>`;
 }
 function renderLobby() {
@@ -136,6 +142,7 @@ function applySnapshot(v) {
   } else if (Array.isArray(v.seats) && !(G.lobby || []).length) G.lobby = v.seats;
   if (v.seat) G.mySeat = v.seat;
   G.waiting = v.waiting || [];
+  G.team = v.team || null; G.sideIncome = v.sideIncome || 0;
   Object.assign(G, {
     phase: v.phase, units: v.units, ghosts: v.ghosts, pts: v.pts, vis: v.vis ? new Set(v.vis) : null, supply: v.supply ? new Set(v.supply) : null,
     mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, counter: v.counter, smoke: v.smoke || [], districts: v.districts,
@@ -192,8 +199,16 @@ function spawnHexes(k) {
 function clientCtx() {
   const occ = new Map();
   for (const u of G.units) occ.set(u.hex, u);
-  const cmd = new Set();
-  for (const h of G.units) if (h.k === 'hq' && h.side === G.side) for (const x of Hex.within(h.hex, UT.hq.cmd)) cmd.add(x);
+  /* секторы командиров своей стороны: место → клетки вокруг его штаба */
+  const cmd = new Map();
+  for (const h of G.units) {
+    if (h.k !== 'hq' || h.side !== G.side || h.moved) continue;
+    const key = h.seat || h.side;
+    if (!cmd.has(key)) cmd.set(key, new Set());
+    const set = cmd.get(key);
+    for (const x of Hex.within(h.hex, UT.hq.cmd)) set.add(x);
+  }
+  if (G.mySeat && !cmd.has(G.mySeat)) cmd.set(G.mySeat, new Set());
   const mines = new Map(); for (const m of G.mines || []) mines.set(m.hex, { side: m.side });
   const wx = wxById(G.weather);
   const support = { n: new Set(), s: new Set() };
@@ -273,6 +288,13 @@ function renderTop() {
       + (Math.abs(per) >= .5 ? `\nСейчас ${per > 0 ? 'в вашу пользу' : 'против вас'} ${Math.abs(Math.round(per))} за ход.` : '\nСейчас по точкам равенство — перевес не двигается.');
   }
   $('#hdBudget').textContent = G.spec ? `${G.budget.n} · ${G.budget.s}` : G.budget;
+  if (!G.spec && G.team && G.team.length > 1) {
+    const all = G.team.reduce((a, x) => a + x.budget, 0);
+    $('#hdBudget').parentNode.title =
+      `Ваши очки: ${G.budget}. У всей команды: ${all}.\n`
+      + `Доход стороны ${G.sideIncome} за ход делится поровну между командирами (${G.team.length}), `
+      + 'остаток достаётся первым — сумма долей точно равна доходу стороны.';
+  }
   $('#hdIncome').textContent = G.spec ? `+${G.income.n} · +${G.income.s}` : '+' + G.income;
   $('#hdCp').textContent = G.spec ? `${(G.cp || {}).n || 0} · ${(G.cp || {}).s || 0}` : `${G.cp || 0} из ${CP.max}`;
   const who = G.phase === 'deploy' ? 'Расстановка' : G.over ? 'Итог' : G.spec ? 'Ходит ' + SIDE_GEN[G.active] : G.isMyTurn ? 'Ваш ход' : 'Ход противника…';

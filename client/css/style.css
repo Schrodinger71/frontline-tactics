@@ -99,9 +99,6 @@ button{font:inherit;color:inherit}
 .mcard h2{margin:.2em 0;font-size:1.25em}
 .mcard p{color:var(--mu);line-height:1.45;flex:1;margin:.3em 0 .8em}
 .mcard .acts{margin-top:auto;flex-wrap:wrap}
-.mside{display:flex;align-items:center;justify-content:center;gap:.6em;margin-bottom:1.4em}
-.mside label{display:flex;align-items:center;gap:.4em;background:var(--pn);border:1px solid var(--bd2);border-radius:8px;padding:.4em .8em;cursor:pointer}
-.mside input{accent-color:var(--ac)}
 .mjoin{display:flex;align-items:center;gap:.6em;justify-content:center;margin:1em 0;flex-wrap:wrap}
 .mjoin input{background:#0e161e;border:1px solid var(--bd2);border-radius:6px;color:var(--tx);padding:.45em .6em;
   width:6em;text-align:center;letter-spacing:.18em;text-transform:uppercase;font:600 1em ui-monospace,monospace}
@@ -191,7 +188,6 @@ body.spec #pauseMark{display:none}
 .wrow i{color:var(--mu);font-style:normal;font-size:.85em}
 .bar.sm{height:4px;margin:0}
 .ustate{margin:.2em 0 .5em;color:#cfe0ea;font-size:.92em;line-height:1.4}
-.msec{color:var(--ac);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.85em;margin:1.4em 0 .6em}
 .mcard.done{border-color:#2d5a3a}
 .mcard.done .mkick{color:var(--gn)}
 
@@ -232,3 +228,76 @@ body.spec #right .tabs button[data-tab="buy"]{display:none}
 .mapc.on{border-color:var(--ac);background:#1a1710}
 .mapc i{color:var(--ac);font-style:normal;font-size:.82em;text-transform:uppercase;letter-spacing:.05em}
 .mapc span{color:var(--mu);font-size:.86em;line-height:1.35}
+
+/* ---------- меню: корневой экран и экраны выбора ---------- */
+.mbox.root{max-width:460px;padding-top:6vh}
+.mbox.narrow{max-width:620px}
+.mmain{display:flex;flex-direction:column;gap:.6em;margin:1.8em 0 1.4em}
+.btn.big{padding:.8em 1em;font-size:1.08em;border-radius:10px;text-align:center;position:relative}
+.btn.pri.big{font-size:1.2em;letter-spacing:.04em}
+.btn.big .dot{position:absolute;top:.75em;right:.9em;width:.5em;height:.5em;border-radius:50%;
+  background:var(--ac);box-shadow:0 0 .5em var(--ac)}
+.mhead{display:flex;align-items:center;gap:.8em;margin:.4em 0 1.2em;min-width:0}
+.mhead .btn{flex:0 0 auto}
+.mhead h1{font-size:1.5em;letter-spacing:.1em;color:var(--ac);margin:0;text-align:left;
+  flex:1 1 auto;min-width:0;overflow-wrap:anywhere;line-height:1.15}
+.mlab{color:var(--mu);font-size:.84em;text-transform:uppercase;letter-spacing:.06em;margin:1.1em 0 .4em}
+.mlab i{text-transform:none;letter-spacing:0;font-style:normal}
+.mrow{display:flex;gap:.5em;flex-wrap:wrap}
+.btn.ch{padding:.55em .95em}
+.btn.ch.on{background:var(--ac);color:#17120a;border-color:var(--ac);font-weight:600}
+.btn.ch:disabled{opacity:.4}
+.mnote{color:var(--mu);font-size:.9em;line-height:1.45;margin:.5em 0 0;min-height:1.4em}
+.macts{display:flex;justify-content:center;margin:1.6em 0 .5em}
+.macts .btn.big{min-width:12em}
+.mpanel{background:var(--pn);border:1px solid var(--bd);border-radius:12px;padding:1em 1.2em}
+.mpanel h2{margin:0 0 .4em;color:var(--ac);font-size:1.1em;letter-spacing:.05em}
+
+/* ---------- что нового ---------- */
+.nrel + .nrel{margin-top:1.4em;border-top:1px solid var(--bd);padding-top:1.2em}
+.nver{color:var(--ac);font-size:.82em;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.nrel h2{margin:.15em 0 .6em;color:var(--tx);font-size:1.15em;letter-spacing:0}
+.ngrp{color:var(--ac);font-size:.78em;text-transform:uppercase;letter-spacing:.09em;font-weight:600;margin:1.1em 0 .45em}
+.nrel h2 + .ngrp{margin-top:.2em}
+.nlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.7em}
+.nlist li{border-left:2px solid var(--bd2);padding-left:.8em}
+.nlist li.new{border-left-color:var(--ac)}
+.nlist b{display:inline}
+.nlist .tag{margin-left:.5em;font-style:normal;font-size:.72em;text-transform:uppercase;letter-spacing:.06em;
+  color:#17120a;background:var(--ac);border-radius:4px;padding:.1em .4em;vertical-align:.1em}
+.nlist span{display:block;color:var(--mu);font-size:.92em;line-height:1.45;margin-top:.15em}
+
+/* ---------- меню на узких экранах ---------- */
+/* наведение на сенсорных экранах «залипает» — оставляем только там, где мышь */
+@media (hover:hover){.mapc:hover{border-color:var(--bd2)}}
+@media (max-width:760px){
+  #menu{padding:2.5vh max(3.5vw,env(safe-area-inset-left)) calc(2.5vh + env(safe-area-inset-bottom))}
+  .mbox,.mbox.root,.mbox.narrow{max-width:none}
+  .mbox h1{font-size:1.7em;letter-spacing:.1em}
+  .mbox.root{padding-top:2vh}
+  .msub{margin-bottom:1.1em;font-size:.95em}
+  .mstrip{margin:-.3em 0 .9em}
+  /* пальцем — крупнее: не меньше 44px по высоте */
+  .mmain{gap:.5em;margin:1.2em 0 1em}
+  .btn.big{padding:.95em 1em;min-height:44px}
+  .mhead{gap:.6em;margin-bottom:.9em}
+  .mhead h1{font-size:1.15em;letter-spacing:.04em}
+  .mlab{margin:.9em 0 .35em}
+  .mrow{gap:.4em}
+  .btn.ch{flex:1 1 8em;min-height:44px;padding:.6em .5em}
+  .macts .btn.big{width:100%;min-width:0}
+  /* карты — одной колонкой, превью слева от описания */
+  .maps,.mgrid{grid-template-columns:1fr;gap:.5em}
+  .mapc{flex-direction:row;align-items:center;gap:.8em;padding:.6em .7em}
+  .mapc canvas{flex:0 0 auto;width:54px;height:79px;border-radius:4px}
+  .mapc .mtx{flex:1;min-width:0}
+  .mapc span{font-size:.92em}
+  .mcard{padding:.9em 1em}
+  .mcard .acts{gap:.4em}
+  .mcard .acts .btn{flex:1 1 auto;min-height:40px}
+  .mjoin{gap:.45em;margin:.9em 0}
+  .mjoin .btn{min-height:40px}
+  .mpanel{padding:.85em .95em}
+  .snd input[type=range]{width:7.5em}
+  .mfoot{font-size:.9em}
+}

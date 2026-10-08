@@ -411,24 +411,113 @@ const SCEN_TXT = {
   breakthrough: { n: 'Прорыв к Красногору', d: 'За 12 ходов взять Красногор через мины и волны резервов.' },
   night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Востока под Заречьем.' }
 };
+const OPP_TXT = {
+  bot: { n: 'Против бота', d: 'Одиночная партия — вторую сторону держит бот-командир.' },
+  human: { n: 'Против игрока', d: 'Создаст партию и даст код из четырёх букв — передайте его противнику.' },
+  watch: { n: 'Бот против бота', d: 'Наблюдение без тумана войны: скорость ×1/×2/×4 и пауза.' }
+};
+const MODE_TXT = {
+  both: { n: 'Встречный бой', d: 'Силы равны, первый ход — по жребию. Кто удержит больше городов — у того перевес.' },
+  attack: { n: 'Наступление', d: 'Вы наступаете и ходите первым, бюджет +12%. Противник встречает в окопах, его точки укреплены.' },
+  defense: { n: 'Оборона', d: 'Вы держите рубеж: доход +30%, части в окопах, точки укреплены. Противник сильнее и бьёт первым.' }
+};
+
+/* состояние меню: экран + выбор, выбор помнится между запусками */
+const M = { view: 'root', side: N, opp: 'bot', mode: 'both' };
+try { Object.assign(M, JSON.parse(localStorage.getItem('ft.menu') || '{}')) } catch (e) { /* без настроек */ }
+M.view = 'root';
+if (!OPP_TXT[M.opp]) M.opp = 'bot';
+if (!MODE_TXT[M.mode]) M.mode = 'both';
+if (M.side !== N && M.side !== S) M.side = N;
+function mSave() { try { localStorage.setItem('ft.menu', JSON.stringify({ side: M.side, opp: M.opp, mode: M.mode })) } catch (e) { /* приватный режим */ } }
+
+/** ряд взаимоисключающих кнопок: key — поле в M, opts — [значение, подпись] */
+function mPick(key, opts, dis) {
+  return `<div class="mrow">${opts.map(([v, n]) => `<button class="btn ch${M[key] === v ? ' on' : ''}"
+    data-pick="${key}" data-val="${v}"${dis ? ' disabled' : ''}>${esc(n)}</button>`).join('')}</div>`;
+}
+const joinHTML = () => `<div class="mjoin"><span>Код партии:</span>
+  <input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false">
+  <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>`;
+const backHTML = t => `<div class="mhead"><button class="btn" data-nav="root">‹ Назад</button><h1>${esc(t)}</h1></div>`;
+
 function menuHTML() {
-  let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
+  if (M.view === 'play') return playHTML();
+  if (M.view === 'camp') return campHTML();
+  if (M.view === 'set') return setHTML();
+  if (M.view === 'news') return newsHTML();
+  return rootHTML();
+}
+
+function rootHTML() {
   const strip = ['tnk', 'mot', 'inf', 'art', 'mlrs', 'eng', 'hq'].map(k => iconHTML(k, 'ic big')).join('');
-  const mode = (id, t, d) => `<div class="mcard"><div class="mkick">Операция</div><h2>${t}</h2><p>${d}</p><div class="acts">
-    <button class="btn pri sm" data-a="create" data-mode="${id}" data-bot="1">Против бота</button><button class="btn sm" data-a="create" data-mode="${id}" data-bot="0">Дуэль по коду</button>
-    <button class="btn sm" data-a="watch" data-mode="${id}">Смотреть ботов</button></div></div>`;
-  return `<div class="mbox"><h1>FRONTLINE TACTICS</h1><div class="msub">Пошаговая штабная игра о сухопутном фронте</div><div class="mstrip">${strip}</div>
-    <div class="mside"><label><input type="radio" name="mside" value="n" checked> За «Запад» (слева)</label><label><input type="radio" name="mside" value="s"> За «Восток» (справа)</label></div>
-    <div class="msec">Кампания «Красногорская операция»</div>
-    <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}"><div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div><h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
-      <div class="acts"><button class="btn pri sm" data-a="scen" data-id="${id}" data-side="n">За Запад</button><button class="btn sm" data-a="scen" data-id="${id}" data-side="s">За Восток</button><button class="btn sm" data-a="watch" data-mode="${id}">Смотреть</button></div></div>`).join('')}</div>
-    <div class="msec">Свободная операция · карта</div>
-    <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}"><canvas data-prev="${id}" width="90" height="132"></canvas><div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
-    <div class="mgrid">${mode('both', 'Встречный бой', 'Силы равны, первый ход — по жребию. Кто удержит больше городов — у того перевес.')}${mode('attack', 'Наступление', 'Вы наступаете и ходите первым, бюджет +12%. Противник встречает в окопах, его точки укреплены.')}${mode('defense', 'Оборона', 'Вы держите рубеж: доход +30%, части в окопах, точки укреплены. Противник сильнее и бьёт первым.')}</div>
-    <div class="mjoin"><span>Код партии:</span><input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false"><button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>
+  return `<div class="mbox root"><h1>FRONTLINE TACTICS</h1>
+    <div class="msub">Пошаговая штабная игра о сухопутном фронте</div>
+    <div class="mstrip">${strip}</div>
+    <div class="mmain">
+      <button class="btn pri big" data-nav="play">Играть</button>
+      <button class="btn big" data-nav="camp">Кампания</button>
+      <button class="btn big" data-nav="set">Настройки</button>
+      <button class="btn big" data-nav="news">Что нового${News.unseen() ? '<i class="dot" title="есть новое"></i>' : ''}</button>
+    </div>
+    ${joinHTML()}
     <div class="mfoot">Версия ${GAME_VERSION} · колесо — масштаб, перетаскивание — карта, <kbd>?</kbd> — справка.</div></div>`;
 }
-function showMenu() { hideModal(); $('#menu').innerHTML = menuHTML(); $('#menu').classList.add('on'); drawPreviews() }
+
+function playHTML() {
+  const watch = M.opp === 'watch';
+  return `<div class="mbox">${backHTML('Свободная операция')}
+    <div class="mlab">Против кого</div>
+    ${mPick('opp', [['bot', 'Против бота'], ['human', 'Против игрока'], ['watch', 'Бот против бота']])}
+    <div class="mnote">${esc(OPP_TXT[M.opp].d)}</div>
+
+    <div class="mlab">Сторона${watch ? ' <i class="mu">— в наблюдении не нужна</i>' : ''}</div>
+    ${mPick('side', [[N, 'Запад (слева)'], [S, 'Восток (справа)']], watch)}
+
+    <div class="mlab">Режим</div>
+    ${mPick('mode', [['both', 'Встречный бой'], ['attack', 'Наступление'], ['defense', 'Оборона']])}
+    <div class="mnote">${esc(MODE_TXT[M.mode].d)}</div>
+
+    <div class="mlab">Карта</div>
+    <div class="maps">${MAP_ORDER.map(id => `<div class="mapc ${G.mapPick === id ? 'on' : ''}" data-map="${id}">
+      <canvas data-prev="${id}" width="90" height="132"></canvas>
+      <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i><span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
+
+    <div class="macts"><button class="btn pri big" data-a="go">${watch ? 'Смотреть' : 'В бой'}</button></div></div>`;
+}
+
+function campHTML() {
+  let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
+  return `<div class="mbox">${backHTML('Красногорская операция')}
+    <div class="mlab">Сторона</div>
+    ${mPick('side', [[N, 'Запад (слева)'], [S, 'Восток (справа)']])}
+    <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
+      <div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div>
+      <h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
+      <div class="acts"><button class="btn pri sm" data-a="scen" data-id="${id}">Начать</button>
+      <button class="btn sm" data-a="watch" data-mode="${id}">Смотреть</button></div></div>`).join('')}</div></div>`;
+}
+
+function setHTML() {
+  /* звук и экран — те же панели, что в игре по кнопке 🔊, без своей кнопки «Готово» */
+  const snd = Sound.panelHTML().split('<p class="acts">')[0];
+  return `<div class="mbox narrow">${backHTML('Настройки')}
+    <div class="mpanel">${snd}${screenPanelHTML()}</div>
+    <div class="mnote">Настройки сохраняются в этом браузере и действуют сразу.</div></div>`;
+}
+
+function newsHTML() {
+  return `<div class="mbox narrow">${backHTML('Что нового')}
+    <div class="mpanel news">${News.html(esc)}</div></div>`;
+}
+
+function showMenu() {
+  hideModal();
+  if (M.view === 'news') News.markSeen();
+  $('#menu').innerHTML = menuHTML();
+  $('#menu').classList.add('on');
+  drawPreviews();
+}
 /* ---------- миниатюры карт в меню: печём в простое по одной ---------- */
 const PREV = new Map();
 function mapPreview(id) {
@@ -455,11 +544,13 @@ function mapPreview(id) {
   return c;
 }
 function drawPreviews() {
-  const list = [...document.querySelectorAll('canvas[data-prev]')];
+  const put = el => { try { const c = mapPreview(el.dataset.prev); el.getContext('2d').drawImage(c, 0, 0, el.width, el.height) } catch (e) { /* без холста */ } };
+  /* уже испечённые — сразу, чтобы меню не мигало при каждом выборе */
+  const list = [...document.querySelectorAll('canvas[data-prev]')].filter(el => PREV.has(el.dataset.prev) ? (put(el), false) : true);
   const next = () => {
     const el = list.shift();
     if (!el) return;
-    try { const c = mapPreview(el.dataset.prev); el.getContext('2d').drawImage(c, 0, 0, el.width, el.height) } catch (e) { /* без холста */ }
+    put(el);
     (window.requestIdleCallback || (f => setTimeout(f, 30)))(next);
   };
   next();
@@ -582,14 +673,32 @@ function bind() {
     else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
   $('#menu').addEventListener('click', e => {
+    /* переход между экранами меню */
+    const nav = e.target.closest('[data-nav]');
+    if (nav) { M.view = nav.dataset.nav; showMenu(); return }
+    /* выбор в ряду кнопок */
+    const pk = e.target.closest('[data-pick]');
+    if (pk) { M[pk.dataset.pick] = pk.dataset.val; mSave(); showMenu(); return }
+    /* карта: подсветка на месте, чтобы не перерисовывать превью */
     const mp = e.target.closest('[data-map]');
-    if (mp) { G.mapPick = mp.dataset.map; try { localStorage.setItem('turn.map', G.mapPick) } catch (err) { /* приватный режим */ } document.querySelectorAll('.mapc').forEach(x => x.classList.toggle('on', x === mp)); return }
+    if (mp) {
+      G.mapPick = mp.dataset.map;
+      try { localStorage.setItem('turn.map', G.mapPick) } catch (err) { /* приватный режим */ }
+      document.querySelectorAll('.mapc').forEach(x => x.classList.toggle('on', x === mp));
+      return;
+    }
     const el = e.target.closest('[data-a]'); if (!el) return;
-    const side = (document.querySelector('input[name=mside]:checked') || {}).value || N, code = ($('#joinCode') || {}).value || '';
-    if (el.dataset.a === 'create') netSend({ t: 'create', mode: el.dataset.mode, side, vsBot: el.dataset.bot === '1', map: G.mapPick });
-    else if (el.dataset.a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: el.dataset.side, vsBot: true });
-    else if (el.dataset.a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
-    else if (el.dataset.a === 'join' || el.dataset.a === 'spec') { if (code.trim().length !== 4) return toast('Код — четыре буквы'); netSend({ t: 'join', room: code.trim().toUpperCase(), spec: el.dataset.a === 'spec' }) }
+    const a = el.dataset.a, code = ($('#joinCode') || {}).value || '';
+    if (a === 'go') {
+      if (M.opp === 'watch') netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick });
+      else netSend({ t: 'create', mode: M.mode, side: M.side, vsBot: M.opp === 'bot', map: G.mapPick });
+    }
+    else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true });
+    else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
+    else if (a === 'join' || a === 'spec') {
+      if (code.trim().length !== 4) return toast('Код — четыре буквы');
+      netSend({ t: 'join', room: code.trim().toUpperCase(), spec: a === 'spec' });
+    }
   });
   bindPointer();
   cv.addEventListener('wheel', e => {
@@ -612,6 +721,11 @@ function bind() {
     const a = mapArea(), mid = { x: (a.l + a.r) / 2, y: (a.t + a.b) / 2 };
     if (e.key === '+' || e.key === '=') { zoomAt(mid, 1.35); return }
     if (e.key === '-' || e.key === '_') { zoomAt(mid, 1 / 1.35); return }
+    /* в меню: Esc — на шаг назад, игровые клавиши не трогаем */
+    if ($('#menu').classList.contains('on')) {
+      if (e.key === 'Escape' && M.view !== 'root') { M.view = 'root'; showMenu() }
+      return;
+    }
     if (!G.roomId) return;
     if (e.key === 'Tab') { e.preventDefault(); nextUnit() }
     else if (e.key === 'Enter') endTurn();

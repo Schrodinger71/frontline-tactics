@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Frontline Tactics</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="map"></canvas>
+<header id="top">
+  <div class="brand">FRONTLINE<small>tactics</small></div>
+  <div class="clock" id="hdClock">06:00</div>
+  <div class="kv"><span>Ход</span><b id="hdTurn">1</b></div>
+  <div class="kv"><span>Сутки</span><b id="hdDay">1</b></div>
+  <div class="kv"><span>Погода</span><b id="hdWeather">ясно</b></div>
+  <div class="kv"><span id="hdScoreLbl">Перевес</span><b id="hdScore">0</b></div>
+  <div class="kv"><span>Очки</span><b id="hdBudget"></b></div>
+  <div class="kv"><span>Доход</span><b id="hdIncome"></b></div>
+  <div class="kv" title="Командные очки — на приказы штаба"><span>Приказы</span><b id="hdCp"></b></div>
+  <div class="kv" id="hdRoomBox" style="display:none"><span>Код</span><b id="hdRoom"></b></div>
+  <div class="sp"></div>
+  <div id="airBox" hidden><button class="btn sm" id="btnStrike">✈ Удар</button><button class="btn sm" id="btnRecon">👁 Разведка</button></div>
+  <div id="paceBox" hidden class="seg"><button data-pace="0">II</button><button data-pace="1" class="on">×1</button><button data-pace="2">×2</button><button data-pace="4">×4</button></div>
+  <b id="hdActive" class="ac"></b>
+  <button class="btn pri" id="btnEnd">Конец хода</button>
+  <button class="btn" id="btnSound" title="Звук (Shift — вкл/выкл)">🔊</button>
+  <button class="btn" id="btnMenu">Меню</button>
+  <button class="btn" id="btnHelp">?</button>
+</header>
+<aside id="left" class="panel">
+  <div class="colbtn" data-col="left">‹</div>
+  <div class="tabs"><button class="on" data-tab="log">Журнал</button><button data-tab="pts">Точки</button><button data-tab="sum">Сводка</button></div>
+  <div class="pc log" id="lc_log"></div>
+  <div class="pc" id="lc_pts" style="display:none"></div>
+  <div class="pc" id="lc_sum" style="display:none"></div>
+</aside>
+<aside id="right" class="panel">
+  <div class="colbtn" data-col="right">›</div>
+  <div class="tabs"><button class="on" data-tab="unit">Часть</button><button data-tab="buy">Закупка</button><button data-tab="ord">Приказы</button><button data-tab="hq">Штаб</button></div>
+  <div class="pc" id="rc"></div>
+</aside>
+<div id="tip" hidden></div>
+<div id="hintbar"></div>
+<div id="toast"></div>
+<div id="modal" hidden><div class="box" id="mbox"></div></div>
+<div id="menu"></div>
+<script src="/shared/world.js"></script>
+<script src="/shared/weather.js"></script>
+<script src="/shared/maps.js"></script>
+<script src="/shared/terrain.js"></script>
+<script src="/shared/hex.js"></script>
+<script src="/shared/rules.js"></script>
+<script src="/shared/icons.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/map.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

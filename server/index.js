@@ -84,7 +84,7 @@ function createServer() {
         leave();
         const side = m.side === S ? S : N;
         const map = typeof m.map === 'string' && Object.prototype.hasOwnProperty.call(MAPS, m.map) ? m.map : 'valley';
-        const room = new Room(newCode(), m.mode, side, !!m.vsBot, !!m.watch, map);
+        const room = new Room(newCode(), m.mode, side, !!m.vsBot, !!m.watch, map, m.seats);
         rooms.set(room.id, room);
         room.join(client, m.watch ? 'spec' : side);
       } else if (m.t === 'join') {

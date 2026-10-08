@@ -135,7 +135,7 @@ function computeSel() {
   G.reach = null; G.targets = []; G.selRiv = '';
   const u = selUnit();
   if (!u || !myUnit(u) || !G.isMyTurn) return;
-  const ctx = clientCtx(), T = UT[u.k];
+  const ctx = clientCtx(), T = utFor(u.side)[u.k];
   if (u.mp > 0 && !(u.acted && T.bomb)) { G.reach = Rules.reachable(ctx, u); G.selRiv = 'r' }
   if (u.acted || u.sp <= 0) return;
   /* о противнике мораль и опыт не известны — для расчёта берём типичные */
@@ -222,7 +222,7 @@ function bar(label, v, max, col, txt) {
   return `<div class="row"><span>${label}</span><b>${txt != null ? txt : Math.round(k * 100) + '%'}</b></div><div class="bar"><div style="width:${k * 100}%;background:${col}"></div></div>`;
 }
 function unitCard(u) {
-  const T = UT[u.k], own = myUnit(u) || G.spec, hx = Hex.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
+  const T = utFor(u.side)[u.k], own = myUnit(u) || G.spec, hx = Hex.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
   const head = `<div class="uhead">${iconHTML(u.k, 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
   if (!own) return `<div class="card">${head}
@@ -306,7 +306,7 @@ function renderBuy() {
   const deploy = G.phase === 'deploy';
   $('#rc').innerHTML = `<div class="card"><h3>Закупка <span class="mu">· ${G.spec ? '' : G.budget} очк.</span></h3>
     <p class="hint">${deploy ? 'Выберите тип и кликните по клетке в зоне расстановки.' : 'Подкрепления — в своём городе или узле либо на соседней с ним клетке (подсвечены), без противника рядом. Прибывают без хода.'}</p>
-    <div class="shop">${UT_ORDER.map(k => { const T = UT[k], off = G.budget < T.price;
+    <div class="shop">${unitsFor(G.spec ? N : G.side).map(k => { const T = utFor(G.spec ? N : G.side)[k], off = G.budget < T.price;
       return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}">${iconHTML(k, 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>` }).join('')}</div></div>`;
 }
 function renderHQ() {
@@ -360,7 +360,7 @@ function renderTip(sp) {
     const o = t.odds, a = selUnit(), e = G.units.find(x => x.id === t.id);
     if (!a || !e) { tip.hidden = true; return }
     const ka = o.A / (o.A + o.D);
-    h = `<b>Атака: ${esc(UT[a.k].n)} → ${esc(UT[e.k].n)}</b>
+    h = `<b>Атака: ${esc(unitName(a.side, a.k))} → ${esc(unitName(e.side, e.k))}</b>
       <div class="ob" title="Соотношение сил"><i style="width:${(ka * 100).toFixed(1)}%;background:linear-gradient(90deg,#3f8fc4,#6cc3ff)"></i><i style="width:${((1 - ka) * 100).toFixed(1)}%;background:linear-gradient(90deg,#ff6b55,#b8392a)"></i></div>
       <div class="row"><span>Сила атаки</span><b>${o.A.toFixed(1)}</b></div><div class="row"><span>Оборона</span><b>${o.D.toFixed(1)}</b></div>
       <div class="row big"><span>Соотношение</span><b style="color:${t.col}">${o.r.toFixed(2).replace('.', ',')} : 1</b></div>

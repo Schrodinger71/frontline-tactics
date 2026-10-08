@@ -56,6 +56,8 @@
       }
     }
   };
+  /* сколько командиров может быть на одной стороне: 1 на 1 … 3 на 3 */
+  const MAX_SEATS = 3;
   /* какая фракция играет за какую сторону — пока закреплено */
   const SIDE_FACTION = { n: 'alliance', s: 'union' };
   const SIDE_NAME = { n: FACTIONS.alliance.n, s: FACTIONS.union.n };
@@ -212,7 +214,7 @@
 
   const api = {
     GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
-    FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
+    FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, MAX_SEATS, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
     START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, CP, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount

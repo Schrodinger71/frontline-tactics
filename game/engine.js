@@ -54,7 +54,7 @@ const AGGR = {
 };
 
 class Game {
-  constructor(mode, creatorSide, seed, mapId) {
+  constructor(mode, creatorSide, seed, mapId, opts) {
     const scen = require('./scenarios').SCEN[mode];
     this.mapId = scen ? scen.map || 'valley' : typeof mapId === 'string' && Object.prototype.hasOwnProperty.call(MAPS, mapId) ? mapId : 'valley';
     this.mapDef = MAPS[this.mapId];
@@ -66,7 +66,6 @@ class Game {
     this.rnd = mulberry((seed === undefined ? Date.now() : seed) & 0xffffffff);
     this.units = []; this.events = []; this.idc = 1; this._cs = { n: 0, s: 0 };
     this.turn = 0; this.active = N; this.phase = 'deploy'; this.over = null; this.score = 0;
-    this.bots = { n: false, s: false };
     this.br = new Map();              /* мосты: ключ → 'down' | 'pontoon' */
     this.mines = new Map();           /* клетка → { side, str } */
     this.forts = new Map();           /* клетка → уровень укреплений 1–2 */
@@ -76,7 +75,6 @@ class Game {
     this.districts = { n: [], s: [] }; this.districtOf = { n: new Map(), s: new Map() };
     this.vis = { n: new Set(), s: new Set() };
     this.mem = { n: new Map(), s: new Map() };
-    this.air = { n: { strike: 0, recon: 0 }, s: { strike: 0, recon: 0 } };
     this.recon = { n: new Set(), s: new Set() };
     this.weather = wxById('clear'); this.wxLeft = 3 + Math.floor(this.rnd() * 4);
     this.commanders = { n: this.makeCommander(), s: this.makeCommander() };
@@ -84,10 +82,32 @@ class Game {
     for (const [side, x, y, lvl] of this.mapDef.forts || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.forts.set(h, lvl || 1) }
     for (const [side, x, y] of this.mapDef.obst || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.obst.set(h, side) }
     for (const [side, x, y] of this.mapDef.mines || []) { const h = Hex.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
-    this.ready = { n: false, s: false };
-    this.budget = { n: Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role.n] || 1)), s: Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role.s] || 1)) };
-    this.income = { n: 0, s: 0 };
-    this.cp = { n: W.CP.start, s: W.CP.start };
+    /* ============================================================
+       МЕСТА (командиры). Сторона — это команда; на стороне от одного
+       до MAX_SEATS мест, каждое ведёт свои части и свой бюджет.
+       Первое место стороны носит её букву ('n' / 's'), остальные —
+       'n2', 'n3': так всё одноместное поведение остаётся прежним.
+       Бюджет и доход стороны делятся между её местами, поэтому 2 на 1
+       не даёт двойной силы. Туман войны, перевес и победа — на сторону.
+       ============================================================ */
+    this.seats = [];
+    const teams = (opts && opts.teams) || {};
+    for (const side of [N, S]) {
+      const list = Array.isArray(teams[side]) && teams[side].length ? teams[side].slice(0, W.MAX_SEATS) : [{}];
+      list.forEach((sl, i) => this.seats.push({ id: i ? side + (i + 1) : side, side, bot: !!(sl && sl.bot), n: i + 1 }));
+    }
+    this.seatById = new Map(this.seats.map(st => [st.id, st]));
+    this.bots = {}; this.ready = {}; this.done = {};
+    this.budget = {}; this.income = {}; this.cp = {}; this.air = {};
+    for (const st of this.seats) {
+      const share = this.seatsOf(st.side).length;
+      this.bots[st.id] = st.bot;
+      this.ready[st.id] = false; this.done[st.id] = false;
+      this.budget[st.id] = Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role[st.side]] || 1) / share);
+      this.income[st.id] = 0;
+      this.cp[st.id] = W.CP.start;
+      this.air[st.id] = { strike: 0, recon: 0 };
+    }
     this.barrage = { n: false, s: false };
     this.counter = { n: false, s: false };
     this.stats = { n: this.newStats(), s: this.newStats() };
@@ -116,9 +136,13 @@ class Game {
     const u = {
       id: this.idc++, k, side, hex, str: MAX_STR, org: 100, xp: .15, ent: 0, mp: 0, acted: false, moved: false, sup: false,
       supplied: true, cut: 0, sp: W.SUPPLY.max, reload: 0, mines: UT[k].eng ? 2 : 0, revealed: -1,
-      cs: bag[n % bag.length] + '-' + (11 + (n * 7) % 88), trait: pick(this.rnd, TRAITS)
+      cs: bag[n % bag.length] + '-' + (11 + (n * 7) % 88), trait: pick(this.rnd, TRAITS),
+      /* владелец: место на этой стороне. Без указания — первое место (его id равен букве стороны),
+         поэтому одноместные партии и сценарии работают как прежде. */
+      seat: side
     };
     Object.assign(u, o || {});
+    if (!this.seatById || !this.seatById.has(u.seat)) u.seat = side;
     this.units.push(u);
     return u;
   }
@@ -208,24 +232,29 @@ class Game {
   }
 
   /* ---------- действия ---------- */
-  act(side, a) {
+  /** seat — место (командир). Для одноместной стороны это её буква, как раньше. */
+  act(seat, a) {
     a = a && typeof a === 'object' ? a : {};
     if (this.over) return { ok: false, error: 'партия окончена' };
+    const side = this.sideOf(seat);
+    if (!side) return { ok: false, error: 'нет такого места' };
     const t = a.t;
     if (this.phase === 'deploy') {
-      if (t === 'buy') return this.buy(side, a.k, +a.hex, true);
-      if (t === 'sell') return this.sell(side, +a.id);
-      if (t === 'place') return this.place(side, +a.id, +a.hex);
-      if (t === 'ready') { this.ready[side] = true; this.tryStart(); return { ok: true } }
+      if (t === 'buy') return this.buy(seat, a.k, +a.hex, true);
+      if (t === 'sell') return this.sell(seat, +a.id);
+      if (t === 'place') return this.place(seat, +a.id, +a.hex);
+      if (t === 'ready') { this.ready[seat] = true; this.tryStart(); return { ok: true } }
       return { ok: false, error: 'сначала расстановка' };
     }
     if (side !== this.active) return { ok: false, error: 'сейчас ход противника' };
-    if (t === 'end') return this.endTurn();
-    if (t === 'buy') return this.buy(side, a.k, +a.hex, false);
-    if (t === 'air') return this.airAct(side, a.kind, +a.hex);
-    if (t === 'order') return this.order(side, a.k, a);
+    if (this.done[seat]) return { ok: false, error: 'вы уже закончили ход' };
+    if (t === 'end') return this.seatEnd(seat);
+    if (t === 'buy') return this.buy(seat, a.k, +a.hex, false);
+    if (t === 'air') return this.airAct(seat, a.kind, +a.hex);
+    if (t === 'order') return this.order(seat, a.k, a);
     const u = this.byId(+a.id);
     if (!u || u.side !== side) return { ok: false, error: 'нет такой части' };
+    if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     if (t === 'move') return this.move(u, +a.to);
     if (t === 'attack') return this.attack(u, this.byId(+a.target));
     if (t === 'bombard') return this.bombard(u, +a.hex);
@@ -236,24 +265,45 @@ class Game {
     return { ok: false, error: 'неизвестное действие' };
   }
 
+  /* ---------- места ---------- */
+  /** места стороны, по порядку */
+  seatsOf(side) { return this.seats.filter(st => st.side === side) }
+  /** сторона (команда) этого места */
+  sideOf(seat) { const st = this.seatById.get(seat); return st ? st.side : null }
+  /** места, которые ещё не закончили ход */
+  pending(side) { return this.seatsOf(side).filter(st => !this.done[st.id]) }
+  /** место закончило ход: сторона переходит, когда закончили все её места */
+  seatEnd(seat) {
+    const side = this.sideOf(seat);
+    if (side !== this.active) return { ok: false, error: 'сейчас ход противника' };
+    this.done[seat] = true;
+    const left = this.pending(side);
+    if (!left.length) return this.endTurn();
+    this.log(side, `Командир ${this.seatById.get(seat).n} закончил ход. Ждём остальных: ${left.length}.`, 'hq');
+    return { ok: true, waiting: left.map(st => st.id) };
+  }
+
   /* ---------- расстановка и закупка ---------- */
   inDeploy(side, hex) {
     if (hex < 0 || hex >= Hex.NH) return false;
     const x = this.map.hexes[hex].x, z = this.scen && this.scen.deploy ? this.scen.deploy[side] : this.mapDef.deploy ? this.mapDef.deploy[side] : W.DEPLOY_X[side];
     return x >= z[0] && x <= z[1];
   }
-  buy(side, k, hex, deploy) {
+  /** seat — место покупателя: бюджет у места, лимиты и зона — у стороны */
+  buy(seat, k, hex, deploy) {
+    const side = this.sideOf(seat);
+    if (!side) return { ok: false, error: 'нет такого места' };
     const T = typeof k === 'string' && Object.prototype.hasOwnProperty.call(UT, k) ? UT[k] : null;
     if (!T) return { ok: false, error: 'неизвестный тип' };
     if (!(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'нет клетки' };
     if (this.units.filter(u => u.side === side && u.str > 0).length >= W.MAX_UNITS) return { ok: false, error: `лимит частей — ${W.MAX_UNITS}` };
-    if (this.budget[side] < T.price) return { ok: false, error: 'не хватает очков' };
+    if (this.budget[seat] < T.price) return { ok: false, error: 'не хватает очков' };
     if (this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
     if (!this.passable(k, hex)) return { ok: false, error: 'сюда эта часть не встанет' };
     if (deploy) { if (!this.inDeploy(side, hex)) return { ok: false, error: 'только в своей зоне расстановки' } }
     else { const err = this.spawnErr(side, hex, k); if (err) return { ok: false, error: err } }
-    this.budget[side] -= T.price; this.stats[side].spent += T.price;
-    const u = this.spawn(k, side, hex, { mp: 0, acted: true, moved: true, xp: .05 });
+    this.budget[seat] -= T.price; this.stats[side].spent += T.price;
+    const u = this.spawn(k, side, hex, { mp: 0, acted: true, moved: true, xp: .05, seat });
     if (!deploy) this.log(side, `«${u.cs}» (${W.lc(W.unitName(side, u.k))}) прибыл: ${this.spawnPt(side, hex).n}.`, 'g');
     this.ev({ e: 'spawn', to: side, id: u.id, hex });
     return { ok: true, id: u.id };
@@ -279,12 +329,16 @@ class Game {
   }
 
   /* ---------- приказы штаба ---------- */
-  order(side, k, a) {
+  /** командные очки — у места, действие приказа — на сторону */
+  order(seat, k, a) {
+    const side = this.sideOf(seat);
+    if (!side) return { ok: false, error: 'нет такого места' };
     const O = typeof k === 'string' && Object.prototype.hasOwnProperty.call(W.ORDERS, k) ? W.ORDERS[k] : null;
     if (!O) return { ok: false, error: 'неизвестный приказ' };
-    if (this.cp[side] < O.cp) return { ok: false, error: `не хватает командных очков: нужно ${O.cp}` };
+    if (this.cp[seat] < O.cp) return { ok: false, error: `не хватает командных очков: нужно ${O.cp}` };
     const u = O.tgt === 'unit' ? this.byId(+a.id) : null, hex = +a.hex;
     if (O.tgt === 'unit' && (!u || u.side !== side)) return { ok: false, error: 'укажите свою часть' };
+    if (O.tgt === 'unit' && u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     if (O.tgt === 'hex' && !(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'укажите клетку' };
     if (k === 'barrage') {
       if (this.barrage[side]) return { ok: false, error: 'артподготовка уже идёт' };
@@ -324,25 +378,27 @@ class Game {
       if (this.units.filter(v => v.side === side && v.str > 0).length >= W.MAX_UNITS) return { ok: false, error: `лимит частей — ${W.MAX_UNITS}` };
       const err = this.spawnErr(side, hex, 'mot');
       if (err) return { ok: false, error: err };
-      const v = this.spawn('mot', side, hex, { str: 7, mp: 0, acted: true, moved: true, xp: .1 });
+      const v = this.spawn('mot', side, hex, { str: 7, mp: 0, acted: true, moved: true, xp: .1, seat });
       this.log(side, `Резерв ставки: «${v.cs}» (мотопехота) прибыл — ${this.spawnPt(side, hex).n}.`, 'g');
       this.ev({ e: 'spawn', to: side, id: v.id, hex });
     }
-    this.cp[side] -= O.cp;
+    this.cp[seat] -= O.cp;
     this.ev({ e: 'order', to: side, k });
     return { ok: true };
   }
 
-  sell(side, id) {
-    const u = this.byId(id);
+  sell(seat, id) {
+    const side = this.sideOf(seat), u = this.byId(id);
     if (!u || u.side !== side || u.pre) return { ok: false, error: 'эту часть не вернуть' };
+    if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     this.units = this.units.filter(x => x !== u);
-    this.budget[side] += UT[u.k].price; this.stats[side].spent -= UT[u.k].price;
+    this.budget[seat] += UT[u.k].price; this.stats[side].spent -= UT[u.k].price;
     return { ok: true };
   }
-  place(side, id, hex) {
-    const u = this.byId(id);
+  place(seat, id, hex) {
+    const side = this.sideOf(seat), u = this.byId(id);
     if (!u || u.side !== side) return { ok: false, error: 'нет такой части' };
+    if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     if (!this.inDeploy(side, hex)) return { ok: false, error: 'только в своей зоне расстановки' };
     if (this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
     if (!this.passable(u.k, hex)) return { ok: false, error: 'сюда эта часть не встанет' };
@@ -351,8 +407,8 @@ class Game {
   }
   tryStart() {
     if (this.phase !== 'deploy') return;
-    for (const side of [N, S]) if (this.bots[side] && !this.ready[side]) this.botDeploy(side);
-    if (!(this.ready.n && this.ready.s)) return;
+    for (const st of this.seats) if (this.bots[st.id] && !this.ready[st.id]) this.botDeploy(st.id);
+    if (this.seats.some(st => !this.ready[st.id])) return;
     this.phase = 'battle';
     /* первым ходит наступающий; во встречном бою — по жребию (у первого хода заметное преимущество) */
     this.first = this.role.s === 'attacker' ? S : this.role.n === 'attacker' || this.scen ? N : this.chance(.5) ? N : S;
@@ -373,10 +429,23 @@ class Game {
     this.active = side;
     this.recon[side] = new Set();
     const night = isNight(this.turn);
-    this.air[side] = { strike: AIR.strike[night ? 1 : 0] * (this.weather.fly ? 1 : 0), recon: AIR.recon[night ? 1 : 0] * (this.weather.fly ? 1 : 0) };
+    const mySeats = this.seatsOf(side);
+    /* вылеты и командные очки — каждому месту; на сторону их столько же,
+       сколько было у одного командира, поэтому делим между местами */
+    const share = mySeats.length;
+    const fly = this.weather.fly ? 1 : 0;
+    const air0 = { strike: AIR.strike[night ? 1 : 0] * fly, recon: AIR.recon[night ? 1 : 0] * fly };
+    mySeats.forEach((st, i) => {
+      this.done[st.id] = false;
+      /* остаток от деления достаётся первым местам, чтобы вылеты не терялись */
+      this.air[st.id] = {
+        strike: Math.floor(air0.strike / share) + (i < air0.strike % share ? 1 : 0),
+        recon: Math.floor(air0.recon / share) + (i < air0.recon % share ? 1 : 0)
+      };
+    });
     this.updateSupply(side);
     const hqAlive = this.units.some(v => v.side === side && v.k === 'hq' && v.str > 0);
-    this.cp[side] = Math.min(W.CP.max, this.cp[side] + W.CP.per + (hqAlive ? W.CP.hq : 0));
+    for (const st of mySeats) this.cp[st.id] = Math.min(W.CP.max, this.cp[st.id] + W.CP.per + (hqAlive ? W.CP.hq : 0));
     this.barrage[side] = false; this.counter[side] = false;
     for (const [h, s] of this.smoke) if (s === side) this.smoke.delete(h);
     const cmd = this.cmdHexes(side);
@@ -393,8 +462,12 @@ class Game {
       u.amb = false; u.ambUsed = false; u.support = false; u.hold = false; u.march = false; u.exploit = false;
       u.startHex = u.hex;
     }
-    this.income[side] = Math.round((W.BASE_INCOME + this.heldWeight(side, true) * W.INCOME_PER_WEIGHT) * (W.ROLE_INCOME_MUL[this.role[side]] || 1));
-    this.budget[side] += this.income[side];
+    /* доход стороны делится между её местами */
+    const inc = Math.round((W.BASE_INCOME + this.heldWeight(side, true) * W.INCOME_PER_WEIGHT) * (W.ROLE_INCOME_MUL[this.role[side]] || 1));
+    for (const st of mySeats) {
+      this.income[st.id] = Math.round(inc / share);
+      this.budget[st.id] += this.income[st.id];
+    }
     this.updateVision(side); this.updateVision(oppOf(side));
     this.ev({ e: 'turn', to: '*', side, turn: this.turn, clock: turnClock(this.turn), night });
   }
@@ -715,12 +788,15 @@ class Game {
     this.loss(e, n, by);
     if (e.str > 0) this.say(e, 'shelled', {}, 'w');
   }
-  airAct(side, kind, hex) {
+  /** вылеты — ресурс места, видимость и цели — на сторону */
+  airAct(seat, kind, hex) {
+    const side = this.sideOf(seat);
+    if (!side) return { ok: false, error: 'нет такого места' };
     if (!(hex >= 0 && hex < Hex.NH)) return { ok: false, error: 'нет клетки' };
     if (!this.weather.fly) return { ok: false, error: 'погода нелётная' };
     if (kind === 'recon') {
-      if (this.air[side].recon < 1) return { ok: false, error: 'разведчиков в этот ход больше нет' };
-      this.air[side].recon--;
+      if (this.air[seat].recon < 1) return { ok: false, error: 'разведчиков в этот ход больше нет' };
+      this.air[seat].recon--;
       for (const h of Hex.within(hex, 3)) this.recon[side].add(h);
       this.updateVision(side);
       this.ev({ e: 'air', to: side, hex, kind });
@@ -728,10 +804,10 @@ class Game {
       return { ok: true };
     }
     if (kind !== 'strike') return { ok: false, error: 'неизвестный вылет' };
-    if (this.air[side].strike < 1) return { ok: false, error: 'ударных вылетов в этот ход больше нет' };
+    if (this.air[seat].strike < 1) return { ok: false, error: 'ударных вылетов в этот ход больше нет' };
     const e = this.unitAt(hex);
     if (!e || e.side === side || !this.seen(side, e)) return { ok: false, error: 'цели не видно' };
-    this.air[side].strike--;
+    this.air[seat].strike--;
     this.ev({ e: 'air', to: '*', hex, kind, side });
     /* ПВО противника рядом может сорвать удар */
     for (const a of this.units) {

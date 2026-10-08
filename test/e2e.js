@@ -87,6 +87,50 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   w.send({ t: 'pace', value: 4 });
   await w.wait(m => m.t === 'snap' && m.v.turn >= 1, 20000);
 
+  /* ---------- команды: 2 на 2, места занимают игрок или бот ---------- */
+  const c1 = client(port), c2 = client(port); await c1.open; await c2.open;
+  c1.send({ t: 'create', mode: 'both', side: 'n', map: 'steppe', seats: { n: ['me', 'bot'], s: ['open', 'bot'] } });
+  const j1 = await c1.wait(m => m.t === 'joined');
+  assert.strictEqual(j1.seat, 'n', 'создатель садится на первое место своей стороны');
+  assert.strictEqual(j1.seats.length, 4, 'в партии четыре места');
+  assert.deepStrictEqual(j1.seats.map(x => x.who), ['human', 'bot', 'open', 'bot'], 'состав мест');
+  c2.send({ t: 'join', room: j1.room });
+  const j2 = await c2.wait(m => m.t === 'joined');
+  assert.strictEqual(j2.seat, 's', 'второй игрок занял свободное место другой стороны');
+  assert.strictEqual(j2.side, 's');
+  /* третий человек — мест нет, только зрителем */
+  const c3 = client(port); await c3.open;
+  c3.send({ t: 'join', room: j1.room });
+  assert(/Свободных мест/.test((await c3.wait(m => m.t === 'error')).msg), 'лишний игрок получает отказ');
+  await act(c1, { t: 'ready' }); await act(c2, { t: 'ready' });
+  const sn = (await c1.wait(m => m.t === 'snap' && m.v.phase === 'battle', 20000)).v;
+  assert.strictEqual(sn.seat, 'n', 'снимок знает своё место');
+  assert(sn.seats.length === 4 && sn.seats.every(x => x.id), 'состав мест в снимке');
+  assert(typeof sn.budget === 'number', 'бюджет — свой, не стороны');
+  /* партия доигрывается ботами и людьми до смены хода */
+  await c1.wait(m => m.t === 'snap' && m.v.turn >= 1, 30000);
+
+  /* ---------- уборка: доигранные и брошенные комнаты уходят ---------- */
+  const before = rooms.size;
+  assert(before > 0, 'комнаты есть');
+  for (const c of [c1, c2, c3]) c.ws.close();
+  await new Promise(r => setTimeout(r, 300));
+  const r22 = rooms.get(j1.room);
+  assert(r22, 'комната пока жива — игрок может вернуться по коду');
+  assert.strictEqual(r22.idle(), false, 'сразу после выхода комнату не убираем');
+  assert.strictEqual(r22.timer, null, 'без клиентов таймер ботов остановлен');
+  /* отматываем «пусто с» назад: недоигранную держим 15 минут */
+  r22.emptySince = Date.now() - 16 * 60e3;
+  assert.strictEqual(r22.idle(), true, 'пустая комната через 15 минут убирается');
+  /* доигранную отпускаем через минуту */
+  r22.engine.over = { w: 'n', t: 'тест' };
+  r22.emptySince = Date.now() - 2 * 60e3;
+  assert.strictEqual(r22.idle(), true, 'доигранная пустая комната убирается быстрее');
+  r22.close();
+  assert.strictEqual(r22.engine, null, 'close() отпускает партию');
+  assert.strictEqual(r22.clients.size, 0, 'close() отпускает клиентов');
+  console.log('команды и уборка: ok');
+
   for (const c of [a, p1, p2, sp, w]) c.ws.close();
   server.close();
   for (const r of rooms.values()) r.close();

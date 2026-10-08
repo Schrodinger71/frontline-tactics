@@ -226,7 +226,7 @@ function drawPoints() {
 function drawSelection() {
   const u = selUnit();
   if (!u) return;
-  const s = G.view.s, T = UT[u.k];
+  const s = G.view.s, T = utFor(u.side)[u.k];
   /* выбранная клетка: золотой контур с пульсом */
   hexPath(u.hex, .98); cx.strokeStyle = `rgba(242,179,61,${.75 + .25 * Math.sin(ANIM * 5)})`; cx.lineWidth = 2.6; cx.stroke();
   if (T.cmd) { const set = new Set(Hex.within(u.hex, T.cmd)); regionEdges(n => set.has(n), set); cx.strokeStyle = 'rgba(200,160,255,.55)'; cx.setLineDash([6, 5]); cx.lineWidth = 1.4; cx.stroke(); cx.setLineDash([]) }

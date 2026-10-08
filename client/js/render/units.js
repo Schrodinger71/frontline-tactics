@@ -21,7 +21,7 @@ const strCol = s => s <= 3 ? '#ff6b55' : s <= 6 ? '#ffd479' : '#8fe0a2';
 
 function counter(u, q, alpha, scale) {
   const s = G.view.s, hw = Hex.HW * s * (scale || 1);
-  const enemy = G.spec ? u.side === S : u.side !== G.side, T = UT[u.k] || UT.inf, ghost = u.ghost;
+  const enemy = G.spec ? u.side === S : u.side !== G.side, T = utFor(u.side)[u.k] || UT.inf, ghost = u.ghost;
   const tone = SIDE_TONE[ghost ? 'ghost' : enemy ? 'enemy' : 'own'];
   const sel = u.id === G.sel && !ghost;
   cx.save();

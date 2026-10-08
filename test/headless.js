@@ -158,6 +158,73 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert.strictEqual(ford('tnk', true), true, 'гусеничные с места брод проходят');
   console.log('переход через взорванный мост: ok');
 }
+/* ---------- места и команды: 1 на 1, 2 на 2, 2 на 1, 3 на 3 ---------- */
+{
+  const Hex = require('../shared/hex');
+  const mk = (nN, nS, bots = true) => new Game('both', N, 41, 'steppe', {
+    teams: { n: Array.from({ length: nN }, () => ({ bot: bots })), s: Array.from({ length: nS }, () => ({ bot: bots })) }
+  });
+
+  /* состав мест и имена: первое место стороны носит её букву */
+  const g22 = mk(2, 2);
+  assert.deepStrictEqual(g22.seats.map(st => st.id), ['n', 'n2', 's', 's2'], 'идентификаторы мест');
+  assert.deepStrictEqual(g22.seatsOf(N).map(st => st.id), ['n', 'n2'], 'места стороны');
+  assert.strictEqual(g22.sideOf('n2'), N, 'сторона места');
+
+  /* бюджет стороны делится между её местами, 2 на 1 не даёт двойной силы */
+  const g21 = mk(2, 1);
+  const sumN = g21.seatsOf(N).reduce((a, st) => a + g21.budget[st.id], 0);
+  assert(Math.abs(sumN - g21.budget.s) <= 1, `бюджет 2 на 1 не поделён: ${sumN} против ${g21.budget.s}`);
+
+  /* каждое место закупается само и владеет своими частями */
+  g22.ready.n = g22.ready.n2 = g22.ready.s = g22.ready.s2 = false;
+  g22.tryStart();
+  assert.strictEqual(g22.phase, 'battle', 'партия 2 на 2 началась');
+  for (const u of g22.units) assert(g22.seatById.has(u.seat), `у части нет места: ${u.k}`);
+  const bySeat = {};
+  for (const u of g22.units) bySeat[u.seat] = (bySeat[u.seat] || 0) + 1;
+  for (const st of g22.seats) assert(bySeat[st.id] > 0, `место ${st.id} осталось без частей`);
+
+  /* чужой частью командовать нельзя */
+  {
+    const side = g22.active, mySeats = g22.seatsOf(side).map(st => st.id);
+    const mine = g22.units.find(u => u.seat === mySeats[0] && u.str > 0);
+    const ally = g22.units.find(u => u.seat === mySeats[1] && u.str > 0);
+    assert(mine && ally, 'нашлись части у обоих командиров');
+    const r = g22.act(mySeats[0], { t: 'move', id: ally.id, to: Hex.neighbors(ally.hex)[0] });
+    assert.strictEqual(r.ok, false, 'часть союзника не слушается чужого приказа');
+    assert(/другого командира/.test(r.error), 'понятная причина отказа: ' + r.error);
+  }
+
+  /* ход переходит только когда закончили все места стороны */
+  {
+    const side = g22.active, [a, b] = g22.seatsOf(side).map(st => st.id);
+    const r1 = g22.act(a, { t: 'end' });
+    assert(r1.ok && g22.active === side, 'после первого командира ход остаётся за стороной');
+    assert.deepStrictEqual(r1.waiting, [b], 'ждём второго командира');
+    assert.strictEqual(g22.act(a, { t: 'move', id: g22.units.find(u => u.seat === a).id, to: 0 }).ok, false,
+      'закончивший ход больше не действует');
+    g22.act(b, { t: 'end' });
+    assert(g22.active !== side, 'после всех командиров ход перешёл');
+  }
+
+  /* партии ботов доходят до итога при любом составе */
+  for (const [a, b] of [[1, 1], [2, 2], [2, 1], [3, 3]]) {
+    const g = mk(a, b);
+    g.tryStart();
+    assert.strictEqual(g.phase, 'battle', `${a} на ${b}: не стартовала`);
+    let guard = 0;
+    while (!g.over && guard++ < 600) {
+      for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) g.botTurn(st.id);
+      g.drainEvents();
+      if (!g.over && g.pending(g.active).length) g.act(g.pending(g.active)[0].id, { t: 'end' });
+    }
+    assert(g.over, `${a} на ${b}: партия не закончилась`);
+    assert.strictEqual(g.seats.length, a + b, `${a} на ${b}: мест ${g.seats.length}`);
+    console.log(`  ${a} на ${b}: мест ${g.seats.length}, ходов ${g.turn}, победа ${g.over.w || '—'}`);
+  }
+  console.log('места и команды: ok');
+}
 /* ============================================================
    ОТЧЁТ ПО БАЛАНСУ: сводка по всем сыгранным партиям.
    Цифры — от ботов, поэтому это не истина, а индикатор: резкий

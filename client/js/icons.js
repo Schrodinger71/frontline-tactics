@@ -14,6 +14,9 @@ const ICON_THEMES = {
   dead: { b: '#6d6a66', s: '#4d4a47', l: '#8a8682', d: '#1a1817', g: '#4d4a47', a: '#6d4038' }
 };
 
+/** иконка типа k в технике той фракции, что играет за сторону side */
+function unitIcon(k, side) { return iconKey(k || 'unk', (factionOf(side) || {}).style) }
+
 const ICON_PATHS = {};
 function iconPaths(key) {
   if (ICON_PATHS[key]) return ICON_PATHS[key];

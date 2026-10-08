@@ -485,7 +485,7 @@ function drawWrecks() {
   for (const w of MARKS.wrecks) {
     const q = w2s(w);
     if (!onScreen(q, 40)) continue;
-    drawIcon(cx, w.k, q.x, q.y, clamp(s * 4, 16, 46), 'dead', w.side === S, .85 * clamp(1 - (G.turn - w.turn) / 6, .3, 1));
+    drawIcon(cx, unitIcon(w.k, w.side), q.x, q.y, clamp(s * 4, 16, 46), 'dead', w.side === S, .85 * clamp(1 - (G.turn - w.turn) / 6, .3, 1));
   }
 }
 function drawBurning() {

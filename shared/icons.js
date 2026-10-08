@@ -287,6 +287,11 @@
     ]
   };
 
+  /** Ключ иконки с учётом школы техники фракции ('nato' · 'cis').
+      Нет своего варианта — берём общий силуэт: так новые типы и фракции
+      не требуют рисовать всё заново. */
+  function iconKey(k, style) { return style && ICONS[k + '_' + style] ? k + '_' + style : k }
+
   /** иконка как SVG-группа (для панелей) */
   function iconSVG(key, x, y, scale, pal, flip) {
     const L = ICONS[key];
@@ -295,7 +300,7 @@
     return `<g transform="${tf}">${L.map(([t, d]) => `<path d="${d}" fill="${pal[t] || pal.b}"/>`).join('')}</g>`;
   }
 
-  const api = { ICONS, ICON_W, ICON_H, iconSVG };
+  const api = { ICONS, ICON_W, ICON_H, iconSVG, iconKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else Object.assign(g, api);
 })(typeof window !== 'undefined' ? window : globalThis);

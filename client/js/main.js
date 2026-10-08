@@ -40,6 +40,17 @@ function needSite() {
   const f = myFob();
   return f && !f.sited ? f : null;
 }
+/** пункт блокирован: рядом стоит видимый противник — узел в этот ход не работает */
+function fobBlocked(f) { return H.neighbors(f.hex).some(h => { const e = G.units.find(x => x.hex === h); return !!e && e.side !== f.side }) }
+/** мой работающий командный пункт (развёрнут и не блокирован) — или null */
+function myFobLive() { const f = myFob(); return f && f.sited && !fobBlocked(f) ? f : null }
+/** клетка в секторе моего работающего пункта */
+function inFobZone(hex) { const f = myFobLive(); return !!f && H.hexDist(f.hex, hex) <= UT.fob.cmd }
+/** во сколько ★ обойдётся приказ: в секторе пункта — дешевле */
+function orderCp(k, hex) {
+  const O = ORDERS[k];
+  return hex != null && hex >= 0 && inFobZone(hex) ? Math.max(1, O.cp - FOB.orderOff) : O.cp;
+}
 /** как зовут командира места: ник из лобби, иначе «бот» или «Командир N» */
 function seatName(id) {
   const x = (G.lobby || []).find(e => e.id === id);
@@ -197,11 +208,13 @@ function spawnHexes(k) {
   if (G.phase !== 'battle' || G.spec) return null;
   const hx = H.build(G.mapId).hexes, occ = new Map(G.units.map(u => [u.hex, u])), out = new Set();
   const enemyAt = h => { const o = occ.get(h); return o && o.side !== G.side };
-  for (const p of G.pts) {
-    if (p.owner !== G.side) continue;
-    for (const h of H.within(p.hex, 1)) {
+  /* высадка — у своих точек и у своего работающего командного пункта */
+  const f = myFobLive(), seeds = G.pts.filter(p => p.owner === G.side).map(p => p.hex);
+  if (f) seeds.push(f.hex);
+  for (const c of seeds) {
+    for (const h of H.within(c, 1)) {
       if (out.has(h) || occ.has(h) || hx[h].t === 'lake' || (hx[h].t === 'mount' && UT[k].cls !== 'foot' && !hx[h].road)) continue;
-      if (h !== p.hex && enemyAt(p.hex)) continue;
+      if (h !== c && enemyAt(c)) continue;
       if (H.neighbors(h).some(enemyAt)) continue;
       out.add(h);
     }
@@ -338,7 +351,7 @@ function bar(label, v, max, col, txt) {
 }
 function unitCard(u) {
   const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = H.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
-  const head = `<div class="uhead">${iconHTML(u.k, 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
+  const head = `<div class="uhead">${iconHTML(unitIcon(u.k, u.side), 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
   allyUnit(u) ? ` <i class="allytag">союзник${seatName(u.seat) ? ' · ' + esc(seatName(u.seat)) : ''}</i>` : ''}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
   if (!own) return `<div class="card">${head}
@@ -357,8 +370,14 @@ function unitCard(u) {
   else if (G.isMyTurn && myUnit(u)) {
     if (!u.acted && !u.moved) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
     if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
-    if (u.str < MAX_STR && !u.acted && !u.moved) acts.push(`<button class="btn sm" data-a="replace">Пополнить (${Math.round(T.price / 10)} за шаг)</button>`);
-    const ob = (k, ok, why) => { const O = ORDERS[k]; acts.push(`<button class="btn sm" data-a="ord:${k}" ${ok && G.cp >= O.cp ? '' : 'disabled'} title="${esc(O.d)}${why ? ' — ' + esc(why) : ''}">${esc(O.n)} · ${O.cp}★</button>`) };
+    if (u.str < MAX_STR && !u.acted && !u.moved) {
+      const near = inFobZone(u.hex), rc = Math.max(1, Math.round(T.price / 10 * (near ? 1 - FOB.replaceOff : 1)));
+      acts.push(`<button class="btn sm" data-a="replace" title="${near ? 'Склады командного пункта: на треть дешевле' : ''}">Пополнить (${rc} за шаг)${near ? ' <i class="cheap">КП</i>' : ''}</button>`);
+    }
+    const ob = (k, ok, why) => {
+      const O = ORDERS[k], cp = orderCp(k, u.hex);
+      acts.push(`<button class="btn sm" data-a="ord:${k}" ${ok && G.cp >= cp ? '' : 'disabled'} title="${esc(O.d)}${cp < O.cp ? ' — в секторе командного пункта дешевле' : ''}${why ? ' — ' + esc(why) : ''}">${esc(O.n)} · ${cp}★${cp < O.cp ? ' <i class="cheap">КП</i>' : ''}</button>`);
+    };
     ob('march', !u.acted && !u.march && u.sp > 0);
     ob('hold', !u.hold);
     if (u.sp < SUPPLY.max) ob('airdrop', wxById(G.weather).fly);
@@ -377,6 +396,9 @@ function unitCard(u) {
   if (u.reload > 0) st.push('перезарядка');
   if (u.amb) st.push('<span class="good">в засаде</span>');
   if (u.support) st.push('<span class="ac">огонь поддержки готов</span>');
+  if (T.fob && own) st.push(u.sited === 0 ? '<span class="bad">не развёрнут</span>'
+    : fobBlocked(u) ? '<span class="bad">блокирован — противник рядом, узел не работает</span>'
+    : '<span class="good">узел работает: подвоз, подкрепления, +1★</span>');
   return `<div class="card">${head}
     ${st.length ? `<p class="ustate">${st.join(' · ')}</p>` : ''}
     ${bar('Сила', u.str, MAX_STR, u.str <= 3 ? 'var(--rd)' : u.str <= 6 ? 'var(--ac)' : 'var(--gn)', u.str + ' из 10 · ' + elCount(u.k, u.str) + ' ' + T.eln)}
@@ -404,8 +426,9 @@ function renderOrders() {
     <p class="hint">Командные очки копятся каждый ход: +${CP.per}, со штабом ещё +${CP.hq}; трофейные склады — +1. Приказы на часть — выберите её и нажмите, приказ на клетку — кликните по карте.</p>
     ${G.barrage ? '<p class="ustate"><span class="ac">Артподготовка идёт: огонь ×1,5</span></p>' : ''}
     ${G.counter && !G.spec ? '<p class="ustate"><span class="ac">Контрудар: атаки у исходных точек ×1,3</span></p>' : ''}
-    <div class="ords">${ORDER_LIST.map(k => { const O = ORDERS[k], off = !can || G.cp < O.cp || (k === 'barrage' && G.barrage) || (k === 'counter' && (G.counter || !G.pts.some(p => p.home === G.side && p.owner !== G.side))) || (O.tgt === 'unit' && !(sel && myUnit(sel)));
-      return `<div class="ord ${off ? 'off' : ''} ${G.mode === 'ord:' + k ? 'on' : ''}" data-ord="${k}"><div class="snm"><b>${esc(O.n)}</b><span>${esc(O.d)}${O.tgt === 'unit' ? ' · <i>на выбранную часть</i>' : O.tgt === 'hex' ? ' · <i>на клетку</i>' : ''}</span></div><div class="cpc">${O.cp}★</div></div>` }).join('')}</div>
+    <div class="ords">${ORDER_LIST.map(k => { const O = ORDERS[k], cp = O.tgt === 'unit' && sel ? orderCp(k, sel.hex) : O.cp;
+      const off = !can || G.cp < cp || (k === 'barrage' && G.barrage) || (k === 'counter' && (G.counter || !G.pts.some(p => p.home === G.side && p.owner !== G.side))) || (O.tgt === 'unit' && !(sel && myUnit(sel)));
+      return `<div class="ord ${off ? 'off' : ''} ${G.mode === 'ord:' + k ? 'on' : ''}" data-ord="${k}"><div class="snm"><b>${esc(O.n)}</b><span>${esc(O.d)}${O.tgt === 'unit' ? ' · <i>на выбранную часть</i>' : O.tgt === 'hex' ? ' · <i>на клетку</i>' : ''}</span></div><div class="cpc ${cp < O.cp ? 'cheap' : ''}">${cp}★</div></div>` }).join('')}</div>
     ${sel && myUnit(sel) ? `<p class="hint">Выбрана: «${esc(sel.cs)}» (${esc(UT[sel.k].sh)}).</p>` : ''}
     <div class="lbl">Снабжение</div>
     <p class="hint">Округа снабжения — от ваших городов (вместимость и дальность по весу города) и от тыла. Часть в котле теряет деление запаса за ход: за три хода — без боеприпасов и топлива, дальше тает и сдаётся. Перегруженный округ держит запас не выше 2.</p>
@@ -430,7 +453,7 @@ function renderBuy() {
   $('#rc').innerHTML = `<div class="card"><h3>Закупка <span class="mu">· ${G.spec ? '' : G.budget} очк.</span></h3>
     <p class="hint">${deploy ? 'Выберите тип и кликните по клетке в зоне расстановки.' : 'Подкрепления — в своём городе или узле либо на соседней с ним клетке (подсвечены), без противника рядом. Прибывают без хода.'}</p>
     <div class="shop">${unitsFor(G.spec ? N : G.side).map(k => { const T = utFor(G.spec ? N : G.side)[k], off = G.budget < T.price;
-      return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}">${iconHTML(k, 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>` }).join('')}</div></div>`;
+      return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}">${iconHTML(unitIcon(k, G.side), 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>` }).join('')}</div></div>`;
 }
 function renderHQ() {
   const c = G.commanders || {}, w = wxById(G.weather);
@@ -450,7 +473,7 @@ function renderPts() {
 function statRows(a, b, la, lb) {
   const ks = UT_ORDER.filter(k => (a && a[k]) || (b && b[k]));
   if (!ks.length) return '<p class="hint">Потерь пока нет.</p>';
-  return `<table class="st"><tr><th></th><th>${la}</th><th>${lb}</th></tr>${ks.map(k => `<tr><td>${iconHTML(k, 'ic sm')}${UT[k].sh}</td><td class="bad">${(a && a[k]) || ''}</td><td class="good">${(b && b[k]) || ''}</td></tr>`).join('')}</table>`;
+  return `<table class="st"><tr><th></th><th>${la}</th><th>${lb}</th></tr>${ks.map(k => `<tr><td>${iconHTML(unitIcon(k, G.side), 'ic sm')}${UT[k].sh}</td><td class="bad">${(a && a[k]) || ''}</td><td class="good">${(b && b[k]) || ''}</td></tr>`).join('')}</table>`;
 }
 /** состав партии для вкладки «Сводка»: кто за какую команду, ник, очки, состояние */
 function rosterCard() {
@@ -547,10 +570,19 @@ function showHelp() {
     <p><b>Управление: сектор командира.</b> Части внутри сектора ходят дальше и бьют сильнее (×1,1), вне его — хуже (×0,9).
     Сектор даёт только <b>свой</b> командный объект, чужой не считается: поэтому сторона с несколькими командирами естественно
     делится на направления. <kbd>H</kbd> — показать секторы на карте: свой жёлтым, союзные зелёным.</p>
-    <p>Командных объекта два. <b>Командный пункт</b> (КП) — укреплённый и неподвижный, <b>один на командира</b>: его
-    <b>обязательно ставят при расстановке</b>, обычно в тылу у своих городов, и до этого нельзя нажать «Готов».
-    Он хорошо держится (оборона 9) и сектор даёт всегда; взамен потерянного можно поставить новый.
-    <b>Штаб бригады</b> — подвижный: ездит за наступающими частями, но в тот ход, когда он шёл, сектора не держит.</p>
+    <p>Командных объекта два. <b>Штаб бригады</b> — подвижный: ездит за наступающими частями, но в тот ход, когда он шёл,
+    сектора не держит. <b>Командный пункт</b> (КП) — укреплённый и неподвижный, <b>один на командира</b>: его
+    <b>обязательно ставят при расстановке</b>, и до этого нельзя нажать «Готов». Он хорошо держится (оборона 9),
+    сектор даёт всегда, взамен потерянного можно поставить новый.</p>
+    <p><b>КП — тыловой узел направления,</b> и в этом вся разница между ним и штабом. Он разом даёт четыре вещи:
+    <b>подвоз</b> — свой округ снабжения на ${FOB.supCap} части (наступление перестаёт выдыхаться, когда уходит от своих городов);
+    <b>ворота подкреплений</b> — купленные части высаживаются у него, а не только в городе;
+    <b>склады</b> — пополнение в его секторе на треть дешевле;
+    <b>связь</b> — +1★ за ход и приказы частям в его секторе на 1★ дешевле.
+    Поэтому место для КП выбирают под замысел: он не поедет за вами.</p>
+    <p><b>Пункт можно заглушить.</b> Пока рядом с КП стоит хоть одна часть противника, узел <b>блокирован</b>:
+    ни подвоза, ни высадки, ни скидок, ни очка за пункт — остаётся только сектор. Одна разведрота, просочившаяся в тыл,
+    способна обесточить целое направление, так что охранение при КП — не роскошь.</p>
     <p><b>Командный объект без охраны берут в плен.</b> Если рядом с ним нет ни одной своей части, подошедшая пехота или техника
     захватывает его вместе с документами: захватчику ${HQ_CAPTURE_CP}★, вскрытый сектор противника и занятая клетка,
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
@@ -729,7 +761,7 @@ function menuHTML() {
 }
 
 function rootHTML() {
-  const strip = ['tnk', 'mot', 'inf', 'art', 'mlrs', 'eng', 'hq'].map(k => iconHTML(k, 'ic big')).join('');
+  const strip = ['tnk', 'mot', 'inf', 'art', 'mlrs', 'eng', 'hq'].map(k => iconHTML(unitIcon(k, M.side || N), 'ic big')).join('');
   return `<div class="mbox root"><h1>FRONTLINE TACTICS</h1>
     <div class="msub">Пошаговая штабная игра о сухопутном фронте</div>
     <div class="mstrip">${strip}</div>
@@ -916,9 +948,15 @@ function clickHex(h, e) {
 function orderClick(k) {
   const O = ORDERS[k];
   if (!O || !G.isMyTurn) return;
-  if (G.cp < O.cp) return toast(`Нужно ${O.cp} командных очка`);
-  if (O.tgt === 'none') { act({ t: 'order', k }); return }
-  if (O.tgt === 'unit') { const u = selUnit(); if (!u || !myUnit(u)) return toast('Сначала выберите свою часть'); act({ t: 'order', k, id: u.id }); return }
+  if (O.tgt === 'none') { if (G.cp < O.cp) return toast(`Нужно ${O.cp} командных очка`); act({ t: 'order', k }); return }
+  if (O.tgt === 'unit') {
+    const u = selUnit();
+    if (!u || !myUnit(u)) return toast('Сначала выберите свою часть');
+    if (G.cp < orderCp(k, u.hex)) return toast(`Нужно ${orderCp(k, u.hex)} командных очка`);
+    act({ t: 'order', k, id: u.id }); return;
+  }
+  /* приказ по клетке: дешевле он или нет, станет видно по самой клетке — берём минимум */
+  if (G.cp < Math.max(1, O.cp - FOB.orderOff)) return toast(`Нужно ${O.cp} командных очка`);
   G.mode = G.mode === 'ord:' + k ? null : 'ord:' + k;
   G.spawn = G.mode === 'ord:reserve' ? spawnHexes('mot') : null;
   hint(G.mode ? (k === 'smoke' ? 'Дымовая завеса: кликните по клетке (до 3 клеток от своих частей) — дым ляжет на неё и соседние.' : 'Резерв ставки: кликните по подсвеченной клетке у своего города или узла.') + ' ПКМ — отмена.' : '');

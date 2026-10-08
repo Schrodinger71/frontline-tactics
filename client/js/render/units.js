@@ -62,8 +62,9 @@ function counter(u, q, alpha, scale) {
   cx.beginPath(); cx.moveTo(x0 + R, y0 + band + 1.5); cx.lineTo(x0 + W - R, y0 + band + 1.5); cx.stroke();
   const big = W >= 50;
   /* иконка: крупная по центру или поменьше справа, чтобы не спорила с цифрой */
-  if (big) drawIcon(cx, u.k || 'unk', q.x + W * .1, y0 + band + (H - band) * .55, W * .64, ghost ? 'ghost' : enemy ? 'enemy' : 'own', u.side === S);
-  else drawIcon(cx, u.k || 'unk', x0 + W * .74, y0 + band + (H - band) * .5, W * .46, ghost ? 'ghost' : enemy ? 'enemy' : 'own', u.side === S);
+  const ik = unitIcon(u.k, u.side);
+  if (big) drawIcon(cx, ik, q.x + W * .1, y0 + band + (H - band) * .55, W * .64, ghost ? 'ghost' : enemy ? 'enemy' : 'own', u.side === S);
+  else drawIcon(cx, ik, x0 + W * .74, y0 + band + (H - band) * .5, W * .46, ghost ? 'ghost' : enemy ? 'enemy' : 'own', u.side === S);
   if (ghost) {
     cx.fillStyle = '#f0d0c0'; cx.font = `600 ${Math.round(clamp(W * .13, 9, 12))}px system-ui`; cx.textAlign = 'center';
     cx.fillText(u.age ? u.age + ' х. назад' : 'был здесь', q.x, y0 + H + 12);

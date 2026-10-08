@@ -150,3 +150,7 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
 .hint.warn .btn{margin-top:.5em}
 #btnEnd.warn{border-color:var(--ac);color:#1a1409;background:linear-gradient(180deg,#f3c25a,#d79b2a);animation:sitepulse 1.6s ease-in-out infinite}
 @keyframes sitepulse{0%,100%{box-shadow:0 0 0 0 rgba(255,186,64,.5)}50%{box-shadow:0 0 0 7px rgba(255,186,64,0)}}
+
+/* пометка скидки от командного пункта на кнопках пополнения и приказов */
+.btn .cheap{font-style:normal;font-size:.76em;letter-spacing:.04em;color:#1a1409;background:var(--ac);border-radius:3px;padding:0 .3em;margin-left:.3em;vertical-align:1px}
+.ords .cpc.cheap{color:#1a1409;background:var(--ac);border-radius:4px;padding:0 .35em}

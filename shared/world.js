@@ -130,7 +130,8 @@
     eng: 'Понтон, подрыв моста, мины, укрепления, противотанковые заграждения.',
     at: 'Засада на танки: в обороне против брони втрое злее, бьёт технику вблизи.',
     hq: 'Подвижный штаб: даёт сектор управления, но в ход, когда шёл, сектора не держит.',
-    fob: 'Укреплённый пункт. Не ходит, ставится при расстановке, держится крепко. Даёт сектор управления. Без охраны его захватывают.'
+    fob: 'Тыловой узел: подвоз (держит 4 части), высадка подкреплений, пополнение на треть дешевле, +1★ за ход и приказы в секторе дешевле на 1★. '
+      + 'Не ходит, ставится при расстановке, держится крепко. Противник рядом блокирует пункт, а без охраны его захватывают.'
   };
 
   const CS_N = ['Сокол','Ясень','Клён','Буран','Омега','Рассвет','Тигр','Коршун','Волна','Ручей','Утёс','Иней','Гранит','Полюс','Вереск','Заря','Орбита','Кедр'];
@@ -180,7 +181,11 @@
     att: [0, .6, .85, 1], def: [.5, .8, 1, 1]
   };
   /** командные очки и приказы штаба */
-  const CP = { start: 2, per: 1, hq: 1, max: 6 };
+  const CP = { start: 2, per: 1, hq: 1, fob: 1, max: 6 };
+  /* командный пункт — тыловой узел командира: подвоз, ворота подкреплений,
+     дешёвое пополнение и командный ресурс. Всё это выключается, пока
+     рядом с пунктом стоит противник (пункт блокирован). */
+  const FOB = { supCap: 4, supR: 5, replaceOff: .3, orderOff: 1 };
   const ORDERS = {
     barrage: { n: 'Артподготовка', cp: 2, tgt: 'none', d: 'В этот ход вся артиллерия бьёт в полтора раза сильнее.' },
     march:   { n: 'Форсированный марш', cp: 1, tgt: 'unit', d: 'Части +3 очка хода, мораль −10.' },
@@ -223,7 +228,7 @@
   const api = {
     GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
     FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, MAX_SEATS, HQ_CAPTURE_CP, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
-    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, CP, ORDERS, ORDER_LIST,
+    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, CP, FOB, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount
   };

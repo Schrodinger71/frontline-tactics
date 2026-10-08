@@ -221,6 +221,24 @@ class Game {
   /** клетки сектора для части (по её командиру) */
   cmdFor(ctx, u) { return ctx.cmd && ctx.cmd.get ? ctx.cmd.get(u.seat || u.side) : null }
 
+  /* ---------- командный пункт: тыловой узел ---------- */
+  /** живой командный пункт этого командира */
+  fobOf(seat) { return this.units.find(u => UT[u.k].fob && u.seat === seat && u.str > 0) }
+  /** пункт блокирован: рядом стоит противник, и узел в этот ход не работает */
+  fobBlocked(f) { return this.H.neighbors(f.hex).some(h => { const e = this.unitAt(h); return e && e.side !== f.side && e.str > 0 }) }
+  /** работающий пункт командира (развёрнут и не блокирован) — или null */
+  fobLive(seat) {
+    const f = this.fobOf(seat);
+    return f && f.sited !== false && !this.fobBlocked(f) ? f : null;
+  }
+  /** все работающие пункты стороны */
+  fobsLive(side) { return this.seatsOf(side).map(st => this.fobLive(st.id)).filter(Boolean) }
+  /** клетка в секторе работающего пункта этого командира */
+  inFobZone(seat, hex) {
+    const f = this.fobLive(seat);
+    return !!f && this.H.hexDist(f.hex, hex) <= UT[f.k].cmd;
+  }
+
   /* ---------- обзор ---------- */
   /** видна ли чужая часть стороне (клетка в обзоре + не прячется) */
   seen(side, u) {
@@ -340,30 +358,36 @@ class Game {
     if (this.unitAt(hex)) return { ok: false, error: 'клетка занята' };
     if (!this.passable(k, hex)) return { ok: false, error: 'сюда эта часть не встанет' };
     if (deploy) { if (!this.inDeploy(side, hex)) return { ok: false, error: 'только в своей зоне расстановки' } }
-    else { const err = this.spawnErr(side, hex, k); if (err) return { ok: false, error: err } }
+    else { const err = this.spawnErr(side, hex, k, seat); if (err) return { ok: false, error: err } }
     this.budget[seat] -= T.price; this.stats[side].spent += T.price;
     const u = this.spawn(k, side, hex, { mp: 0, acted: true, moved: true, xp: .05, seat });
-    if (!deploy) this.log(side, `«${u.cs}» (${W.lc(W.unitName(side, u.k))}) прибыл: ${this.spawnPt(side, hex).n}.`, 'g');
+    if (!deploy) this.log(side, `«${u.cs}» (${W.lc(W.unitName(side, u.k))}) прибыл: ${this.spawnPt(side, hex, seat).n}.`, 'g');
     this.ev({ e: 'spawn', to: side, id: u.id, hex });
     return { ok: true, id: u.id };
   }
-  /** точка, у которой можно высадить подкрепления: сама точка или соседняя клетка */
-  spawnPt(side, hex) {
-    return this.pts.find(p => p.owner === side && p.hex === hex) ||
-      this.pts.find(p => p.owner === side && this.H.hexDist(p.hex, hex) === 1 && !(this.unitAt(p.hex) && this.unitAt(p.hex).side !== side));
+  /** точка, у которой можно высадить подкрепления: свой город или узел, свой
+      работающий командный пункт — сама клетка или соседняя с ней */
+  spawnPt(side, hex, seat) {
+    const p = this.pts.find(q => q.owner === side && q.hex === hex) ||
+      this.pts.find(q => q.owner === side && this.H.hexDist(q.hex, hex) === 1 && !(this.unitAt(q.hex) && this.unitAt(q.hex).side !== side));
+    if (p) return p;
+    const f = seat ? this.fobLive(seat) : (this.fobsLive(side).find(x => this.H.hexDist(x.hex, hex) <= 1) || null);
+    if (f && this.H.hexDist(f.hex, hex) <= 1) return { id: 'fob' + f.id, n: 'командный пункт', hex: f.hex };
+    return null;
   }
-  spawnErr(side, hex, k) {
+  spawnErr(side, hex, k, seat) {
     if (!(hex >= 0 && hex < this.H.NH)) return 'нет клетки';
     if (this.unitAt(hex)) return 'клетка занята';
     if (!this.passable(k, hex)) return 'сюда эта часть не встанет';
-    if (!this.spawnPt(side, hex)) return 'подкрепления — в своём городе или узле либо на соседней с ним клетке';
+    if (!this.spawnPt(side, hex, seat)) return 'подкрепления — у своего города, узла или командного пункта (на клетке или рядом)';
     if (this.H.neighbors(hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return 'рядом противник — высадка невозможна';
     return null;
   }
   /** клетки, где сторона может высадить подкрепления такого типа */
-  spawnHexes(side, k) {
-    const out = [];
-    for (const p of this.pts) if (p.owner === side) for (const h of this.H.within(p.hex, 1)) if (!out.includes(h) && !this.spawnErr(side, h, k)) out.push(h);
+  spawnHexes(side, k, seat) {
+    const out = [], seeds = this.pts.filter(p => p.owner === side).map(p => p.hex);
+    for (const f of (seat ? [this.fobLive(seat)].filter(Boolean) : this.fobsLive(side))) seeds.push(f.hex);
+    for (const c of seeds) for (const h of this.H.within(c, 1)) if (!out.includes(h) && !this.spawnErr(side, h, k, seat)) out.push(h);
     return out;
   }
 
@@ -374,8 +398,11 @@ class Game {
     if (!side) return { ok: false, error: 'нет такого места' };
     const O = typeof k === 'string' && Object.prototype.hasOwnProperty.call(W.ORDERS, k) ? W.ORDERS[k] : null;
     if (!O) return { ok: false, error: 'неизвестный приказ' };
-    if (this.cp[seat] < O.cp) return { ok: false, error: `не хватает командных очков: нужно ${O.cp}` };
     const u = O.tgt === 'unit' ? this.byId(+a.id) : null, hex = +a.hex;
+    /* связь налажена: приказ части или по клетке в секторе своего пункта дешевле */
+    const tgtHex = O.tgt === 'unit' ? (u ? u.hex : -1) : O.tgt === 'hex' ? hex : -1;
+    const cp = tgtHex >= 0 && this.inFobZone(seat, tgtHex) ? Math.max(1, O.cp - W.FOB.orderOff) : O.cp;
+    if (this.cp[seat] < cp) return { ok: false, error: `не хватает командных очков: нужно ${cp}` };
     if (O.tgt === 'unit' && (!u || u.side !== side)) return { ok: false, error: 'укажите свою часть' };
     if (O.tgt === 'unit' && u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     if (O.tgt === 'hex' && !(hex >= 0 && hex < this.H.NH)) return { ok: false, error: 'укажите клетку' };
@@ -415,13 +442,13 @@ class Game {
       this.say(u, 'airdrop', {}, 'g');
     } else if (k === 'reserve') {
       if (this.units.filter(v => v.side === side && v.str > 0).length >= W.MAX_UNITS) return { ok: false, error: `лимит частей — ${W.MAX_UNITS}` };
-      const err = this.spawnErr(side, hex, 'mot');
+      const err = this.spawnErr(side, hex, 'mot', seat);
       if (err) return { ok: false, error: err };
       const v = this.spawn('mot', side, hex, { str: 7, mp: 0, acted: true, moved: true, xp: .1, seat });
-      this.log(side, `Резерв ставки: «${v.cs}» (мотопехота) прибыл — ${this.spawnPt(side, hex).n}.`, 'g');
+      this.log(side, `Резерв ставки: «${v.cs}» (мотопехота) прибыл — ${this.spawnPt(side, hex, seat).n}.`, 'g');
       this.ev({ e: 'spawn', to: side, id: v.id, hex });
     }
-    this.cp[seat] -= O.cp;
+    this.cp[seat] -= cp;
     this.ev({ e: 'order', to: side, k });
     return { ok: true };
   }
@@ -483,7 +510,12 @@ class Game {
     });
     this.updateSupply(side);
     const hqAlive = this.units.some(v => v.side === side && v.k === 'hq' && v.str > 0);
-    for (const st of mySeats) this.cp[st.id] = Math.min(W.CP.max, this.cp[st.id] + W.CP.per + (hqAlive ? W.CP.hq : 0));
+    for (const st of mySeats) {
+      /* пункт даёт очко только пока работает: блокированный узел молчит */
+      const f = this.fobOf(st.id), live = this.fobLive(st.id);
+      this.cp[st.id] = Math.min(W.CP.max, this.cp[st.id] + W.CP.per + (hqAlive ? W.CP.hq : 0) + (live ? W.CP.fob : 0));
+      if (f && !live && f.sited !== false) this.log(side, 'Командный пункт блокирован: противник рядом. Подвоза, подкреплений и очка за пункт нет.', 'w');
+    }
     this.barrage[side] = false; this.counter[side] = false;
     for (const [h, s] of this.smoke) if (s === side) this.smoke.delete(h);
     const cmd = this.cmdHexes(side);
@@ -906,7 +938,10 @@ class Game {
 
   /* ---------- пополнение ---------- */
   replace(u) {
-    const T = UT[u.k], cost = Math.round(T.price / 10);
+    const T = UT[u.k];
+    /* в секторе своего работающего пункта пополнение идёт с его складов — дешевле */
+    const near = this.inFobZone(u.seat || u.side, u.hex);
+    const cost = Math.max(1, Math.round(T.price / 10 * (near ? 1 - W.FOB.replaceOff : 1)));
     if (u.str >= MAX_STR) return { ok: false, error: 'часть полная' };
     if (u.acted || u.moved) return { ok: false, error: 'пополнение — вместо действий в этот ход' };
     if (!u.supplied) return { ok: false, error: 'нет снабжения' };
@@ -918,6 +953,7 @@ class Game {
     u.str += can; u.acted = true; u.mp = 0;
     this.ev({ e: 'replace', to: u.side, id: u.id, n: can });
     this.say(u, 'replaced', { n: can }, 'g');
+    if (near) this.log(u.side, `«${u.cs}» пополнен со складов командного пункта — дешевле на треть.`, 'g');
     return { ok: true, n: can };
   }
 
@@ -1025,6 +1061,8 @@ class Game {
     const SP = W.SUPPLY, ctx = this.ctxFor(side, true), zoc = Rules.zocOf(ctx, side);
     const srcs = [];
     for (const p of this.pts) if (p.owner === side && p.city) srcs.push({ id: p.id, n: p.n, hex: p.hex, seeds: [p.hex], cap: Math.round(SP.cityCap(p.w)), r: SP.cityR(p.w), used: 0 });
+    /* передовой пункт подвоза: маленький округ прямо за передним краем */
+    for (const f of this.fobsLive(side)) srcs.push({ id: 'fob' + f.id, n: 'Командный пункт', hex: f.hex, seeds: [f.hex], cap: W.FOB.supCap, r: W.FOB.supR, used: 0 });
     const ex = side === N ? 0 : this.H.COLS - 1, edge = [];
     for (let r = 0; r < this.H.ROWS; r++) edge.push(r * this.H.COLS + ex);
     srcs.push({ id: 'edge', n: 'Тыл', hex: -1, seeds: edge, cap: SP.edgeCap, r: SP.edgeR, used: 0 });

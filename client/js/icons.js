@@ -21,7 +21,7 @@ const ICON_PATHS = {};
 function iconPaths(key) {
   if (ICON_PATHS[key]) return ICON_PATHS[key];
   const L = ICONS[key] || ICONS.unk;
-  return (ICON_PATHS[key] = typeof Path2D === 'undefined' ? [] : L.map(([t, d]) => [t, new Path2D(d)]));
+  return (ICON_PATHS[key] = typeof Path2D === 'undefined' ? [] : L.map(([t, d]) => [t, new Path2D(String(d)), d.bb]));
 }
 
 const ICON_CACHE = new Map();
@@ -42,10 +42,22 @@ function iconImage(key, theme, px, flip) {
   if (flip) { g.translate(ICON_W, 0); g.scale(-1, 1) }
   const pal = ICON_THEMES[theme] || ICON_THEMES.own;
   const P = iconPaths(key);
+  /* тень на земле — машина стоит, а не висит на плашке */
+  const sd = shadowOf(key);
+  if (sd && g.ellipse) { g.fillStyle = 'rgba(0,0,0,.42)'; g.beginPath(); g.ellipse(sd.x, sd.y, sd.rx, sd.ry, 0, 0, Math.PI * 2); g.fill() }
   g.lineJoin = 'round';
   g.strokeStyle = 'rgba(4,7,10,.85)'; g.lineWidth = 3.2;
   for (const [t, p] of P) if (t === 'b' || t === 's' || t === 'd') g.stroke(p);
-  for (const [t, p] of P) { g.fillStyle = pal[t] || pal.b; g.fill(p) }
+  /* светотень: свой градиент на каждый контур — по его рамке, сверху вниз */
+  for (const [t, p, bb] of P) {
+    const st = SHADE[t] && bb && bb[3] - bb[1] > 2.4 ? shadeStops(pal, t) : null;
+    if (st) {
+      const gr = g.createLinearGradient(0, bb[1], 0, bb[3]);
+      gr.addColorStop(0, st[0]); gr.addColorStop(.45, st[1]); gr.addColorStop(1, st[2]);
+      g.fillStyle = gr;
+    } else g.fillStyle = pal[t] || pal.b;
+    g.fill(p);
+  }
   if (ICON_CACHE.size > 800) ICON_CACHE.clear();
   ICON_CACHE.set(id, c);
   return c;

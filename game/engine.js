@@ -40,6 +40,7 @@ const Rules = require('../shared/rules');
 const Terrain = require('../shared/terrain');
 const { MAPS } = require('../shared/maps');
 const { WEATHER, wxById } = require('../shared/weather');
+const TCODE = { n: 1, s: 2 };
 const { N, S, UT, MAX_STR, POINT_DEF, SIDE_NAME, CS_N, CS_S, TRAITS, GEN_FIRST, GEN_LAST, PRICE_OF, AIR,
   clamp, mulberry, pick, isNight, turnClock } = Object.assign({ PRICE_OF: k => W.UT[k].price }, W);
 const { phr } = require('./phrases');
@@ -75,7 +76,11 @@ class Game {
     this.obst = new Map();            /* клетка → сторона, поставившая заграждения */
     this.smoke = new Map();           /* клетка → сторона, поставившая дым (до её следующего хода) */
     this.militiaUsed = new Set(); this.looted = new Set();
-    this.districts = { n: [], s: [] }; this.districtOf = { n: new Map(), s: new Map() };
+    /* территория: клетка → 0 ничья, 1 Альянс (n), 2 Союз (s); снабжение 0–10 по сторонам */
+    this.terr = new Uint8Array(this.H.NH);
+    this.sv = { n: new Uint8Array(this.H.NH), s: new Uint8Array(this.H.NH) };
+    this.svNet = { n: new Uint8Array(this.H.NH), s: new Uint8Array(this.H.NH) };   /* клетка — на линии снабжения */
+    this.svSrc = { n: [], s: [] };                                                /* источники снабжения */
     this.vis = { n: new Set(), s: new Set() };
     this.mem = { n: new Map(), s: new Map() };
     this.recon = { n: new Set(), s: new Set() };
@@ -133,7 +138,7 @@ class Game {
     }
     this.log('*', 'Расстановка: купите части во вкладке «Закупка» и поставьте их в своей зоне. Потом — «Готов».', 'hq');
     if (require('./scenarios').SCEN[mode]) this.applyScenario(mode);
-    this.rebuildFront();
+    this.initTerritory();
   }
   newStats() { return { spent: 0, lost: {}, killed: {}, lostV: 0, killedV: 0, caps: 0, routs: 0, prisoners: 0 } }
   makeCommander() { const trait = pick(this.rnd, TRAITS); return { trait, name: pick(this.rnd, GEN_FIRST) + ' ' + pick(this.rnd, GEN_LAST), aggr: AGGR[trait] } }
@@ -152,6 +157,8 @@ class Game {
     const u = {
       id: this.idc++, k, side, hex, str: MAX_STR, org: 100, xp: .15, ent: 0, mp: 0, acted: false, moved: false, sup: false,
       supplied: true, cut: 0, sp: W.SUPPLY.max, reload: 0, mines: UT[k].eng ? 2 : 0, revealed: -1,
+      /* sp — боеприпасы, fu — топливо (только технике), su — подавленные шаги, att — приданный специалист */
+      fu: W.SUPPLY.max, su: 0, att: null,
       cs: bag[n % bag.length] + '-' + (11 + (n * 7) % 88), trait: pick(this.rnd, TRAITS),
       /* владелец: место на этой стороне. Без указания — первое место (его id равен букве стороны),
          поэтому одноместные партии и сценарии работают как прежде. */
@@ -260,7 +267,7 @@ class Game {
     for (const u of this.units) {
       if (u.side !== side || u.str <= 0) continue;
       const T = UT[u.k], hx = this.map.hexes[u.hex];
-      let r = T.vis + (hx.t === 'hill' ? 1 : 0) - (night && !T.th ? 1 : 0) - (this.weather.vis < .7 ? 1 : 0);
+      let r = T.vis + (u.att === 'rcn' ? 1 : 0) + (hx.t === 'hill' ? 1 : 0) - (night && !T.th && u.att !== 'rcn' ? 1 : 0) - (this.weather.vis < .7 ? 1 : 0);
       for (const h of this.H.within(u.hex, Math.max(1, r))) vis.add(h);
     }
     for (const p of this.pts) if (p.owner === side) for (const h of this.H.within(p.hex, 1)) vis.add(h);
@@ -289,6 +296,7 @@ class Game {
       if (t === 'buy') return this.buy(seat, a.k, +a.hex, true);
       if (t === 'sell') return this.sell(seat, +a.id);
       if (t === 'place') return this.place(seat, +a.id, +a.hex);
+      if (t === 'attach') return this.attachSpec(seat, this.byId(+a.id), a.k, true);
       if (t === 'ready') {
         const hq = this.units.find(v => UT[v.k].fob && v.seat === seat && v.str > 0);
         if (hq && !hq.sited) return { ok: false, error: 'сначала поставьте командный пункт' };
@@ -309,6 +317,7 @@ class Game {
     if (t === 'attack') return this.attack(u, this.byId(+a.target));
     if (t === 'bombard') return this.bombard(u, +a.hex);
     if (t === 'replace') return this.replace(u);
+    if (t === 'attach') return this.attachSpec(seat, u, a.k, false);
     if (t === 'eng') return this.engAct(u, a.task, +a.hex);
     if (t === 'dig') return this.digIn(u);
     if (t === 'ambush') return this.setAmbush(u);
@@ -381,6 +390,7 @@ class Game {
     if (!this.passable(k, hex)) return 'сюда эта часть не встанет';
     if (!this.spawnPt(side, hex, seat)) return 'подкрепления — у своего города, узла или командного пункта (на клетке или рядом)';
     if (this.H.neighbors(hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return 'рядом противник — высадка невозможна';
+    if (this.phase === 'battle' && !this.sv[side][hex]) return 'сюда не доходит снабжение — высадка невозможна';
     return null;
   }
   /** клетки, где сторона может высадить подкрепления такого типа */
@@ -421,7 +431,7 @@ class Game {
     } else if (k === 'march') {
       if (u.march) return { ok: false, error: 'часть уже на марше' };
       if (u.acted) return { ok: false, error: 'часть уже действовала' };
-      if (u.sp <= 0) return { ok: false, error: 'нет топлива' };
+      if (W.usesFuel(UT[u.k]) && u.fu <= 0) return { ok: false, error: 'нет топлива' };
       u.march = true; u.mp += 3; u.org = Math.max(0, u.org - 10);
       this.say(u, 'march', {}, 'g');
     } else if (k === 'hold') {
@@ -436,8 +446,9 @@ class Game {
       this.updateVision(oppOf(side));
     } else if (k === 'airdrop') {
       if (!this.weather.fly) return { ok: false, error: 'погода нелётная' };
-      if (u.sp >= W.SUPPLY.max) return { ok: false, error: 'запасы и так полные' };
-      u.sp = Math.min(W.SUPPLY.max, u.sp + 2); u.org = Math.min(100, u.org + 10);
+      const motorU = W.usesFuel(UT[u.k]);
+      if (u.sp >= W.SUPPLY.max && (!motorU || u.fu >= W.SUPPLY.max)) return { ok: false, error: 'боеприпасы и топливо и так полные' };
+      u.sp = Math.min(W.SUPPLY.max, u.sp + 2); if (motorU) u.fu = Math.min(W.SUPPLY.max, u.fu + 2); u.org = Math.min(100, u.org + 10);
       this.ev({ e: 'air', to: side, hex: u.hex, kind: 'drop' });
       this.say(u, 'airdrop', {}, 'g');
     } else if (k === 'reserve') {
@@ -458,7 +469,8 @@ class Game {
     if (!u || u.side !== side || u.pre) return { ok: false, error: 'эту часть не вернуть' };
     if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
     this.units = this.units.filter(x => x !== u);
-    this.budget[seat] += UT[u.k].price; this.stats[side].spent -= UT[u.k].price;
+    const back = UT[u.k].price + (u.att ? W.SPECS[u.att].price : 0);
+    this.budget[seat] += back; this.stats[side].spent -= back;
     return { ok: true };
   }
   place(seat, id, hex) {
@@ -489,6 +501,9 @@ class Game {
       this.log(side, 'Оборона подготовлена: части окопались, наши точки укреплены.', 'hq');
     }
     this.log('*', `Расстановка окончена. Начало операции — первым ходит ${W.SIDE_NAME[this.first]}.`, 'hq');
+    /* фронт — по тому, как встали: зоны расстановки, точки и части */
+    this.initTerritory();
+    this.updateSupply(N); this.updateSupply(S);
     this.startSide(this.active);
   }
 
@@ -526,10 +541,17 @@ class Game {
       let mp = T.mp;
       const cz = cmd.get(u.seat) || cmd.get(u.side);
       if (!(cz && cz.has(u.hex)) && u.k !== 'hq') mp -= 1;
-      if (u.sp <= 0) mp = 1; else if (u.sp === 1) mp = Math.ceil(mp / 2); else if (u.sp === 2) mp -= 1;
-      if (u.sup) mp -= 1;
+      /* топливо — только технике: без него она стоит, пехота идёт пешком */
+      const motor = W.usesFuel(T), dry = motor && u.fu <= 0;
+      if (motor && !dry) { if (u.fu === 1) mp = Math.ceil(mp / 2); else if (u.fu === 2) mp -= 1 }
+      /* подавленные шаги возвращаются в начале своего хода — сколько, зависит от снабжения */
+      if (u.su > 0) {
+        mp -= 1;
+        const tier = W.supTier(u.sv);
+        u.su = tier === 'none' ? Math.max(0, u.su - 1) : tier === 'low' ? Math.floor(u.su / 2) : 0;
+      }
       if (u.org < 25) mp = Math.min(mp, 2);
-      u.mp = T.fob ? 0 : Math.max(1, mp); u.acted = false; u.moved = false; u.sup = false;
+      u.mp = T.fob || dry ? 0 : Math.max(1, mp); u.acted = false; u.moved = false; u.sup = u.su > 0;
       u.amb = false; u.ambUsed = false; u.support = false; u.hold = false; u.march = false; u.exploit = false;
       u.startHex = u.hex;
     }
@@ -552,24 +574,39 @@ class Game {
       /* окапывание: стояли и не воевали */
       if (!u.moved && !u.acted && !u.hitThisTurn) u.ent = Math.min(T.arm === 'soft' ? 3 : 2, u.ent + 1);
       if (u.moved) u.ent = 0;
-      if (u.reload > 0) u.reload--;
+      /* перезарядка считается со следующего хода: иначе счётчик сгорал в конце
+         того же хода, что и залп, и РСЗО стреляли каждый ход */
+      if (u.reload > 0 && !u.fired) u.reload--;
+      u.fired = false;
       u.hitThisTurn = false;
       if (T.bomb && !u.acted && u.reload <= 0 && u.org >= 30) u.support = true;
     }
     this.updateSupply(side);
-    const SP = W.SUPPLY;
+    const SP = W.SUPPLY, cmd = this.cmdHexes(side);
     for (const u of this.units) {
       if (u.side !== side || u.str <= 0) continue;
-      if (u.supplied) {
-        u.cut = 0;
-        const lim = u.over ? SP.over : SP.max;
-        if (u.sp < lim) u.sp = Math.min(lim, u.sp + SP.regain);
-        if (!u.acted) u.org = Math.min(100, u.org + (u.over ? 6 : 12));
+      const tier = W.supTier(u.sv);
+      if (tier !== 'none') {
+        u.cut = 0; u.dry = false;
+        /* запас: полное и нормальное снабжение — до полного, скудное — не выше 2 */
+        const lim = tier === 'low' ? SP.lowCap : SP.max;
+        if (u.sp < lim) u.sp = Math.min(lim, u.sp + SP.regen[tier]);
+        if (W.usesFuel(UT[u.k]) && u.fu < lim) u.fu = Math.min(lim, u.fu + SP.regen[tier]);
+        u.dryF = false;
+        /* мораль: отдых даёт больше, но и в бою она возвращается */
+        const rest = !u.moved && !u.acted, cz = cmd.get(u.seat) || cmd.get(u.side);
+        const gain = SP.org[tier][rest ? 0 : 1] + (cz && cz.has(u.hex) ? SP.orgCmd : 0);
+        u.org = Math.min(100, u.org + gain);
         continue;
       }
       /* котёл: запас тает по делению за ход, без запасов — потери и сдача */
       u.cut++;
       u.sp = Math.max(0, u.sp - 1);
+      /* в котле техника сжигает топливо и встаёт; пехота уходит пешком */
+      if (W.usesFuel(UT[u.k])) {
+        u.fu = Math.max(0, u.fu - 1);
+        if (u.fu === 0 && !u.dryF) { u.dryF = true; this.log(side, `«${u.cs}»: кончилось топливо — техника встала.`, 'crit') }
+      }
       u.org = Math.max(0, u.org - (u.sp === 0 ? 20 : 8));
       if (u.cut === 1) this.say(u, 'cut', {}, 'crit');
       if (u.sp === 0) {
@@ -645,6 +682,7 @@ class Game {
     if (stopped === 'zoc') this.say(u, 'zoc', {}, 'q');
     if (stopped === 'ambush') this.say(u, 'ambushed', {}, 'crit');
     if (this.obst.has(end) && UT[u.k].cls !== 'foot') { u.mp = 0; this.say(u, 'obst', {}, 'w') }
+    this.claimPath(u.side, done);
     this.capture(u);
     if (u.str > 0) this.militia(u);
     this.updateVision(u.side); this.updateVision(oppOf(u.side));
@@ -730,6 +768,7 @@ class Game {
     if (!this.seen(u.side, e)) return { ok: false, error: 'цель не видна' };
     if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
     if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
+    if (Rules.effStr(u) <= 0) return { ok: false, error: 'все шаги подавлены — ждите своего хода' };
     /* штаб без охраны берут в плен, а не вышибают: за это командные очки и документы */
     if (UT[e.k].cmd && T.cap && this.hqAlone(e)) {
       u.acted = true; u.mp = 0; u.revealed = this.turn;
@@ -761,10 +800,14 @@ class Game {
     }
     this.loss(e, ld, u);
     this.loss(u, la, e);
+    /* сверх потерь бой прижимает: часть шагов подавлена до начала своего хода */
+    if (e.str > 0) { e.su = Math.min(e.str, (e.su || 0) + Math.round(ld * .5 * this.R(.6, 1.4))); e.sup = e.su > 0 }
+    if (u.str > 0) { u.su = Math.min(u.str, (u.su || 0) + Math.round(la * .5 * this.R(.6, 1.4))); u.sup = u.su > 0 }
     u.org = Math.max(0, u.org - la * 4); this.gainXp(u, .06);
     if (e.str > 0) {
       e.org = Math.max(0, e.org - ld * 6 - (retreat ? 8 : 0)); this.gainXp(e, .05);
       if (e.org < 15) retreat = true;
+      if (Rules.effStr(e) <= 0) retreat = true;   /* все шаги прижаты — держать нечем */
       if (e.hold && retreat) { retreat = false; e.org = Math.max(0, e.org - 10) }
       if (this.forts.get(e.hex) && e.org >= 40 && retreat && this.chance(.5)) { retreat = false; this.say(e, 'fortHold', {}) }
       if (retreat) this.retreat(e, u);
@@ -789,9 +832,10 @@ class Game {
         u.hex = vac; u.moved = true;
         if (ford) u.mp = 0;
         this.ev({ e: 'move', to: '*', id: u.id, side: u.side, path: [from, vac], k: u.k, adv: 1 });
+        this.claimPath(u.side, [vac]);
         this.capture(u);
         /* прорыв: подвижные части развивают успех */
-        if (['tnk', 'mot', 'rec'].includes(u.k) && !u.exploit && u.org >= 40 && u.sp >= 2 && u.str >= 4) {
+        if (['tnk', 'mot', 'rec'].includes(u.k) && !u.exploit && u.org >= 40 && u.sp >= 2 && u.fu >= 2 && u.str >= 4) {
           u.exploit = true; u.acted = false; u.mp = Math.max(u.mp, 2);
           this.say(u, 'exploit', {}, 'g');
         }
@@ -813,6 +857,7 @@ class Game {
   loss(u, n, by, how) {
     if (!(n > 0) || u.str <= 0) return;
     u.str = Math.max(0, u.str - n);
+    if (u.su > u.str) u.su = u.str;
     u.hitThisTurn = true;
     if (by && by.side !== u.side && by.id) this.gainXp(by, .02 * n);
     if (u.str > 0) return;
@@ -840,7 +885,7 @@ class Game {
       if (h < 0 || this.unitAt(h) || !this.passable(e.k, h)) continue;
       const ed = Rules.edgeOf(ctx, e.hex, d);
       if (!Rules.crossable(ed) && UT[e.k].cls === 'wheel') continue;
-      const s = this.H.hexDist(h, by.hex) * 3 - (zoc.has(h) ? 4 : 0) + (this.supplyHex[e.side] && this.supplyHex[e.side].has(h) ? 2 : 0) + (Rules.crossable(ed) ? 0 : -3);
+      const s = this.H.hexDist(h, by.hex) * 3 - (zoc.has(h) ? 4 : 0) + (this.sv[e.side][h] > 0 ? 2 : 0) + (this.terr[h] === TCODE[e.side] ? 3 : 0) + (Rules.crossable(ed) ? 0 : -3);
       if (s > bs) { bs = s; best = h }
     }
     if (best < 0) {
@@ -867,15 +912,16 @@ class Game {
     if (u.acted) return { ok: false, error: 'уже стреляли' };
     if (u.reload > 0) return { ok: false, error: 'перезарядка' };
     if (u.sp <= 0) return { ok: false, error: 'нет снарядов — запасы кончились' };
+    if (Rules.effStr(u) <= 0) return { ok: false, error: 'все расчёты подавлены — ждите своего хода' };
     if (this.H.hexDist(u.hex, hex) > T.bomb.rng) return { ok: false, error: `далеко: дальность ${T.bomb.rng} клетки` };
     const e = this.unitAt(hex);
     if (!e || e.side === u.side || !this.seen(u.side, e)) return { ok: false, error: 'цели не видно' };
     const ctx = this.ctxFor(u.side, true);
     this.ev({ e: 'shell', to: '*', from: u.hex, hex, k: u.k });
     const bar = this.barrage[u.side];
-    this.hitByFire(ctx, T.bomb.pow * u.str / MAX_STR * (.85 + .3 * u.xp), e, u, { th: T.th, barrage: bar, sp: u.sp });
-    if (T.bomb.area) for (const h of this.H.neighbors(hex)) { const x = this.unitAt(h); if (x && x.side !== u.side) this.hitByFire(ctx, T.bomb.pow * .45 * u.str / MAX_STR, x, u, { barrage: bar, sp: u.sp }) }
-    u.acted = true; u.mp = 0; u.revealed = this.turn; u.reload = T.bomb.reload;
+    this.hitByFire(ctx, Rules.firePow(u), e, u, { th: T.th, barrage: bar, sp: u.sp });
+    if (T.bomb.area) for (const h of this.H.neighbors(hex)) { const x = this.unitAt(h); if (x && x.side !== u.side) this.hitByFire(ctx, Rules.firePow(u) * T.bomb.area, x, u, { barrage: bar, sp: u.sp, splash: true }) }
+    u.acted = true; u.mp = 0; u.revealed = this.turn; u.reload = T.bomb.reload; u.fired = true;
     this.say(u, 'fire', {});
     this.counterBattery(u);
     return { ok: true };
@@ -890,15 +936,20 @@ class Game {
     this.ev({ e: 'counter', to: '*', hex: art.hex });
     this.ev({ e: 'shell', to: '*', from: art.hex, hex: u.hex, k: art.k });
     this.say(art, 'counter', {}, 'g');
-    this.hitByFire(this.ctxFor(art.side, true), UT[art.k].bomb.pow * .6 * art.str / MAX_STR, u, art, { th: UT[art.k].th });
+    this.hitByFire(this.ctxFor(art.side, true), Rules.firePow(art) * .6, u, art, { th: UT[art.k].th });
   }
   hitByFire(ctx, pow, e, by, opt) {
     const b = Rules.bombardOdds(ctx, pow, e, opt);
-    const n = Math.min(e.str, Math.round(b.exp * this.R(.5, 1.5)));
+    /* огонь больше прижимает, чем убивает: потери и подавленные шаги отдельно */
+    const n = Math.min(e.str, Math.round(b.kill * this.R(.5, 1.5)));
+    const sp = Math.round(b.sup * this.R(.6, 1.4));
     this.ev({ e: 'blast', to: '*', hex: e.hex, big: pow > 11 ? 1 : 0, ld: n, id: e.id });
-    e.sup = true; e.org = Math.max(0, e.org - 10 - n * 4); e.hitThisTurn = true;
+    e.org = Math.max(0, e.org - (opt && opt.splash ? 3 : 7) - n * 3 - sp); e.hitThisTurn = true;
     this.loss(e, n, by);
-    if (e.str > 0) this.say(e, 'shelled', {}, 'w');
+    if (e.str > 0) {
+      if (sp) { e.su = Math.min(e.str, (e.su || 0) + sp); e.sup = true }
+      this.say(e, 'shelled', {}, 'w');
+    }
   }
   /** вылеты — ресурс места, видимость и цели — на сторону */
   airAct(seat, kind, hex) {
@@ -921,6 +972,13 @@ class Game {
     if (!e || e.side === side || !this.seen(side, e)) return { ok: false, error: 'цели не видно' };
     this.air[seat].strike--;
     this.ev({ e: 'air', to: '*', hex, kind, side });
+    /* приданный зенитный взвод прикрывает саму часть */
+    if (e.att === 'aaa' && this.chance(.45)) {
+      this.ev({ e: 'aa', to: '*', hex: e.hex, target: hex });
+      this.log(side, 'Удар сорван: над целью работал зенитный взвод.', 'w');
+      this.log(e.side, `«${e.cs}»: зенитный взвод отбил налёт!`, 'g');
+      return { ok: true, intercepted: true };
+    }
     /* ПВО противника рядом может сорвать удар */
     for (const a of this.units) {
       if (a.side === side || a.str <= 0 || !UT[a.k].aa || this.H.hexDist(a.hex, hex) > UT[a.k].aa) continue;
@@ -936,6 +994,31 @@ class Game {
     return { ok: true };
   }
 
+  /* ---------- приданные специалисты ----------
+     Один на часть, за очки. При расстановке — свободно; в бою — вместо действий
+     в этот ход, на снабжении 3+ и без противника рядом. */
+  attachSpec(seat, u, k, deploy) {
+    const side = this.sideOf(seat);
+    const S = typeof k === 'string' && Object.prototype.hasOwnProperty.call(W.SPECS, k) ? W.SPECS[k] : null;
+    if (!S) return { ok: false, error: 'неизвестный специалист' };
+    if (!u || u.side !== side || u.str <= 0) return { ok: false, error: 'нет такой части' };
+    if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
+    if (u.att) return { ok: false, error: 'специалист уже придан — один на часть' };
+    if (!S.for(UT[u.k])) return { ok: false, error: 'этой части такого не придать' };
+    if (this.budget[seat] < S.price) return { ok: false, error: `не хватает очков: нужно ${S.price}` };
+    if (!deploy) {
+      if (u.acted || u.moved) return { ok: false, error: 'придать — вместо действий в этот ход' };
+      if ((u.sv || 0) < W.SUPPLY.replaceMin) return { ok: false, error: `нужно снабжение от ${W.SUPPLY.replaceMin}` };
+      if (this.H.neighbors(u.hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return { ok: false, error: 'противник рядом' };
+    }
+    this.budget[seat] -= S.price; this.stats[side].spent += S.price;
+    u.att = k;
+    if (!deploy) { u.acted = true; u.mp = 0 }
+    this.log(side, `«${u.cs}»: придан специалист — ${S.n.toLowerCase()}.`, 'g');
+    if (k === 'rcn') this.updateVision(side);
+    return { ok: true };
+  }
+
   /* ---------- пополнение ---------- */
   replace(u) {
     const T = UT[u.k];
@@ -944,9 +1027,10 @@ class Game {
     const cost = Math.max(1, Math.round(T.price / 10 * (near ? 1 - W.FOB.replaceOff : 1)));
     if (u.str >= MAX_STR) return { ok: false, error: 'часть полная' };
     if (u.acted || u.moved) return { ok: false, error: 'пополнение — вместо действий в этот ход' };
-    if (!u.supplied) return { ok: false, error: 'нет снабжения' };
+    if ((u.sv || 0) < W.SUPPLY.replaceMin) return { ok: false, error: `снабжение ${u.sv || 0} из 10 — для пополнения нужно от ${W.SUPPLY.replaceMin}` };
     if (this.H.neighbors(u.hex).some(h => { const e = this.unitAt(h); return e && e.side !== u.side })) return { ok: false, error: 'противник рядом' };
-    const can = Math.min(3, MAX_STR - u.str, Math.floor(this.budget[u.side] / cost));
+    /* сколько шагов за раз — от снабжения: 3–5 → 1, 6–8 → 2, 9–10 → 3 */
+    const can = Math.min(Math.floor((u.sv || 0) / 3), MAX_STR - u.str, Math.floor(this.budget[u.side] / cost));
     if (can < 1) return { ok: false, error: 'не хватает очков' };
     this.budget[u.side] -= can * cost; this.stats[u.side].spent += can * cost;
     u.xp = (u.xp * u.str + .05 * can) / (u.str + can);
@@ -1056,76 +1140,152 @@ class Game {
   }
 
   /* ---------- снабжение ---------- */
+  /* ---------- снабжение по дорогам, как в Unity of Command ----------
+     Два прохода. Сеть: от источников по рёбрам-дорогам (мосты целы), по своей
+     земле, мимо противника. Поле: с каждой клетки сети — в стороны, с большой
+     потерей за клетку; в сеть поле не возвращается. Зона контроля противника,
+     где нет своей части, принимает снабжение, но дальше его не пропускает. */
+  supplySources(side) {
+    const SP = W.SUPPLY, t = TCODE[side], out = [], H = this.H;
+    const enemyOn = h => { const o = this.unitAt(h); return o && o.side !== side && o.str > 0 };
+    /* тыловые станции: свои дорожные клетки ближе всего к своему краю */
+    const colOf = h => h % H.COLS, rear = side === N ? c => c : c => H.COLS - 1 - c;
+    let edgeMost = 1e9;
+    for (let h = 0; h < H.NH; h++) if (this.map.hexes[h].road && this.terr[h] === t) edgeMost = Math.min(edgeMost, rear(colOf(h)));
+    for (let h = 0; h < H.NH; h++) {
+      if (!this.map.hexes[h].road || this.terr[h] !== t || enemyOn(h)) continue;
+      if (rear(colOf(h)) <= edgeMost + SP.rearCols) out.push({ hex: h, v: SP.rear, n: 'Тыловая станция', k: 'rear' });
+    }
+    for (const p of this.pts) if (p.owner === side && p.city && this.terr[p.hex] === t && !enemyOn(p.hex)) out.push({ hex: p.hex, v: SP.city(p.w), n: p.n, k: 'city' });
+    for (const f of this.fobsLive(side)) out.push({ hex: f.hex, v: SP.fob, n: 'Командный пункт', k: 'fob' });
+    return out;
+  }
   updateSupply(side) {
-    this.supplyHex = this.supplyHex || {};
-    const SP = W.SUPPLY, ctx = this.ctxFor(side, true), zoc = Rules.zocOf(ctx, side);
-    const srcs = [];
-    for (const p of this.pts) if (p.owner === side && p.city) srcs.push({ id: p.id, n: p.n, hex: p.hex, seeds: [p.hex], cap: Math.round(SP.cityCap(p.w)), r: SP.cityR(p.w), used: 0 });
-    /* передовой пункт подвоза: маленький округ прямо за передним краем */
-    for (const f of this.fobsLive(side)) srcs.push({ id: 'fob' + f.id, n: 'Командный пункт', hex: f.hex, seeds: [f.hex], cap: W.FOB.supCap, r: W.FOB.supR, used: 0 });
-    const ex = side === N ? 0 : this.H.COLS - 1, edge = [];
-    for (let r = 0; r < this.H.ROWS; r++) edge.push(r * this.H.COLS + ex);
-    srcs.push({ id: 'edge', n: 'Тыл', hex: -1, seeds: edge, cap: SP.edgeCap, r: SP.edgeR, used: 0 });
-    /* подвоз от каждого источника: шаг — 2 (дорога — 1), не через противника и его зоны контроля */
-    const blocked = h => { const o = this.unitAt(h); return o && o.side !== side };
-    for (const sr of srcs) {
-      const R = sr.r * 2, cost = new Map(), buckets = Array.from({ length: R + 1 }, () => []);
-      for (const h of sr.seeds) if (h >= 0 && !blocked(h)) { cost.set(h, 0); buckets[0].push(h) }
-      for (let c = 0; c <= R; c++) for (const a of buckets[c]) {
-        if (cost.get(a) !== c) continue;
+    const SP = W.SUPPLY, t = TCODE[side], NH = this.H.NH, ctx = this.ctxFor(side, true);
+    const zoc = Rules.zocOf(ctx, side);
+    const enemyOn = h => { const o = this.unitAt(h); return o && o.side !== side && o.str > 0 };
+    const ownOn = h => { const o = this.unitAt(h); return o && o.side === side && o.str > 0 };
+    /* зона контроля противника без своей части: принять можно, передать дальше — нет */
+    const choke = h => zoc.has(h) && !ownOn(h);
+    const ok = h => h >= 0 && this.terr[h] === t && !enemyOn(h);
+    /* «куча» по убыванию значения — карты небольшие, линейный поиск максимума хватает */
+    const run = (best, heap, step) => {
+      while (heap.length) {
+        let bi = 0; for (let i = 1; i < heap.length; i++) if (heap[i][0] > heap[bi][0]) bi = i;
+        const [v, a] = heap[bi]; heap[bi] = heap[heap.length - 1]; heap.pop();
+        if (v < best[a] || v <= 0 || choke(a)) continue;
         for (let d = 0; d < 6; d++) {
-          const b = this.H.nb(a, d);
-          if (b < 0) continue;
-          const e = Rules.edgeOf(ctx, a, d);
-          if (!Rules.crossable(e) || blocked(b)) continue;
-          const o = this.unitAt(b);
-          if (zoc.has(b) && !(o && o.side === side)) continue;
-          const nc = c + ((e & Hex.RD) ? 1 : 2);
-          if (nc > R || (cost.has(b) && cost.get(b) <= nc)) continue;
-          cost.set(b, nc); buckets[nc].push(b);
+          const h = this.H.nb(a, d);
+          if (!ok(h)) continue;
+          const c = step(a, d, h);
+          if (c === null) continue;
+          if (v - c > best[h]) { best[h] = v - c; heap.push([v - c, h]) }
         }
       }
-      sr.cost = cost;
+    };
+    /* 1. сеть: только по дорогам и целым мостам */
+    const net = new Float64Array(NH).fill(-1), q1 = [];
+    const srcs = this.supplySources(side);
+    for (const sr of srcs) if (sr.v > net[sr.hex]) { net[sr.hex] = sr.v; q1.push([sr.v, sr.hex]) }
+    run(net, q1, (a, d) => {
+      const e = Rules.edgeOf(ctx, a, d);
+      return (e & Hex.RD) && Rules.crossable(e) ? SP.net : null;
+    });
+    /* 2. поле: с каждой клетки сети (и от источников вне дорог) — в стороны.
+          В распутицу и снег грунтовки раскисают: поле съедает снабжение быстрее */
+    const wxF = (1 - (this.weather.mud || 1)) * SP.wx;
+    const field = Float64Array.from(net), q2 = [];
+    for (let h = 0; h < NH; h++) if (net[h] > 0) q2.push([net[h], h]);
+    run(field, q2, (a, d, h) => {
+      const e = Rules.edgeOf(ctx, a, d), hx = this.map.hexes[h];
+      return SP.field + wxF + (SP.fterr[hx.t] || 0) + (Rules.crossable(e) ? 0 : SP.ford);
+    });
+    const sv = this.sv[side], isNet = this.svNet[side];
+    for (let h = 0; h < NH; h++) {
+      sv[h] = field[h] <= 0 ? 0 : Math.min(SP.top, Math.round(field[h]));
+      isNet[h] = net[h] > 0 && this.map.hexes[h].road ? 1 : 0;
     }
-    /* округ клетки — источник, от которого подвоз ближе всего (по доле дальности) */
-    const mg = new Map(), src = new Map();
-    srcs.forEach((sr, i) => { for (const [h, c] of sr.cost) { const m = 1 - c / (sr.r * 2); if (!mg.has(h) || m > mg.get(h)) { mg.set(h, m); src.set(h, i) } } });
-    this.supplyHex[side] = mg;
-    this.districtOf[side] = src;
-    /* вместимость: часть берёт снабжение у любого дотягивающегося источника, где есть место; лишние — впроголодь */
-    const list = [];
+    this.svSrc[side] = srcs;
     for (const u of this.units) {
       if (u.side !== side || u.str <= 0) continue;
-      u.over = false; u.supplied = mg.has(u.hex);
-      if (u.supplied) list.push({ u, can: srcs.map((sr, i) => sr.cost.has(u.hex) ? i : -1).filter(i => i >= 0) });
+      u.sv = sv[u.hex]; u.supplied = u.sv > 0;
     }
-    list.sort((a, b) => a.can.length - b.can.length);
-    for (const { u, can } of list) {
-      const free = can.filter(i => srcs[i].used < srcs[i].cap).sort((a, b) => srcs[a].cost.get(u.hex) - srcs[b].cost.get(u.hex));
-      if (free.length) srcs[free[0]].used++; else u.over = true;
+  }
+
+  /* ---------- территория и линия фронта ----------
+     Каждая клетка принадлежит стороне. Часть, прошедшая через клетку, берёт
+     её и соседние — если те не прикрыты противником (рядом нет его частей)
+     и это не его город. Пустые карманы чужой земли, окружённые нашей,
+     переходят к нам. Линия фронта — граница территорий. */
+  initTerritory() {
+    const NH = this.H.NH, inf = this.frontInfluence();
+    for (let h = 0; h < NH; h++) {
+      const hx = this.map.hexes[h];
+      this.terr[h] = this.inDeploy(N, h) && !this.inDeploy(S, h) ? 1 : this.inDeploy(S, h) && !this.inDeploy(N, h) ? 2 : inf(hx.x, hx.y) > 0 ? 1 : 2;
     }
-    for (const sr of srcs) { delete sr.cost; delete sr.seeds }
-    this.districts[side] = srcs;
+    for (const p of this.pts) if (p.owner && p.hex >= 0) this.terr[p.hex] = TCODE[p.owner];
+    for (const u of this.units) if (u.str > 0) this.terr[u.hex] = TCODE[u.side];
+    this.rebuildFront();
+  }
+  /** поле влияния сторон: города и части тянут фронт к себе */
+  frontInfluence() {
+    return (x, y) => {
+      let v = 0;
+      for (const p of this.pts) { if (!p.owner) continue; const d2 = (x - p.x) ** 2 + (y - p.y) ** 2 + 110; v += (p.owner === N ? 1 : -1) * (p.city ? 2.4 : 1) * p.w / d2 }
+      for (const u of this.units) { if (u.str <= 0) continue; const h = this.map.hexes[u.hex]; v += (u.side === N ? 1 : -1) * 4 * u.str / MAX_STR / ((x - h.x) ** 2 + (y - h.y) ** 2 + 160) }
+      /* свой тыловой край — тоже якорь */
+      v += .02 / ((x + 20) ** 2 / 400 + 1) - .02 / ((this.WW + 20 - x) ** 2 / 400 + 1);
+      return v;
+    };
+  }
+  /** часть стороны прошла по клеткам path — забрать их и не прикрытых соседей */
+  claimPath(side, path) {
+    const t = TCODE[side], foe = oppOf(side);
+    const foeOn = h => { const o = this.unitAt(h); return !!o && o.side === foe && o.str > 0 };
+    const covered = h => foeOn(h) || this.H.neighbors(h).some(foeOn);
+    let changed = false;
+    for (const hex of path) {
+      if (this.terr[hex] !== t) { this.terr[hex] = t; changed = true }
+      for (const n of this.H.neighbors(hex)) {
+        if (this.terr[n] === t || covered(n)) continue;
+        const p = this.ptAt(n);
+        if (p && p.owner === foe) continue;         /* чужой город берут, только войдя в него */
+        this.terr[n] = t; changed = true;
+      }
+    }
+    if (changed) { this.sweepPockets(side); this.rebuildFront() }
+  }
+  /** пустые карманы чужой земли, со всех сторон окружённые нашей, — наши */
+  sweepPockets(side) {
+    const t = TCODE[side], ft = TCODE[oppOf(side)], NH = this.H.NH, seen = new Uint8Array(NH);
+    for (let h0 = 0; h0 < NH; h0++) {
+      if (seen[h0] || this.terr[h0] !== ft) continue;
+      const comp = [h0]; seen[h0] = 1;
+      let open = false;
+      for (let i = 0; i < comp.length; i++) {
+        const a = comp[i], o = this.unitAt(a), p = this.ptAt(a);
+        if ((o && o.side !== side && o.str > 0) || (p && p.owner && p.owner !== side)) open = true;
+        const nb = this.H.neighbors(a);
+        if (nb.length < 6) open = true;             /* выходит к краю карты — не карман */
+        for (const n of nb) if (!seen[n] && this.terr[n] === ft) { seen[n] = 1; comp.push(n) }
+      }
+      if (!open) for (const h of comp) this.terr[h] = t;
+    }
+  }
+  /** линия фронта для ИИ и мини-карты: доля своей земли в каждом ряду */
+  rebuildFront() {
+    const xs = [];
+    for (let y = 0; y <= this.WH; y += 6) {
+      let n = 0, all = 0;
+      for (let x = 2; x < this.WW; x += this.H.HW) { const h = this.H.hexAt(x, y); if (h < 0) continue; all++; if (this.terr[h] === 1) n++ }
+      xs.push({ x: +(all ? this.WW * n / all : this.WW / 2).toFixed(1), y });
+    }
+    this.frontY = xs;
   }
 
   /* ---------- точки, фронт, исход ---------- */
   heldWeight(side, cityMul) { return this.pts.reduce((s, p) => s + (p.owner === side ? p.w * (cityMul && p.city ? 1.5 : 1) : 0), 0) }
   forceValue(side) { return Math.round(this.units.filter(u => u.side === side && u.str > 0).reduce((s, u) => s + UT[u.k].price * u.str / MAX_STR, 0)) }
-  rebuildFront() {
-    const xs = [];
-    const inf = (x, y) => {
-      let v = 0;
-      for (const p of this.pts) { if (!p.owner) continue; const d2 = (x - p.x) ** 2 + (y - p.y) ** 2 + 110; v += (p.owner === N ? 1 : -1) * (p.city ? 2.4 : 1) * p.w / d2 }
-      for (const u of this.units) { if (u.str <= 0) continue; const h = this.map.hexes[u.hex]; v += (u.side === N ? 1 : -1) * 4 * u.str / MAX_STR / ((x - h.x) ** 2 + (y - h.y) ** 2 + 160) }
-      return v;
-    };
-    for (let y = 0; y <= this.WH; y += 6) {
-      let lo = 6, hi = this.WW - 6;
-      for (let i = 0; i < 12; i++) { const m = (lo + hi) / 2; if (inf(m, y) > 0) lo = m; else hi = m }
-      xs.push({ x: +((lo + hi) / 2).toFixed(1), y });
-    }
-    this.frontY = xs;
-  }
   frontXAt(y) { const f = this.frontY, i = clamp(Math.round(y / 6), 0, f.length - 1); return f[i] ? f[i].x : this.WW / 2 }
   checkEnd() {
     if (this.over || this.phase !== 'battle') return;

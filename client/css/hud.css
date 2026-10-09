@@ -155,3 +155,31 @@ body:has(#hintbar[style*="block"]) #hexinfo{bottom:52px}
 /* пометка скидки от командного пункта на кнопках пополнения и приказов */
 .btn .cheap{font-style:normal;font-size:.76em;letter-spacing:.04em;color:#1a1409;background:var(--ac);border-radius:3px;padding:0 .3em;margin-left:.3em;vertical-align:1px}
 .ords .cpc.cheap{color:#1a1409;background:var(--ac);border-radius:4px;padding:0 .35em}
+
+/* характеристики типа: полоски атаки и обороны, плашки свойств, «Хорош» */
+.stats{margin:.35em 0 .2em}
+.stats .sbars{display:grid;grid-template-columns:1fr;gap:3px}
+.stats .sb{display:grid;grid-template-columns:8.6em 1fr 1.6em;align-items:center;gap:.5em;font-size:.8em}
+.stats .sb span{color:#9fb3c2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stats .sb i{height:6px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;display:block}
+.stats .sb u{display:block;height:100%;background:linear-gradient(90deg,#c8742f,#ffb36b);border-radius:3px}
+.stats .sb.def u{background:linear-gradient(90deg,#3e7fb8,#8fc8ff)}
+.stats .sb.fire u{background:linear-gradient(90deg,#b84a3e,#ff8a6b)}
+.stats .sb b{text-align:right;font:600 .95em ui-monospace,monospace;color:#e8eef2}
+.stats .chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:.45em}
+.stats .chips span{font-size:.72em;padding:.1em .5em;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#b8c6d0}
+.stats .goodfor{margin-top:.4em;font-size:.8em;color:#9fe0a8}
+.stats.cmp .sb{grid-template-columns:7.6em 1fr 1.4em;font-size:.74em}
+.stats.cmp .sb i{height:5px}
+/* закупка: шапка карточки типа над характеристиками */
+.shopItem{flex-direction:column;align-items:stretch}
+.shopItem .shead{display:flex;align-items:center;gap:.6em}
+/* специалисты */
+.specs{display:flex;flex-direction:column;gap:4px}
+.specs .spb{display:block;text-align:left;white-space:normal}
+.specs .spb span{display:block;font-size:.8em;color:#9fb3c2;margin-top:.15em}
+.spec{color:#9fd0ff}
+.speclist{display:flex;flex-direction:column;gap:6px}
+.srow2{display:grid;grid-template-columns:1fr auto;gap:.1em .6em;padding:.45em .6em;border:1px solid var(--bd2);border-radius:8px;background:linear-gradient(180deg,#0f1921,#0b131a)}
+.srow2 .mu,.srow2 .who{grid-column:1 / -1;font-size:.8em}
+.srow2 .who{color:#9fd0ff}

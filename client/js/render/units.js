@@ -80,10 +80,12 @@ function counter(u, q, alpha, scale) {
   const fs = Math.round(clamp(W * (big ? .26 : .31), 10, 24));
   cx.font = `800 ${fs}px system-ui,sans-serif`; cx.textAlign = 'left'; cx.lineJoin = 'round';
   const ty = y0 + band + (H - band - 7) / 2 + fs * .36;
-  cx.lineWidth = 3; cx.strokeStyle = 'rgba(0,0,0,.8)'; cx.strokeText(u.str, x0 + 4, ty); cx.fillStyle = strCol(u.str); cx.fillText(u.str, x0 + 4, ty);
+  /* цифра — действующие шаги; подавленные на шкале оранжевые */
+  const su = Math.min(u.su || 0, u.str), eff = u.str - su;
+  cx.lineWidth = 3; cx.strokeStyle = 'rgba(0,0,0,.8)'; cx.strokeText(eff, x0 + 4, ty); cx.fillStyle = su ? '#ffa04a' : strCol(u.str); cx.fillText(eff, x0 + 4, ty);
   /* шкала силы: 10 делений по низу */
   const bw = (W - 8) / 10;
-  for (let i = 0; i < 10; i++) { cx.fillStyle = i < u.str ? strCol(u.str) : 'rgba(255,255,255,.1)'; cx.fillRect(x0 + 4 + i * bw + .5, y0 + H - 4.6, bw - 1, 2.4) }
+  for (let i = 0; i < 10; i++) { cx.fillStyle = i < eff ? strCol(u.str) : i < u.str ? '#ffa04a' : 'rgba(255,255,255,.1)'; cx.fillRect(x0 + 4 + i * bw + .5, y0 + H - 4.6, bw - 1, 2.4) }
   /* запасы: три деления на полосе справа */
   if (u.sp !== undefined && G.phase === 'battle') {
     const pw = Math.max(3, W * .06), ph = Math.max(2.5, band * .36);
@@ -113,16 +115,18 @@ function counter(u, q, alpha, scale) {
   if (u.amb && !enemy) badges.push(['◉', '#9fe0a8']);
   if (u.exploit && !u.acted) badges.push(['»', '#9fe0a8']);
   if (u.mil) badges.push(['О', '#e8d8b0']);
-  if (u.sup) badges.push(['⚡', '#ffa04a']);
+  if (u.su) badges.push(['⚡', '#ffa04a']);
+  if (!enemy && u.fu !== undefined && usesFuel(T) && u.fu <= 1) badges.push(['⛽', u.fu ? '#ffd479' : '#ff5b47']);
+  if (u.att && SPECS[u.att]) badges.push([SPECS[u.att].sh, '#9fd0ff']);
   const bs = clamp(W * .2, 12, 18);
   badges.forEach(([t, c], i) => {
     const bx = x0 + W + bs * .15, by = y0 + i * (bs + 2);
     cx.fillStyle = 'rgba(6,10,14,.92)'; rr(cx, bx, by, bs, bs, 4); cx.fill();
     cx.strokeStyle = c; cx.lineWidth = 1.2; rr(cx, bx + .5, by + .5, bs - 1, bs - 1, 4); cx.stroke();
-    cx.fillStyle = c; cx.font = `800 ${Math.round(bs * .66)}px system-ui`; cx.textAlign = 'center'; cx.fillText(t, bx + bs / 2, by + bs * .74);
+    cx.fillStyle = c; cx.font = `800 ${Math.round(bs * (t.length > 1 && t.charCodeAt(0) < 0x2000 ? .5 : .66))}px system-ui`; cx.textAlign = 'center'; cx.fillText(t, bx + bs / 2, by + bs * .72);
   });
   if (u.support && !enemy) { cx.strokeStyle = 'rgba(255,170,100,.85)'; cx.setLineDash([3, 3]); cx.lineWidth = 1.4; rr(cx, x0 - 3.5, y0 - 3.5, W + 7, H + 7, R + 3); cx.stroke(); cx.setLineDash([]) }
-  if (u.sup) { cx.strokeStyle = `rgba(255,160,60,${.5 + .4 * Math.sin(RT() * 8)})`; cx.lineWidth = 2; rr(cx, x0 - 2, y0 - 2, W + 4, H + 4, R + 2); cx.stroke() }
+  if (u.su) { cx.strokeStyle = `rgba(255,160,60,${.5 + .4 * Math.sin(RT() * 8)})`; cx.lineWidth = 2; rr(cx, x0 - 2, y0 - 2, W + 4, H + 4, R + 2); cx.stroke() }
   cx.restore();
 }
 
@@ -137,7 +141,7 @@ function compact(u, q, hw, tone, sel, enemy) {
   if (u.ghost) return;
   if (W >= 16) {
     cx.font = `800 ${Math.round(W * .5)}px system-ui`; cx.textAlign = 'center';
-    cx.fillStyle = strCol(u.str); cx.fillText(u.str, q.x, y0 + H * .86);
+    cx.fillStyle = u.su ? '#ffa04a' : strCol(u.str); cx.fillText(u.str - Math.min(u.su || 0, u.str), q.x, y0 + H * .86);
   } else { cx.fillStyle = strCol(u.str); cx.fillRect(x0 + 2, y0 + H - 3, (W - 4) * u.str / 10, 2) }
   if (u.supplied === 0) { cx.fillStyle = '#ff5b47'; cx.beginPath(); cx.arc(x0 + W, y0, 2.8, 0, 7); cx.fill() }
 }

@@ -125,6 +125,10 @@
   const TNAME = { open: 'поле', forest: 'лес', hill: 'высота', city: 'город', marsh: 'болото', mount: 'горы', lake: 'озеро' };
   const SUPK = W.SUPPLY;
   const strK = u => u.str / MAX_STR;
+  /** действующие шаги: подавленные не воюют до начала своего хода */
+  const effStr = u => Math.max(0, u.str - (u.su || 0));
+  /** мощность огня части с закрытых позиций (подавленные шаги не стреляют) */
+  const firePow = u => { const B = UT[u.k].bomb; return B ? B.pow * effStr(u) / MAX_STR * (.85 + .3 * (u.xp || 0)) * (u.att === 'hvy' ? 1.25 : 1) : 0 };
   const orgK = u => .5 + .5 * clamp(u.org, 0, 100) / 100;
   const xpK = u => 1 + .3 * (u.xp || 0);
   /** местность обороняющегося против атакующего */
@@ -172,9 +176,14 @@
     if (cz && !cz.has(att.hex)) am('вне штаба', .9);
     else if (cz) am('штаб рядом', 1.1);
     const spA = att.sp === undefined ? 3 : att.sp, spD = def.sp === undefined ? 3 : def.sp;
-    if (spA < 3) am(`запасы ${spA}/3`, SUPK.att[spA]);
+    if (spA < 3) am(`боеприпасы ${spA}/3`, SUPK.att[spA]);
     if (ctx.smoke && ctx.smoke.has(def.hex)) am('цель в дыму', .8);
-    if (att.sup) am('подавлены', .8);
+    /* подавленные шаги — отдельной строкой, чтобы было видно, сколько их */
+    if (att.su) am(`подавлено ${Math.min(att.su, att.str)} из ${att.str}`, effStr(att) / Math.max(1, att.str));
+    /* приданные специалисты */
+    const fortD = ctx.forts && ctx.forts.get(def.hex);
+    if (att.att === 'sap' && (hx.t === 'city' || def.ent || fortD)) am('штурмовые сапёры', 1.3);
+    if (att.att === 'atg' && TD.arm !== 'soft') am('ПТ-взвод', 1.2);
     dm(TNAME[hx.t], terrainDef(hx, att, def));
     if (def.ent) dm(`окоп ${def.ent}`, 1 + .2 * def.ent);
     const fort = ctx.forts && ctx.forts.get(def.hex);
@@ -183,8 +192,9 @@
     if (TD.atd && TA.arm !== 'soft') dm('противотанковая оборона', 1.8);
     if (ctx.support && ctx.support[def.side] && ctx.support[def.side].has(def.hex)) dm('огонь поддержки', 1.25);
     if (def.amb) dm('из засады', 1.15);
-    if (def.sup) dm('подавлены огнём', .8);
-    if (spD < 2) dm(`запасы ${spD}/3`, SUPK.def[spD]);
+    if (def.su) dm(`подавлено ${Math.min(def.su, def.str)} из ${def.str}`, effStr(def) / Math.max(1, def.str));
+    if (def.att === 'atg' && TA.arm !== 'soft') dm('ПТ-взвод', 1.25);
+    if (spD < 2) dm(`боеприпасы ${spD}/3`, SUPK.def[spD]);
     if (def.hold) dm('стоять насмерть', 1.3);
     if (ctx.mines && ctx.mines.get(def.hex) && ctx.mines.get(def.hex).side === def.side) dm('мины', 1.2);
     const r = A / Math.max(.05, D);
@@ -200,6 +210,7 @@
 
   /* ---------- артиллерия и авиация ---------- */
   const BDEF = { open: 1, forest: 1.25, hill: 1.2, city: 1.4, marsh: 1, mount: 1.5, lake: 1 };
+  const FIRE_KILL = .4;   /* доля потерь в эффекте огня; остальное — подавленные шаги */
   /** ожидаемые потери цели от огня: pow — мощность, from — кто бьёт */
   function bombardOdds(ctx, pow, def, opt) {
     const TD = UT[def.k], hx = ctx.map.hexes[def.hex];
@@ -214,10 +225,13 @@
     if (ctx.night && !(opt && opt.th)) m('ночь', .8);
     if (ctx.acc && ctx.acc < 1) m('погода', ctx.acc);
     if (opt && opt.barrage) m('артподготовка', 1.5);
-    if (opt && opt.sp !== undefined && opt.sp < 3) m(`запасы ${opt.sp}/3`, SUPK.att[opt.sp]);
+    if (opt && opt.sp !== undefined && opt.sp < 3) m(`боеприпасы ${opt.sp}/3`, SUPK.att[opt.sp]);
     if (ctx.smoke && ctx.smoke.has(def.hex)) m('цель в дыму', .7);
     const L = Math.min(5, P * .14);
-    return { P, mods, exp: L, loss: [Math.max(0, Math.round(L * .5)), Math.min(def.str, Math.round(L * 1.5))] };
+    /* огонь больше прижимает, чем убивает: из ожидаемого эффекта треть — потери, остальное — подавление */
+    return { P, mods, exp: L, kill: L * FIRE_KILL, sup: L * (1 - FIRE_KILL) * 2,
+      loss: [Math.max(0, Math.round(L * FIRE_KILL * .5)), Math.min(def.str, Math.round(L * FIRE_KILL * 1.5))],
+      supp: [Math.round(L * (1 - FIRE_KILL) * 1.2), Math.round(L * (1 - FIRE_KILL) * 2.8)] };
   }
 
   /** засада: ответный огонь части amb по тому, кто вошёл рядом (ожидаемые потери вошедшего) */
@@ -226,7 +240,7 @@
     return Math.min(3, o.expD * .55 * 1.4);
   }
   const ARMBIT = { soft: 1, light: 2, hard: 4 };
-  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, bombardOdds, ambushHit, terrainDef, TDEF, TCOST, TNAME };
+  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, bombardOdds, ambushHit, terrainDef, effStr, firePow, TDEF, TCOST, TNAME };
   if (node) module.exports = api;
   else g.Rules = api;
 })(typeof window !== 'undefined' ? window : globalThis);

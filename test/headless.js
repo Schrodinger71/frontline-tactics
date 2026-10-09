@@ -6,6 +6,7 @@
    ============================================================ */
 const assert = require('assert');
 const { Game } = require('../game/engine');
+const Rules = require('../shared/rules');
 const W = require('../shared/world');
 const { N, S } = W;
 assert.strictEqual(W.GAME_VERSION, require('../package.json').version, 'GAME_VERSION не совпадает с package.json');
@@ -95,6 +96,107 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   g.active = side;
   assert(!g.act(side, { t: 'attack', id: lone.id, target: foe.id }).ok, 'без запасов не атакует');
   console.log('механики 1.2: ok');
+}
+/* механики 3.2: территория, снабжение по клеткам, перезарядка РСЗО */
+{
+  const Hex = require('../shared/hex');
+  const g = new Game('both', N, 5, 'valley');
+  g.ready.n = g.ready.s = true; g.tryStart();
+  const H = g.H, own = s => s === N ? 1 : 2;
+  /* территория: у каждой стороны своя земля, точки — на земле владельца */
+  assert(g.terr.every(v => v === 1 || v === 2), 'вся карта поделена');
+  for (const p of g.pts) if (p.owner) assert.strictEqual(g.terr[p.hex], own(p.owner), 'точка ' + p.n + ' на своей земле');
+  /* снабжение по дорогам: тыловые станции — 10, сеть идёт по дорогам почти без
+     потерь, в поле с каждой клеткой −2 и больше, на чужой земле — 0 */
+  const rearN = g.svSrc.n.filter(x => x.k === 'rear');
+  assert(rearN.length && rearN.every(x => g.map.hexes[x.hex].road && g.sv.n[x.hex] === 10), 'тыловые станции на дорогах, 10');
+  for (let h = 0; h < H.NH; h++) {
+    if (g.terr[h] !== 1) { assert.strictEqual(g.sv.n[h], 0, 'на чужой земле снабжения нет'); continue }
+    if (g.svNet.n[h]) assert(g.map.hexes[h].road, 'линия снабжения — только по дорогам');
+  }
+  /* в поле снабжение падает: клетка рядом с линией и не на ней — меньше её хотя бы на 2 */
+  let fieldChecked = 0;
+  for (let h = 0; h < H.NH && fieldChecked < 20; h++) {
+    if (g.terr[h] !== 1 || g.svNet.n[h] || !g.sv.n[h]) continue;
+    const best = Math.max(...H.neighbors(h).filter(n => g.svNet.n[n]).map(n => g.sv.n[n]), 0);
+    if (best) { assert(g.sv.n[h] <= best - 2 + .5, `поле у дороги: ${g.sv.n[h]} при ${best} на дороге`); fieldChecked++ }
+  }
+  assert(fieldChecked > 0, 'нашлись клетки поля у линии снабжения');
+  /* далеко от дорог подвоза нет */
+  const far = [...Array(H.NH).keys()].find(h => g.terr[h] === 1 && Math.min(...[...Array(H.NH).keys()].filter(n => g.svNet.n[n]).map(n => H.hexDist(n, h))) >= 6);
+  if (far !== undefined) assert.strictEqual(g.sv.n[far], 0, 'в 6 клетках от дороги снабжения нет');
+  /* проход части забирает клетки и соседей, не прикрытых противником */
+  g.active = N;
+  const t = g.spawn('tnk', N, g.freeHex(g.WW / 2, 60, 'tnk'), { seat: N });
+  const goal = H.within(t.hex, 3).find(h => g.terr[h] === 2 && !g.unitAt(h) && Rules.reachable(g.ctxFor(N, false), t).has(h));
+  if (goal !== undefined) {
+    const r = g.act(N, { t: 'move', id: t.id, to: goal });
+    if (r.ok) assert.strictEqual(g.terr[t.hex], 1, 'клетка, куда вошли, — наша');
+  }
+  /* РСЗО: после залпа ход на перезарядку (раньше счётчик сгорал в тот же ход) */
+  const m = g.spawn('mlrs', N, g.freeHex(g.WW / 2 - 30, 220, 'mlrs'), { seat: N });
+  const e = g.spawn('inf', S, g.freeHex(g.map.hexes[m.hex].x + 20, 220, 'inf'));
+  e.revealed = g.turn; g.vis.n.add(e.hex);
+  assert(g.act(N, { t: 'bombard', id: m.id, hex: e.hex }).ok, 'залп РСЗО');
+  g.endTurn(); g.drainEvents(); g.endTurn(); g.drainEvents();
+  g.active = N; m.acted = false; e.revealed = g.turn; g.vis.n.add(e.hex);
+  assert(!g.act(N, { t: 'bombard', id: m.id, hex: e.hex }).ok, 'на следующий ход РСЗО ещё перезаряжается');
+  console.log('механики 3.2: ok');
+}
+/* механики 3.3: топливо, подавленные шаги, специалисты, погода в снабжении */
+{
+  const Hex = require('../shared/hex'), W = require('../shared/world');
+  const g = new Game('both', N, 9, 'steppe');
+  g.ready.n = g.ready.s = true; g.tryStart();
+  const side = g.active, en = side === N ? S : N, H = g.H;
+  /* топливо: в котле танки встают, пехота идёт пешком */
+  const mid = H.hexAt(g.WW / 2, g.WH / 2);
+  const tank = g.spawn('tnk', side, mid), inf = g.spawn('inf', side, H.neighbors(mid).find(h => !g.unitAt(h) && g.passable('inf', h)));
+  for (const u of [tank, inf]) for (const h of H.neighbors(u.hex)) if (!g.unitAt(h) && g.passable('inf', h)) g.spawn('inf', en, h);
+  for (let i = 0; i < 3; i++) { g.active = side; g.endTurn(); g.drainEvents() }
+  assert(tank.fu === 0 && !tank.supplied, 'в котле топливо уходит за 3 хода: ' + tank.fu);
+  assert(inf.fu === W.SUPPLY.max, 'у пехоты топлива нет и не убывает');
+  g.startSide(side); g.drainEvents();
+  assert.strictEqual(tank.mp, 0, 'без топлива танк стоит');
+  assert(inf.mp > 0, 'пехота в котле ходит пешком');
+  /* подавленные шаги: снижают силу в расчёте и возвращаются в начале своего хода */
+  g.updateSupply(side);
+  const fullH = [...Array(H.NH).keys()].find(h => g.sv[side][h] >= 7 && !g.unitAt(h) && g.passable('tnk', h) && H.neighbors(h).some(n => !g.unitAt(n) && g.passable('inf', n)));
+  const a = g.spawn('tnk', side, fullH), b = g.spawn('inf', en, H.neighbors(a.hex).find(h => !g.unitAt(h) && g.passable('inf', h)));
+  const ctx = g.ctxFor(side, true), r0 = Rules.odds(ctx, a, b).r;
+  b.su = 4;
+  const r1 = Rules.odds(ctx, a, b).r;
+  assert(r1 > r0 * 1.4, `подавленная цель слабее в обороне: ${r0.toFixed(2)} → ${r1.toFixed(2)}`);
+  a.su = 5;
+  assert(Rules.odds(ctx, a, b).A < Rules.odds(ctx, { ...a, su: 0 }, b).A * .6, 'подавленный атакует слабее');
+  a.su = a.str; a.acted = false; g.active = side;
+  assert(!g.act(side, { t: 'attack', id: a.id, target: b.id }).ok, 'все шаги подавлены — атаки нет');
+  b.str = 0;   /* убираем соседа противника — иначе его зона контроля режет подвоз */
+  g.startSide(side); g.drainEvents();
+  assert(W.supTier(a.sv) === 'full' || W.supTier(a.sv) === 'ok', 'часть на снабжении: ' + a.sv);
+  assert.strictEqual(a.su, 0, 'на снабжении подавленные шаги возвращаются в начале хода');
+  /* огонь даёт и потери, и подавление */
+  const ex = Rules.bombardOdds(ctx, 9, b, {});
+  assert(ex.sup > ex.kill, 'огонь больше прижимает, чем убивает');
+  /* специалисты */
+  const g2 = new Game('both', N, 4, 'valley');
+  const s2 = g2.seats[0].id, u2 = g2.spawn('inf', g2.sideOf(s2), g2.freeHex(40, 200, 'inf'), { seat: s2 });
+  const b0 = g2.budget[s2];
+  assert(g2.act(s2, { t: 'attach', id: u2.id, k: 'atg' }).ok && u2.att === 'atg' && g2.budget[s2] === b0 - W.SPECS.atg.price, 'придание за очки');
+  assert(!g2.act(s2, { t: 'attach', id: u2.id, k: 'sap' }).ok, 'один специалист на часть');
+  assert(!g2.act(s2, { t: 'attach', id: u2.id, k: 'hvy' }).ok || u2.att === 'atg', 'тяжёлая батарея — только артиллерии');
+  const tk = { id: -5, k: 'tnk', side: S, hex: H.neighbors(u2.hex)[0], str: 10, org: 100, xp: .2, sp: 3 };
+  const c2 = g2.ctxFor(N, true);
+  assert(Rules.odds(c2, tk, u2).D > Rules.odds(c2, tk, { ...u2, att: null }).D * 1.2, 'ПТ-взвод держит танки');
+  /* погода: в распутицу поле съедает снабжение быстрее, дороги — как были */
+  const g3 = new Game('both', N, 6, 'valley'); g3.ready.n = g3.ready.s = true; g3.tryStart();
+  g3.weather = require('../shared/weather').wxById('clear'); g3.updateSupply(N);
+  const dry = Uint8Array.from(g3.sv.n), net = Uint8Array.from(g3.svNet.n);
+  g3.weather = require('../shared/weather').wxById('snow'); g3.updateSupply(N);
+  let field = 0, worse = 0;
+  for (let h = 0; h < H.NH; h++) { if (net[h]) assert.strictEqual(g3.sv.n[h], dry[h], 'дороги в снег везут как прежде'); else if (dry[h] > 2) { field++; if (g3.sv.n[h] < dry[h]) worse++ } }
+  assert(worse > field * .6, `в снег поле снабжается хуже: ${worse} из ${field}`);
+  console.log('механики 3.3: ok');
 }
 /* механики 2.0: контрбатарея, ремонт моста, рельеф, взаимодействие, контрудар, жребий первого хода */
 {

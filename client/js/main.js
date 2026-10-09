@@ -19,10 +19,10 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 const G = {
   roomId: null, side: null, spec: false, watch: false, vsBot: true, phase: null,
-  units: [], ghosts: [], pts: [], vis: null, supply: null, br: [], mines: [], frontY: [],
+  units: [], ghosts: [], pts: [], vis: null, terr: null, terrStr: '', sv: null, br: [], mines: [], frontY: [],
   turn: 0, active: null, clock: '06:00', day: 1, night: false, weather: 'clear', budget: 0, income: 0, air: null, score: 0,
   scen: null, stats: null, enemyStats: null, history: [], commanders: null, role: null, over: null, limit: 30,
-  mapId: null, forts: [], obst: [], cp: 0, barrage: false, smoke: [], dist: null, districts: null, mapPick: (() => { try { return localStorage.getItem('turn.map') || 'valley' } catch (e) { return 'valley' } })(),
+  mapId: null, forts: [], obst: [], cp: 0, barrage: false, smoke: [], mapPick: (() => { try { return localStorage.getItem('turn.map') || 'valley' } catch (e) { return 'valley' } })(),
   sel: null, reach: null, targets: [], hover: -1, mode: null, deploy: null, isMyTurn: false,
   view: { x: 150, y: 220, s: 5 }, pace: 1, showSupply: false, showTypes: false, visV: 0, selRiv: '', mouse: null, speed: 1, pendingSnap: null, tabR: 'unit', tabL: 'log', _overShown: false
 };
@@ -39,6 +39,16 @@ function needSite() {
   if (G.phase !== 'deploy' || G.spec) return null;
   const f = myFob();
   return f && !f.sited ? f : null;
+}
+/* уровни снабжения: цвет полоски и подпись */
+const SUP_COL = { full: 'var(--gn)', ok: '#c9d36b', low: 'var(--ac)', none: 'var(--rd)' };
+const SUP_NAME = { full: 'полное', ok: 'нормальное', low: 'скудное', none: 'котёл' };
+/** сколько моих частей на каждом уровне снабжения */
+function supSummary() {
+  if (G.spec || G.phase !== 'battle') return '';
+  const c = { full: 0, ok: 0, low: 0, none: 0 };
+  for (const u of G.units) if (myUnit(u) && !UT[u.k].fob) c[supTier(u.sv)]++;
+  return `<div class="row"><span>Частей по снабжению</span><b><span class="good">${c.full}</span> · <span style="color:#c9d36b">${c.ok}</span> · <span class="ac">${c.low}</span> · <span class="bad">${c.none}</span></b></div>`;
 }
 /** пункт блокирован: рядом стоит видимый противник — узел в этот ход не работает */
 function fobBlocked(f) { return H.neighbors(f.hex).some(h => { const e = G.units.find(x => x.hex === h); return !!e && e.side !== f.side }) }
@@ -165,9 +175,14 @@ function applySnapshot(v) {
   G.waiting = v.waiting || [];
   G.team = v.team || null; G.sideIncome = v.sideIncome || 0;
   Object.assign(G, {
-    phase: v.phase, units: v.units, ghosts: v.ghosts, pts: v.pts, vis: v.vis ? new Set(v.vis) : null, supply: v.supply ? new Set(v.supply) : null,
-    mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, counter: v.counter, smoke: v.smoke || [], districts: v.districts,
-    dist: v.dist ? (() => { const m = new Map(); for (let i = 0; i < v.dist.length; i += 2) m.set(v.dist[i], v.dist[i + 1]); return m })() : null,
+    phase: v.phase, units: v.units, ghosts: v.ghosts, pts: v.pts, vis: v.vis ? new Set(v.vis) : null,
+    mapId: v.map, forts: v.forts, obst: v.obst, cp: v.cp, barrage: v.barrage, counter: v.counter, smoke: v.smoke || [],
+    /* территория и поле снабжения приходят строкой: символ на клетку */
+    terrStr: v.terr || '', terr: v.terr ? Uint8Array.from(v.terr, c => c.charCodeAt(0) - 48) : null,
+    /* снабжение: '0'–'9','a' — поле, 'A'–'K' — клетка на линии снабжения (дорога) */
+    sv: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? c.charCodeAt(0) - 65 : c === 'a' ? 10 : c.charCodeAt(0) - 48) : null,
+    svNet: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? 1 : 0) : null, svStr: v.sv || '',
+    svSrc: v.svSrc || [],
     br: v.br, mines: v.mines, frontY: v.frontY, turn: v.turn, active: v.active, clock: v.clock, day: v.day, night: v.night, weather: v.weather,
     budget: v.budget, income: v.income, air: v.air, score: v.score, scen: v.scen, stats: v.stats, enemyStats: v.enemyStats, history: v.history,
     commanders: v.commanders, role: v.role, over: v.over, limit: v.limit, mode0: v.mode, ready: v.ready
@@ -258,8 +273,8 @@ function computeSel() {
   if (T.bomb) {
     if (u.reload > 0) return;
     for (const e of foes) if (H.hexDist(u.hex, e.hex) <= T.bomb.rng) {
-      const b = Rules.bombardOdds(ctx, T.bomb.pow * u.str / MAX_STR * (.85 + .3 * u.xp), e, { th: T.th, barrage: !!G.barrage, sp: u.sp });
-      G.targets.push({ hex: e.hex, id: e.id, lb: `огонь −${b.loss[0]}…${b.loss[1]}`, col: '#ffb070', bomb: b });
+      const b = Rules.bombardOdds(ctx, Rules.firePow(u), e, { th: T.th, barrage: !!G.barrage, sp: u.sp });
+      G.targets.push({ hex: e.hex, id: e.id, lb: `−${b.loss[0]}…${b.loss[1]} · ⚡${b.supp[0]}…${b.supp[1]}`, col: '#ffb070', bomb: b });
     }
   } else if (T.atk.soft >= 2 && u.k !== 'hq' && u.org >= 20) {
     for (const e of foes) if (H.hexDist(u.hex, e.hex) === 1) {
@@ -349,25 +364,83 @@ function bar(label, v, max, col, txt) {
   const k = clamp(v / max, 0, 1);
   return `<div class="row"><span>${label}</span><b>${txt != null ? txt : Math.round(k * 100) + '%'}</b></div><div class="bar"><div style="width:${k * 100}%;background:${col}"></div></div>`;
 }
+/* ---------- характеристики типа: что брать и для чего ---------- */
+const CLS_NAME = { foot: 'пешком', wheel: 'колёса', track: 'гусеницы' };
+const ARM_NAME = { soft: 'нет', light: 'лёгкая', hard: 'тяжёлая' };
+/** для чего тип хорош — выводится из его цифр, чтобы подсказка не врала */
+function goodFor(T) {
+  const g = [];
+  if (T.bomb) g.push(T.bomb.area ? 'залпы по площади' : 'огонь с закрытых позиций');
+  if (T.atk.hard >= 8) g.push('против танков');
+  if (T.atk.soft >= 7) g.push('против пехоты');
+  if (T.def >= 7) g.push('держать рубеж');
+  if (T.mp >= 6) g.push('манёвр и обход');
+  if (T.vis >= 4) g.push('разведка');
+  if (T.atd) g.push('засада на технику');
+  if (T.aa) g.push('прикрытие от авиации');
+  if (T.eng) g.push('мосты, мины, укрепления');
+  if (T.cmd) g.push('управление сектором');
+  return g;
+}
+/** Блок характеристик: атака по трём классам целей, оборона, огонь — полосками
+    от максимума среди всех типов; свойства — плашками; «Хорош» — по цифрам. */
+function statsHTML(T, compact) {
+  const MAXA = 10, MAXD = 9, MAXF = 10;
+  const sb = (lbl, v, max, cls) => `<div class="sb ${cls || ''}"><span>${lbl}</span><i><u style="width:${Math.round(100 * clamp(v / max, 0, 1))}%"></u></i><b>${v}</b></div>`;
+  const chips = [`ход ${T.mp}`, CLS_NAME[T.cls], `обзор ${T.vis}`, `броня: ${ARM_NAME[T.arm]}`];
+  if (usesFuel(T)) chips.push('нужно топливо');
+  if (T.th) chips.push('тепловизоры');
+  if (T.cap) chips.push('берёт точки');
+  if (T.stl) chips.push('малозаметна');
+  if (T.atd) chips.push('ПТ-оборона ×1,8');
+  if (T.aa) chips.push(`ПВО ${T.aa} кл.`);
+  if (T.cmd) chips.push(`сектор ${T.cmd} кл.`);
+  const good = goodFor(T);
+  return `<div class="stats${compact ? ' cmp' : ''}">
+    <div class="sbars">${sb('по пехоте', T.atk.soft, MAXA)}${sb('по БТР и БМП', T.atk.light, MAXA)}${sb('по танкам', T.atk.hard, MAXA)}${sb('оборона', T.def, MAXD, 'def')}${
+      T.bomb ? sb(`огонь · ${T.bomb.rng} кл.${T.bomb.area ? ' · площадь' : ''}`, T.bomb.pow, MAXF, 'fire') : ''}</div>
+    <div class="chips">${chips.map(c => `<span>${c}</span>`).join('')}</div>
+    ${good.length ? `<div class="goodfor">Хорош: ${good.join(', ')}</div>` : ''}</div>`;
+}
+/** сила с подавленными шагами: «8 из 10 · подавлено 2» */
+function strText(u, T) {
+  const su = Math.min(u.su || 0, u.str);
+  return `${u.str} из 10${su ? ` · <span class="ac">подавлено ${su}</span>` : ''} · ${elCount(u.k, u.str)} ${T.eln}`;
+}
+/** приданный специалист или кнопки придания */
+function specHTML(u, T, canAttach) {
+  if (u.att) { const S = SPECS[u.att]; return `<div class="row"><span>Специалист</span><b class="spec">${esc(S.n)}</b></div><p class="hint">${esc(S.d)}</p>` }
+  const list = SPEC_ORDER.filter(k => SPECS[k].for(T));
+  if (!canAttach || !list.length) return list.length && myUnit(u) ? '<div class="row"><span>Специалист</span><b class="mu">нет</b></div>' : '';
+  return `<div class="lbl">Придать специалиста</div><div class="specs">${list.map(k => { const S = SPECS[k], off = G.budget < S.price;
+    return `<button class="btn sm spb ${off ? 'off' : ''}" data-a="att:${k}" ${off ? 'disabled' : ''} title="${esc(S.d)}"><b>${esc(S.n)}</b> · ${S.price}<span>${esc(S.d)}</span></button>` }).join('')}</div>
+    ${G.phase === 'battle' ? '<p class="hint">В бою — вместо действий в этот ход, на снабжении 3+ и без противника рядом. Один на часть, погибает вместе с ней.</p>' : '<p class="hint">Один на часть, погибает вместе с ней. «Вернуть» часть — вернёт и его цену.</p>'}`;
+}
 function unitCard(u) {
   const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = H.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
   const head = `<div class="uhead">${iconHTML(unitIcon(u.k, u.side), 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
   allyUnit(u) ? ` <i class="allytag">союзник${seatName(u.seat) ? ' · ' + esc(seatName(u.seat)) : ''}</i>` : ''}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
+  const strCls = u.str <= 3 ? 'var(--rd)' : u.str <= 6 ? 'var(--ac)' : 'var(--gn)';
   if (!own) return `<div class="card">${head}
-    ${bar('Сила', u.str, MAX_STR, u.str <= 3 ? 'var(--rd)' : 'var(--ac)', u.str + ' из 10 · ' + elCount(u.k, u.str) + ' ' + T.eln)}
-    <div class="row"><span>Запасы</span><b>${pips(u.sp)}</b></div>${u.hold ? '<p class="ustate"><span class="ac">стоит насмерть — не отходит</span></p>' : ''}${u.mil ? '<p class="ustate">ополчение</p>' : ''}
+    ${bar('Сила', u.str, MAX_STR, strCls, strText(u, T))}
+    <div class="row"><span>Боеприпасы</span><b>${pips(u.sp)}</b></div>${u.hold ? '<p class="ustate"><span class="ac">стоит насмерть — не отходит</span></p>' : ''}${u.mil ? '<p class="ustate">ополчение</p>' : ''}
+    ${u.att ? specHTML(u, T, false) : ''}
     <div class="row"><span>Местность</span><b>${Rules.TNAME[hx.t]}, ${Math.round(hx.h)} м${u.ent ? ', окоп ' + u.ent : ''}</b></div>
     ${u.hb ? '<p class="ustate"><span class="good">связан боем — атака другим родом войск ×1,15</span></p>' : ''}
+    <div class="lbl">Характеристики</div>${statsHTML(T)}
     <p class="hint">${esc(ROLE_TXT[u.k])}</p></div>`;
   const acts = [];
+  let canAttach = false;
   if (G.phase === 'deploy' && !G.spec) {
-    if (!u.pre) acts.push(`<button class="btn sm" data-a="sell">Вернуть (+${T.price})</button>`);
+    canAttach = myUnit(u);
+    if (!u.pre) acts.push(`<button class="btn sm" data-a="sell">Вернуть (+${T.price + (u.att ? SPECS[u.att].price : 0)})</button>`);
     acts.push(T.fob && !u.sited
       ? '<span class="hint warn">Пункт не развёрнут: кликните по клетке в своей зоне — он встанет там. Без этого бой не начать.</span>'
       : '<span class="hint">Клик по клетке зоны — переставить.</span>');
   }
   else if (G.isMyTurn && myUnit(u)) {
+    canAttach = !u.acted && !u.moved && (u.sv || 0) >= SUPPLY.replaceMin;
     if (!u.acted && !u.moved) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
     if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
     if (u.str < MAX_STR && !u.acted && !u.moved) {
@@ -378,20 +451,21 @@ function unitCard(u) {
       const O = ORDERS[k], cp = orderCp(k, u.hex);
       acts.push(`<button class="btn sm" data-a="ord:${k}" ${ok && G.cp >= cp ? '' : 'disabled'} title="${esc(O.d)}${cp < O.cp ? ' — в секторе командного пункта дешевле' : ''}${why ? ' — ' + esc(why) : ''}">${esc(O.n)} · ${cp}★${cp < O.cp ? ' <i class="cheap">КП</i>' : ''}</button>`);
     };
-    ob('march', !u.acted && !u.march && u.sp > 0);
+    ob('march', !u.acted && !u.march && (!usesFuel(T) || u.fu > 0));
     ob('hold', !u.hold);
-    if (u.sp < SUPPLY.max) ob('airdrop', wxById(G.weather).fly);
+    if (u.sp < SUPPLY.max || (usesFuel(T) && u.fu < SUPPLY.max)) ob('airdrop', wxById(G.weather).fly);
     if (T.eng && !u.acted) acts.push('<button class="btn sm" data-a="eng:fort">Укрепления…</button><button class="btn sm" data-a="eng:obst">Заграждения…</button><button class="btn sm" data-a="eng:mine">Мины…</button><button class="btn sm" data-a="eng:bridge">Понтон…</button><button class="btn sm" data-a="eng:blow">Взорвать мост…</button><button class="btn sm" data-a="eng:repair">Восстановить мост…</button><button class="btn sm" data-a="eng:clear">Разминировать…</button>');
   }
   const st = [];
   if (!u.supplied) st.push(`<span class="bad">в котле${u.cut ? ' ' + u.cut + ' х.' : ''}</span>`);
-  else if (u.over) st.push('<span class="ac">округ перегружен — запас не выше 2</span>');
-  if (u.sp <= 0) st.push('<span class="bad">запасы кончились — не атакует, тает</span>');
+  else if (supTier(u.sv) === 'low') st.push('<span class="ac">скудное снабжение — запас не выше 2</span>');
+  if (u.sp <= 0) st.push('<span class="bad">боеприпасы кончились — не атакует, тает</span>');
+  if (usesFuel(T) && u.fu <= 0) st.push('<span class="bad">нет топлива — техника стоит</span>');
   if (u.hold) st.push('<span class="ac">стоять насмерть</span>');
   if (u.march) st.push('форсированный марш');
   if (u.exploit) st.push('<span class="good">прорыв — может действовать ещё</span>');
   if (u.mil) st.push('ополчение');
-  if (u.sup) st.push('<span class="ac">подавлены</span>');
+  if (u.su) st.push(`<span class="ac">подавлено ${Math.min(u.su, u.str)} шагов — не воюют до своего хода</span>`);
   if (u.org < 20) st.push('<span class="bad">дезорганизованы — не атакуют</span>');
   if (u.reload > 0) st.push('перезарядка');
   if (u.amb) st.push('<span class="good">в засаде</span>');
@@ -401,17 +475,18 @@ function unitCard(u) {
     : '<span class="good">узел работает: подвоз, подкрепления, +1★</span>');
   return `<div class="card">${head}
     ${st.length ? `<p class="ustate">${st.join(' · ')}</p>` : ''}
-    ${bar('Сила', u.str, MAX_STR, u.str <= 3 ? 'var(--rd)' : u.str <= 6 ? 'var(--ac)' : 'var(--gn)', u.str + ' из 10 · ' + elCount(u.k, u.str) + ' ' + T.eln)}
+    ${bar('Сила', u.str, MAX_STR, strCls, strText(u, T))}
     ${bar('Мораль', u.org, 100, u.org < 30 ? 'var(--rd)' : '#8fb8ff')}
-    <div class="row"><span>Запасы (боеприпасы, топливо)</span><b>${pips(u.sp)}</b></div>
+    <div class="row"><span>Боеприпасы</span><b>${pips(u.sp)}</b></div>
+    ${usesFuel(T) ? `<div class="row"><span>Топливо</span><b>${pips(u.fu)}</b></div>` : ''}
+    ${G.phase === 'battle' ? bar('Снабжение клетки', u.sv || 0, SUPPLY.top, SUP_COL[supTier(u.sv)], `${u.sv || 0} из ${SUPPLY.top} · ${SUP_NAME[supTier(u.sv)]}`) : ''}
     ${G.phase === 'battle' ? bar('Очки хода', u.mp, T.mp, 'var(--bl)', `${u.mp} из ${T.mp}${u.acted ? ' · действие сделано' : ''}`) : ''}
-    <div class="row"><span>Атака (пех/лёг/танки)</span><b>${T.atk.soft} / ${T.atk.light} / ${T.atk.hard}</b></div>
-    <div class="row"><span>Оборона</span><b>${T.def}</b></div>
-    ${T.bomb ? `<div class="row"><span>Огонь</span><b>${T.bomb.pow} на ${T.bomb.rng} кл.${T.bomb.area ? ', по площади' : ''}</b></div>` : ''}
     <div class="row"><span>Местность · окоп</span><b>${Rules.TNAME[hx.t]}, ${Math.round(hx.h)} м · ${u.ent || 0}${fort ? ' · укрепления ' + fort : ''}</b></div>
     <div class="row"><span>Опыт</span><b>${u.xp >= .6 ? 'ветераны' : u.xp >= .3 ? 'обстрелянные' : 'необстрелянные'} ${'★'.repeat(1 + Math.floor(u.xp * 2.99))}</b></div>
     ${T.eng ? `<div class="row"><span>Мин в запасе</span><b>${u.mines}</b></div>` : ''}
     <div class="row"><span>Командир</span><b>${esc(u.trait || '—')}</b></div>
+    ${specHTML(u, T, canAttach)}
+    <div class="lbl">Характеристики</div>${statsHTML(T)}
     <p class="hint">${esc(ROLE_TXT[u.k])}</p>
     <div class="acts">${acts.join('')}</div></div>`;
 }
@@ -431,9 +506,14 @@ function renderOrders() {
       return `<div class="ord ${off ? 'off' : ''} ${G.mode === 'ord:' + k ? 'on' : ''}" data-ord="${k}"><div class="snm"><b>${esc(O.n)}</b><span>${esc(O.d)}${O.tgt === 'unit' ? ' · <i>на выбранную часть</i>' : O.tgt === 'hex' ? ' · <i>на клетку</i>' : ''}</span></div><div class="cpc ${cp < O.cp ? 'cheap' : ''}">${cp}★</div></div>` }).join('')}</div>
     ${sel && myUnit(sel) ? `<p class="hint">Выбрана: «${esc(sel.cs)}» (${esc(UT[sel.k].sh)}).</p>` : ''}
     <div class="lbl">Снабжение</div>
-    <p class="hint">Округа снабжения — от ваших городов (вместимость и дальность по весу города) и от тыла. Часть в котле теряет деление запаса за ход: за три хода — без боеприпасов и топлива, дальше тает и сдаётся. Перегруженный округ держит запас не выше 2.</p>
-    ${(G.districts || []).map(d => `<div class="row"><span>${esc(d.n)}</span><b class="${d.used > d.cap ? 'bad' : ''}">${d.cap >= 99 ? d.used + ' ч.' : d.used + ' из ' + d.cap}</b></div>`).join('')}
-    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Округа на карте <kbd>S</kbd></button></div></div>`;
+    <p class="hint">Снабжение идёт <b>по дорогам</b>: от тыловых станций у своего края (10), своих городов-складов (7–9) и командного пункта (8)
+    почти без потерь по дорожной сети своей земли, а с дороги стекает в поле — минус 2 за клетку, по лесу и болоту больше. Дальше 3–4 клеток
+    от дороги подвоза нет. Чужая земля, взорванный мост или зона контроля противника без вашей части рвут линию, и обойти разрыв полем нельзя.</p>
+    <p class="hint"><b class="good">7–10</b> — запас и мораль быстро восстанавливаются, пополнение до 3 шагов;
+    <b class="ac">4–6</b> — медленнее; <b class="ac">1–3</b> — запас не выше 2, мораль еле растёт, пополнение по шагу;
+    <b class="bad">0</b> — котёл: запас тает, дальше потери и сдача.</p>
+    ${supSummary()}
+    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Снабжение на карте <kbd>S</kbd></button></div></div>`;
 }
 function renderUnit() {
   const u = selUnit();
@@ -453,7 +533,11 @@ function renderBuy() {
   $('#rc').innerHTML = `<div class="card"><h3>Закупка <span class="mu">· ${G.spec ? '' : G.budget} очк.</span></h3>
     <p class="hint">${deploy ? 'Выберите тип и кликните по клетке в зоне расстановки.' : 'Подкрепления — в своём городе или узле либо на соседней с ним клетке (подсвечены), без противника рядом. Прибывают без хода.'}</p>
     <div class="shop">${unitsFor(G.spec ? N : G.side).map(k => { const T = utFor(G.spec ? N : G.side)[k], off = G.budget < T.price;
-      return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}">${iconHTML(unitIcon(k, G.side), 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>` }).join('')}</div></div>`;
+      return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}"><div class="shead">${iconHTML(unitIcon(k, G.side), 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>${statsHTML(T, true)}</div>` }).join('')}</div>
+    <div class="lbl">Приданные специалисты</div>
+    <p class="hint">Придаются уже купленной части — выберите её и нажмите в карточке «Придать». Один на часть.</p>
+    <div class="speclist">${SPEC_ORDER.map(k => { const S = SPECS[k], who = unitsFor(G.spec ? N : G.side).filter(t => S.for(utFor(G.spec ? N : G.side)[t])).map(t => utFor(G.spec ? N : G.side)[t].sh);
+      return `<div class="srow2"><b>${esc(S.n)}</b><span class="sprice">${S.price}</span><span class="mu">${esc(S.d)}</span><span class="who">кому: ${who.join(', ')}</span></div>` }).join('')}</div></div>`;
 }
 function renderHQ() {
   const c = G.commanders || {}, w = wxById(G.weather);
@@ -463,7 +547,7 @@ function renderHQ() {
     ${side(N)}${side(S)}
     <div class="lbl">Перевес по ходам</div>${histSVG(G.history) || '<p class="hint">Пока рано.</p>'}
     <div class="lbl">Погода: ${esc(w.n)}</div><p class="hint">${esc(w.d)}</p>
-    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Округа снабжения <kbd>S</kbd></button>
+    <div class="acts"><button class="btn sm ${G.showSupply ? 'on' : ''}" data-a="supply">Снабжение на карте <kbd>S</kbd></button>
       <button class="btn sm ${G.showCmd ? 'on' : ''}" data-a="cmd">Секторы командиров <kbd>H</kbd></button></div>
     ${G.vsBot && !G.spec ? '' : `<div class="row"><span>Код партии</span><b class="ac">${esc(G.roomId)}</b></div>`}</div>`;
 }
@@ -560,8 +644,12 @@ function showHelp() {
     <p><b>Бой.</b> Наведите на цель — увидите соотношение сил и всё, что на него влияет: местность, окоп, охват, удар с двух сторон, реку, ночь, снабжение, штаб. Новое: <b>рельеф</b> (в гору ×0,88…0,8, с высоты ×1,1) и <b>взаимодействие родов войск</b> — цель, по которой в этот ход уже били танки, пехота атакует ×1,15 (и наоборот). Отход в клетку под огнём двух частей противника стоит шага силы.</p>
     <p><b>Артиллерия.</b> Огонь слабее в непогоду (дождь, туман, снег). Батарея, не стрелявшая в свой ход, прикрывает соседей и ведёт <b>контрбатарейный огонь</b> по артиллерии противника, открывшей огонь в её дальности.</p>
     <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
-    <p><b>Снабжение.</b> Округа снабжения — от ваших городов и края карты (клавиша <b>S</b>). Запас 0–3 на фишке; в котле тает по делению за ход, без запасов часть тает и сдаётся.</p>
+    <p><b>Территория и фронт.</b> Каждая клетка чья-то. Часть, прошедшая через клетку, забирает её и соседние — если те не прикрыты противником (рядом нет его частей) и это не его город: город берут, только войдя в него. Пустой карман чужой земли, окружённый вашей, переходит к вам. Линия фронта — граница территорий.</p>
+    <p><b>Снабжение</b> (клавиша <b>S</b>) идёт <b>по дорогам</b>, как в Unity of Command. Источники — тыловые станции у вашего края карты (10), свои города-склады (7–9) и командный пункт (8). По дорожной сети своей земли снабжение расходится почти без потерь (на карте — синие линии), а с дороги стекает в поле: минус 2 за клетку, по лесу, болоту и горам больше, через реку без моста ещё дороже — дальше 3–4 клеток от дороги подвоза нет. Линию рвут чужая земля, взорванный мост и <b>зона контроля противника</b>, если в ней не стоит ваша часть; обойти разрыв полем нельзя — из поля снабжение на дорогу не возвращается. Воюйте вдоль дорог и режьте чужие. В дождь и снег грунтовки раскисают: в поле снабжение тает быстрее (до −3,2 за клетку), по дорогам — как прежде. От снабжения зависят восстановление боеприпасов и топлива, морали и пополнение: 7–10 — быстро и до 3 шагов, 4–6 — медленнее, 1–3 — запас не выше 2, 0 — котёл: запас тает, потом потери и сдача. Высаживать подкрепления можно только туда, куда снабжение доходит.</p>
     <p><b>Приказы штаба</b> (★): артподготовка, <b>контрудар</b> (атаки у ваших потерянных исходных точек ×1,3), форсированный марш, стоять насмерть, дымовая завеса, снабжение по воздуху, резерв ставки.</p>
+    <p><b>Подавленные шаги.</b> Бой и огонь не только убивают, но и прижимают: часть шагов подавлена (оранжевые на шкале фишки, ⚡) и не воюет до начала своего хода — цифра на фишке показывает действующие шаги. Огонь больше прижимает, чем убивает: подготовьте атаку артиллерией и бейте в тот же ход. Часть, у которой подавлены все шаги, не атакует, а в обороне отходит. В начале своего хода подавленные возвращаются: на снабжении 4+ — все, на 1–3 — половина, в котле — по одному.</p>
+    <p><b>Боеприпасы и топливо.</b> У части два запаса по 0–3. Боеприпасы — для боя: без них нет атаки и огня, оборона слабее. Топливо — только технике: на 2 — минус очко хода, на 1 — половина хода, на 0 — машина стоит (⛽ на фишке). Пехоте топливо не нужно: из котла она уходит пешком, а танки встают. Оба запаса пополняются по снабжению клетки, «Снабжение по воздуху» добавляет по 2.</p>
+    <p><b>Приданные специалисты.</b> К части можно придать одного специалиста за очки — в карточке части или справка во вкладке «Закупка»: штурмовые сапёры (атака по городу, окопу, укреплениям ×1,3), противотанковый взвод (против брони атака ×1,2, оборона ×1,25), разведдозор (обзор +1, ночью не слепнет), тяжёлая батарея (огонь артиллерии ×1,25), зенитный взвод (авиаудар по части срывается в 45% случаев). В бою придание — вместо действий в этот ход, на снабжении 3+ и без противника рядом. Специалист погибает вместе с частью.</p>
     <p><b>Опыт.</b> Части растут: «обстрелянные» ★ и «ветераны» ★★ бьют и держатся лучше.</p>
     <p><b>Перевес</b> — счёт операции, он же условие победы. В конце каждого хода к нему прибавляется разница
     весов точек: ваши города и узлы минус города противника (вес крупного города больше). Держите больше — перевес
@@ -575,7 +663,7 @@ function showHelp() {
     <b>обязательно ставят при расстановке</b>, и до этого нельзя нажать «Готов». Он хорошо держится (оборона 9),
     сектор даёт всегда, взамен потерянного можно поставить новый.</p>
     <p><b>КП — тыловой узел направления,</b> и в этом вся разница между ним и штабом. Он разом даёт четыре вещи:
-    <b>подвоз</b> — свой округ снабжения на ${FOB.supCap} части (наступление перестаёт выдыхаться, когда уходит от своих городов);
+    <b>подвоз</b> — источник снабжения ${SUPPLY.fob} из 10 прямо за передним краем (наступление перестаёт выдыхаться, когда уходит от своих городов);
     <b>ворота подкреплений</b> — купленные части высаживаются у него, а не только в городе;
     <b>склады</b> — пополнение в его секторе на треть дешевле;
     <b>связь</b> — +1★ за ход и приказы частям в его секторе на 1★ дешевле.
@@ -1054,6 +1142,7 @@ function bind() {
     if (!a) return;
     const u = selUnit(), k = a.dataset.a;
     if (k === 'site') { focusFob(); return }
+    if (k.startsWith('att:')) { if (u && myUnit(u)) act({ t: 'attach', id: u.id, k: k.slice(4) }); return }
     if (k === 'supply') { G.showSupply = !G.showSupply; renderUI(); return }
     if (k === 'cmd') { G.showCmd = !G.showCmd; renderUI(); return }
     if (k.startsWith('ord:')) { orderClick(k.slice(4)); return }

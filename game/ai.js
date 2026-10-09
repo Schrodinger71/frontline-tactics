@@ -115,8 +115,9 @@ module.exports = {
     const objective = this.botObjective(side);
 
     /* 1. пополнение и закупка */
-    for (const u of mine()) if (u.str <= 6 && u.supplied && !u.acted && !u.moved && this.budget[seat] > 30) this.act(seat, { t: 'replace', id: u.id });
+    for (const u of mine()) if (u.str <= 6 && (u.sv || 0) >= 3 && !u.acted && !u.moved && this.budget[seat] > 30) this.act(seat, { t: 'replace', id: u.id });
     this.botBuy(seat);
+    this.botSpecs(seat);
     this.botOrders(seat, 'early');
 
     /* 2. разведка, артиллерия, авиация */
@@ -169,7 +170,7 @@ module.exports = {
     const mine = this.units.filter(u => u.side === side && u.str > 0);
     const foes = this.units.filter(u => u.side === en && u.str > 0 && this.seen(side, u));
     if (phase === 'early') {
-      for (const u of mine.filter(u => !u.supplied && u.sp <= 1 && u.str >= 4).sort((a, b) => b.str - a.str))
+      for (const u of mine.filter(u => !u.supplied && (u.sp <= 1 || (W.usesFuel(UT[u.k]) && u.fu <= 1)) && u.str >= 4).sort((a, b) => b.str - a.str))
         if (cp() >= O.airdrop.cp + 1 && this.weather.fly) this.act(seat, { t: 'order', k: 'airdrop', id: u.id });
       const guns = mine.filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0 && u.sp > 0 && foes.some(e => this.H.hexDist(e.hex, u.hex) <= UT[u.k].bomb.rng));
       /* контрудар: противник в нашей исходной точке, рядом есть кому бить */
@@ -268,7 +269,10 @@ module.exports = {
     if (here && here.owner === side && T.cap && (here.city || (this.scen && this.scen.target === here.id)) && u.str > 3 &&
       (u.k === 'inf' || (this.scen && this.scen.target === here.id) || !this.units.some(v => v !== u && v.side === side && v.str > 0 && this.H.hexDist(v.hex, u.hex) <= 1))) return;
     const ctx = this.ctxFor(side, false), reach = Rules.reachable(ctx, u);
-    const supply = this.supplyHex && this.supplyHex[side];
+    /* снабжение на клетке после хода: своя земля — её значение, чужая рядом со
+       своей — чуть меньше соседнего (клетку мы займём и подвоз пойдёт за нами) */
+    const sv = this.sv[side], own = side === 'n' ? 1 : 2;
+    const supAt = h => this.terr[h] === own ? sv[h] : Math.max(0, ...this.H.neighbors(h).map(n => this.terr[n] === own ? sv[n] - 1.5 : 0));
     const known = this.units.filter(e => e.side !== side && e.str > 0 && this.seen(side, e));
     const danger = h => known.filter(e => this.H.hexDist(e.hex, h) === 1).length;
     const front = h => (this.map.hexes[h].x - this.frontXAt(this.map.hexes[h].y)) * dir;   /* >0 — за линией фронта у противника */
@@ -285,7 +289,7 @@ module.exports = {
     for (const [h, r] of reach) {
       if (r.through) continue;
       const hx = this.map.hexes[h], dg = danger(h);
-      let s = TERR[hx.t] * .8 + (supply && supply.has(h) ? 4 : -8) - r.c * .1;
+      let s = TERR[hx.t] * .8 + (supAt(h) >= 4 ? 4 : supAt(h) >= 1 ? 1 : -8) - r.c * .1;
       if (mode === 'rest') s += -this.H.hexDist(h, goal ? goal.hex : h) * 3 - dg * 6;
       else if (mode === 'attack') s += -this.H.hexDist(h, goal.hex) * 3 - dg * (u.str >= 7 && T.arm === 'hard' ? 1 : 4);
       else if (mode === 'arty') s += -Math.abs(front(h) + 2.5 * Hex.HW) / Hex.HW * 3 - dg * 10 + (known.some(e => this.H.hexDist(e.hex, h) <= T.bomb.rng) ? 4 : 0);
@@ -346,6 +350,19 @@ module.exports = {
     return false;
   },
 
+  /** приданные специалисты: артиллерии — тяжёлую батарею, пехоте и мотопехоте —
+      ПТ-взвод, если у противника видна броня, иначе штурмовых сапёров */
+  botSpecs(seat) {
+    const side = this.sideOf(seat) || seat;
+    const armor = this.units.some(e => e.side !== side && e.str > 0 && UT[e.k].arm === 'hard' && this.seen(side, e));
+    for (const u of this.units) {
+      if (this.budget[seat] < 140) return;
+      if (u.side !== side || u.seat !== seat || u.str < 6 || u.att || u.acted || u.moved) continue;
+      const T = UT[u.k];
+      const k = T.bomb ? 'hvy' : W.SPECS.atg.for(T) && armor ? 'atg' : W.SPECS.sap.for(T) ? 'sap' : null;
+      if (k) this.act(seat, { t: 'attach', id: u.id, k });
+    }
+  },
   botBuy(seat) {
     const side = this.sideOf(seat) || seat;
     const mix = { ...(MIX[this.role[side]] || MIX.both) };

@@ -94,30 +94,91 @@ function drawFog() {
   if (!FOG_EDGE) { cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1; regionEdges(n => G.vis.has(n), G.vis); cx.stroke(); cx.restore() }
 }
 
-/* ---------- снабжение ---------- */
-const DIST_COL = ['108,195,255', '111,209,141', '242,179,61', '200,160,255', '255,138,114', '120,220,220', '230,200,120', '170,190,255'];
-function drawSupplyOverlay() {
-  if (!G.showSupply || !G.supply) return;
-  cx.save();
-  cx.fillStyle = 'rgba(255,70,50,.16)'; cx.beginPath();
-  for (let id = 0; id < H.NH; id++) { if (G.supply.has(id)) continue; const c = w2s(H.center(id)); if (onScreen(c, 40)) addHex(id, 1) }
-  cx.fill();
-  if (G.dist) {
-    const by = new Map();
-    for (const [h, i] of G.dist) { if (!by.has(i)) by.set(i, []); by.get(i).push(h) }
-    for (const [i, list] of by) {
-      const col = DIST_COL[i % DIST_COL.length];
-      cx.beginPath(); for (const h of list) { const c = w2s(H.center(h)); if (onScreen(c, 40)) addHex(h, 1) } cx.fillStyle = `rgba(${col},.07)`; cx.fill();
-      regionEdges(n => G.dist.get(n) === i, list); cx.strokeStyle = `rgba(${col},.65)`; cx.lineWidth = 1.6; cx.stroke();
+/* ---------- снабжение по дорогам, как в Unity of Command ----------
+   Синие линии — дорожная сеть, по которой снабжение доходит без потерь
+   (бегущий пунктир показывает, что подвоз идёт), числа — сколько осталось
+   в клетке поля, значки — источники. */
+const SUP_RGB = { full: '111,209,141', ok: '201,211,107', low: '242,179,61', none: '255,91,71' };
+/** Путь линий снабжения в координатах карты: отрезки дорог (MAPGEO.roads),
+    у которых обе точки лежат в клетках на линии снабжения. Строится один раз
+    на снимок; на стыке с оборванным участком линия доходит до середины шага. */
+let NET_PATH = null, NET_KEY = '';
+function supplyNetPath() {
+  const key = G.mapId + '|' + (G.svStr || '');
+  if (key === NET_KEY) return NET_PATH;
+  NET_KEY = key; NET_PATH = null;
+  if (!G.svNet || typeof Path2D !== 'function') return null;
+  const geo = mapGeo(G.mapId), on = p => { const h = H.hexAt(p.x, p.y); return h >= 0 && G.svNet[h] === 1 };
+  const path = new Path2D();
+  for (const r of geo.roads) {
+    const pts = r.pts;
+    let open = false;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], inNet = on(p);
+      if (inNet && !open) {
+        /* начало участка: от середины шага с предыдущей точкой, чтобы не было зазора */
+        const q = i ? { x: (pts[i - 1].x + p.x) / 2, y: (pts[i - 1].y + p.y) / 2 } : p;
+        path.moveTo(q.x, q.y); path.lineTo(p.x, p.y); open = true;
+      } else if (inNet) path.lineTo(p.x, p.y);
+      else if (open) { path.lineTo((pts[i - 1].x + p.x) / 2, (pts[i - 1].y + p.y) / 2); open = false }
     }
-    (G.districts || []).forEach((d, i) => {
-      if (d.hex < 0) return;
-      const q = w2s(H.center(d.hex)), txt = `снабж. ${d.used}/${d.cap}`;
-      cx.font = '700 11px system-ui'; cx.textAlign = 'center';
-      const w = cx.measureText(txt).width + 10, y = q.y + Hex.R * G.view.s * .95;
-      cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, y, w, 16, 4); cx.fill();
-      cx.fillStyle = d.used > d.cap ? '#ff8a72' : `rgb(${DIST_COL[i % DIST_COL.length]})`; cx.fillText(txt, q.x, y + 12);
-    });
+  }
+  return (NET_PATH = path);
+}
+function drawSupplyOverlay() {
+  if (!G.showSupply || !G.sv || !G.terr) return;
+  const own = G.spec ? 1 : G.side === N ? 1 : 2, s = G.view.s;
+  cx.save();
+  /* поле: подкраска клеток по уровню */
+  const by = { full: [], ok: [], low: [], none: [] };
+  for (let h = 0; h < H.NH; h++) {
+    if (G.terr[h] !== own) continue;
+    const q = w2s(H.center(h));
+    if (onScreen(q, 40)) by[supTier(G.sv[h])].push(h);
+  }
+  for (const t in by) {
+    if (!by[t].length) continue;
+    cx.beginPath(); for (const h of by[t]) addHex(h, .96);
+    cx.fillStyle = `rgba(${SUP_RGB[t]},${t === 'none' ? .2 : t === 'low' ? .16 : .1})`; cx.fill();
+  }
+  /* сеть: по самим дорогам карты — те же сглаженные линии, что нарисованы
+     на местности; берём участки, чьи точки лежат в клетках на линии снабжения */
+  const NET = supplyNetPath();
+  if (NET) {
+    cx.save();
+    cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
+    cx.lineCap = 'round'; cx.lineJoin = 'round';
+    cx.strokeStyle = 'rgba(6,16,28,.7)'; cx.lineWidth = clamp(s * 1.1, 4, 11) / s; cx.stroke(NET);
+    cx.strokeStyle = 'rgba(90,170,255,.85)'; cx.lineWidth = clamp(s * .6, 2.4, 6.5) / s; cx.stroke(NET);
+    cx.strokeStyle = 'rgba(220,240,255,.9)'; cx.lineWidth = clamp(s * .18, 1, 2) / s;
+    cx.setLineDash([3 / s, 9 / s]); cx.lineDashOffset = -ANIM * 14 / s; cx.stroke(NET); cx.setLineDash([]);
+    cx.restore();
+  }
+  /* числа в поле — когда клетка достаточно крупная */
+  if (s >= 3.2) {
+    cx.font = `700 ${Math.round(clamp(s * 1.5, 9, 15))}px system-ui`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    for (const t in by) for (const h of by[t]) {
+      if (G.svNet && G.svNet[h]) continue;
+      const q = w2s(H.center(h)), v = G.sv[h];
+      if (!v) continue;
+      cx.fillStyle = 'rgba(0,0,0,.55)'; cx.fillText(v, q.x + 1, q.y + 1);
+      cx.fillStyle = `rgb(${SUP_RGB[t]})`; cx.fillText(v, q.x, q.y);
+    }
+    cx.textBaseline = 'alphabetic';
+  }
+  /* источники: значок со значением (тыловые станции — один на участок края) */
+  const shown = [];
+  for (const sr of G.svSrc || []) {
+    if (sr.k === 'rear' && shown.some(o => o.k === 'rear' && H.hexDist(o.hex, sr.hex) < 6)) continue;
+    shown.push(sr);
+    const q = w2s(H.center(sr.hex));
+    if (!onScreen(q, 60)) continue;
+    const txt = (sr.k === 'rear' ? 'станция' : sr.k === 'fob' ? 'КП' : 'склад') + ' · ' + sr.v;
+    cx.font = '700 11px system-ui'; cx.textAlign = 'center';
+    const w = cx.measureText(txt).width + 14, y = q.y + Hex.R * s * .9 + 3;   /* под клеткой: сверху — подпись города */
+    cx.fillStyle = 'rgba(8,22,40,.92)'; rr(cx, q.x - w / 2, y, w, 17, 5); cx.fill();
+    cx.strokeStyle = 'rgba(90,170,255,.9)'; cx.lineWidth = 1.2; cx.stroke();
+    cx.fillStyle = '#bfe0ff'; cx.fillText(txt, q.x, y + 12.5);
   }
   cx.restore();
 }
@@ -126,26 +187,27 @@ function drawSupplyOverlay() {
 /** у каждого командира свой штаб и свой сектор: видно, кто за какое направление отвечает */
 function drawCmdSectors() {
   if (!G.showCmd || G.spec) return;
-  const hqs = (G.units || []).filter(u => u.k === 'hq' && u.side === G.side && !u.ghost);
+  /* сектор дают и подвижный штаб, и командный пункт — как в правилах сервера */
+  const hqs = (G.units || []).filter(u => UT[u.k] && UT[u.k].cmd && u.side === G.side && !u.ghost);
   if (!hqs.length) return;
   cx.save();
   for (const hq of hqs) {
     const mine = !hq.seat || hq.seat === G.mySeat;
     const col = mine ? '242,179,61' : '111,209,141';
-    const list = H.within(hq.hex, UT.hq.cmd).filter(h => h >= 0);
+    const list = H.within(hq.hex, UT[hq.k].cmd).filter(h => h >= 0), march = hq.moved && !UT[hq.k].fob;
     const set = new Set(list);
     cx.beginPath();
     for (const h of list) { const c = w2s(H.center(h)); if (onScreen(c, 40)) addHex(h, 1) }
-    cx.fillStyle = `rgba(${col},${hq.moved ? .04 : .09})`; cx.fill();
+    cx.fillStyle = `rgba(${col},${march ? .04 : .09})`; cx.fill();
     regionEdges(n => set.has(n), list);
-    cx.strokeStyle = `rgba(${col},${hq.moved ? .35 : .8})`; cx.lineWidth = 1.8;
-    if (hq.moved) cx.setLineDash([5, 4]);
+    cx.strokeStyle = `rgba(${col},${march ? .35 : .8})`; cx.lineWidth = 1.8;
+    if (march) cx.setLineDash([5, 4]);
     cx.stroke(); cx.setLineDash([]);
     /* подпись: чей сектор и держит ли он управление */
     const q = w2s(H.center(hq.hex));
     if (onScreen(q, 60)) {
-      const who = mine ? 'ваша ставка' : (typeof seatName === 'function' && seatName(hq.seat)) || 'союзник';
-      const txt = hq.moved ? who + ' · на марше' : who;
+      const who = (UT[hq.k].fob ? 'пункт · ' : '') + (mine ? 'ваша ставка' : (typeof seatName === 'function' && seatName(hq.seat)) || 'союзник');
+      const txt = march ? who + ' · на марше' : who;
       cx.font = '700 11px system-ui'; cx.textAlign = 'center';
       const w = cx.measureText(txt).width + 10, y = q.y - Hex.R * G.view.s * 1.15;
       cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, y - 14, w, 16, 4); cx.fill();
@@ -155,21 +217,43 @@ function drawCmdSectors() {
   cx.restore();
 }
 
-/* ---------- линия фронта: сглажена, стороны чуть подкрашены ---------- */
-function drawFront() {
-  if (!G.frontY || !G.frontY.length) return;
-  const fy = chaikin(G.frontY, 2).map(w2s), a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
-  cx.save();
-  const own = G.spec ? N : G.side;
-  for (const [side, edgeX] of [[N, a.x], [S, b.x]]) {
-    cx.beginPath(); cx.moveTo(edgeX, fy[0].y); fy.forEach(p => cx.lineTo(p.x, p.y)); cx.lineTo(edgeX, fy[fy.length - 1].y); cx.closePath();
-    cx.fillStyle = side === own ? 'rgba(108,195,255,.035)' : 'rgba(255,91,71,.04)'; cx.fill();
+/* ---------- территория и линия фронта (как в Order of Battle) ----------
+   Земля каждой стороны чуть подкрашена, линия фронта идёт по рёбрам клеток
+   между территориями. Пути строятся в координатах карты один раз на снимок. */
+let FRONT = null, FRONT_KEY = '';
+function buildFront() {
+  if (FRONT_KEY === G.terrStr + '|' + G.mapId) return FRONT;
+  FRONT_KEY = G.terrStr + '|' + G.mapId;
+  if (!G.terr || typeof Path2D !== 'function') return (FRONT = null);
+  const fill = { 1: new Path2D(), 2: new Path2D() }, line = new Path2D(), segs = [];
+  for (let h = 0; h < H.NH; h++) {
+    const t = G.terr[h];
+    if (!t) continue;
+    const cs = H.corners(h, 1.02);
+    fill[t].moveTo(cs[0].x, cs[0].y); for (let i = 1; i < 6; i++) fill[t].lineTo(cs[i].x, cs[i].y); fill[t].closePath();
+    const ce = H.corners(h);
+    for (let d = 0; d < 6; d++) {
+      const n = H.nb(h, d);
+      if (n < 0 || n < h || !G.terr[n] || G.terr[n] === t) continue;
+      const [i, j] = EDGE_V[d];
+      line.moveTo(ce[i].x, ce[i].y); line.lineTo(ce[j].x, ce[j].y);
+      segs.push(ce[i].x, ce[i].y, ce[j].x, ce[j].y);
+    }
   }
-  cx.beginPath(); fy.forEach((p, i) => i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y));
-  cx.lineJoin = 'round';
-  cx.strokeStyle = 'rgba(242,179,61,.14)'; cx.lineWidth = 9; cx.stroke();
-  cx.strokeStyle = 'rgba(20,14,4,.6)'; cx.lineWidth = 3.4; cx.stroke();
-  cx.strokeStyle = 'rgba(242,179,61,.85)'; cx.lineWidth = 1.7; cx.setLineDash([10, 6]); cx.lineDashOffset = -ANIM * 6; cx.stroke(); cx.setLineDash([]);
+  return (FRONT = { fill, line, segs });
+}
+function drawFront() {
+  const F = buildFront();
+  if (!F) return;
+  const own = G.spec ? 1 : G.side === N ? 1 : 2, s = G.view.s;
+  cx.save();
+  cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
+  cx.fillStyle = 'rgba(108,195,255,.05)'; cx.fill(F.fill[own]);
+  cx.fillStyle = 'rgba(255,91,71,.07)'; cx.fill(F.fill[3 - own]);
+  cx.lineJoin = 'round'; cx.lineCap = 'round';
+  cx.strokeStyle = 'rgba(242,179,61,.16)'; cx.lineWidth = 9 / s; cx.stroke(F.line);
+  cx.strokeStyle = 'rgba(20,14,4,.65)'; cx.lineWidth = 3.6 / s; cx.stroke(F.line);
+  cx.strokeStyle = 'rgba(242,179,61,.9)'; cx.lineWidth = 1.8 / s; cx.stroke(F.line);
   cx.restore();
 }
 
@@ -569,7 +653,14 @@ function drawMini() {
   cx.strokeStyle = 'rgba(120,150,170,.35)'; cx.lineWidth = 1; rr(cx, m.x - 4.5, m.y - 4.5, m.w + 9, m.h + 9, 8); cx.stroke();
   cx.globalAlpha = .92; cx.drawImage(MINI, m.x, m.y, m.w, m.h); cx.globalAlpha = 1;
   if (G.vis && !G.spec && G.phase === 'battle') { cx.fillStyle = 'rgba(4,8,12,.42)'; cx.beginPath(); for (let h = 0; h < H.NH; h++) if (!G.vis.has(h)) { const c = H.center(h); cx.rect(m.x + (c.x - Hex.HW / 2) * k, m.y + (c.y - Hex.R) * k, Hex.HW * k + .6, Hex.VS * k + .8) } cx.fill() }
-  if (G.frontY) { cx.strokeStyle = '#f2b33d'; cx.lineWidth = 1.4; cx.beginPath(); G.frontY.forEach((p, i) => i ? cx.lineTo(m.x + p.x * k, m.y + p.y * k) : cx.moveTo(m.x + p.x * k, m.y + p.y * k)); cx.stroke() }
+  const F = buildFront();
+  if (F) {
+    const own = G.spec ? 1 : G.side === N ? 1 : 2;
+    cx.save(); cx.translate(m.x, m.y); cx.scale(k, k);
+    cx.fillStyle = 'rgba(255,91,71,.16)'; cx.fill(F.fill[3 - own]);
+    cx.strokeStyle = '#f2b33d'; cx.lineWidth = 1.6 / k; cx.stroke(F.line);
+    cx.restore();
+  }
   for (const p of G.pts) { const c = H.center(p.hex), z = p.city ? 5 : 3.5; cx.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; cx.strokeStyle = '#000'; cx.lineWidth = 1; cx.fillRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z); cx.strokeRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z) }
   for (const u of G.units) { const c = H.center(u.hex); cx.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; cx.fillRect(m.x + c.x * k - 1.5, m.y + c.y * k - 1.5, 3, 3) }
   const a = s2w({ x: 0, y: 0 }), b = s2w({ x: CW, y: CH });

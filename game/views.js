@@ -12,14 +12,14 @@ const { N, S, UT, GAME_VERSION, isNight, turnClock, dayOfTurn } = W;
 
 module.exports = {
   unitView(u, full) {
-    const o = { id: u.id, k: u.k, side: u.side, hex: u.hex, str: u.str, ent: u.ent, sup: u.sup ? 1 : 0, sp: u.sp, hold: u.hold ? 1 : 0, mil: u.militia ? 1 : 0, hb: u.hb || 0 };
+    const o = { id: u.id, k: u.k, side: u.side, hex: u.hex, str: u.str, ent: u.ent, sup: u.su > 0 ? 1 : 0, su: u.su || 0, att: u.att || null, sp: u.sp, hold: u.hold ? 1 : 0, mil: u.militia ? 1 : 0, hb: u.hb || 0 };
     if (!full) return Object.assign(o, { enemy: 1 });
     return Object.assign(o, {
-      org: Math.round(u.org), xp: +u.xp.toFixed(2), mp: +u.mp.toFixed(1), acted: u.acted ? 1 : 0, moved: u.moved ? 1 : 0,
+      org: Math.round(u.org), xp: +u.xp.toFixed(2), fu: u.fu, mp: +u.mp.toFixed(1), acted: u.acted ? 1 : 0, moved: u.moved ? 1 : 0,
       supplied: u.supplied ? 1 : 0, cut: u.cut, reload: u.reload, mines: u.mines, cs: u.cs, trait: u.trait, pre: u.pre ? 1 : 0,
       /* чьё это: своё или союзного командира. Только для своей стороны — противнику состав не раскрываем */
       seat: u.seat,
-      amb: u.amb ? 1 : 0, support: u.support ? 1 : 0, over: u.over ? 1 : 0, march: u.march ? 1 : 0, exploit: u.exploit ? 1 : 0,
+      amb: u.amb ? 1 : 0, support: u.support ? 1 : 0, sv: u.sv || 0, march: u.march ? 1 : 0, exploit: u.exploit ? 1 : 0,
       /* командный пункт: развёрнут ли. Клиент по этому полю ведёт командира
          через обязательный шаг расстановки */
       sited: u.sited === false ? 0 : 1
@@ -62,9 +62,12 @@ module.exports = {
       pts: this.pts.map(p => ({ id: p.id, n: p.n, city: p.city, hex: p.hex, w: p.w, owner: p.owner, home: p.home })),
       units, ghosts, mines, br: [...this.br.entries()],
       vis: spec ? null : [...this.vis[side]],
-      supply: spec ? null : [...((this.supplyHex && this.supplyHex[side]) || new Map()).keys()],
-      dist: spec ? null : [].concat(...[...this.districtOf[side]].map(([h, i]) => [h, i])),
-      districts: spec ? null : this.districts[side].map(d => ({ n: d.n, hex: d.hex, cap: d.cap, used: d.used })),
+      /* территория (видна обеим сторонам, как в Order of Battle) и своё поле снабжения:
+         по символу на клетку — компактно, ~2 тыс. знаков на снимок */
+      terr: String.fromCharCode(...this.terr.map(v => 48 + v)),
+      /* снабжение: '0'–'9','a' — поле, 'A'–'K' — клетка на линии снабжения (дорога) */
+      sv: spec ? null : String.fromCharCode(...this.sv[side].map((v, h) => this.svNet[side][h] ? 65 + v : v < 10 ? 48 + v : 97)),
+      svSrc: spec ? null : (this.svSrc[side] || []).map(x => ({ hex: x.hex, v: x.v, n: x.n, k: x.k })),
       cp: spec ? this.cp : this.cp[seat], barrage: spec ? this.barrage : this.barrage[side], counter: spec ? this.counter : this.counter[side], smoke: [...this.smoke.keys()],
       frontY: this.frontY,
       scen: this.scen ? { id: this.scenId, n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,

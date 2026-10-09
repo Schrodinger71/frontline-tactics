@@ -50,6 +50,7 @@ class Room {
     this.vsBot = this.watch || [...this.slot.values()].includes('bot');
     this.clients = new Set();
     this.emptySince = Date.now();
+    this.created = Date.now();
     this.pace = 1;            /* наблюдение: 1 — обычно, 2/4 — быстрее */
     this.timer = null;
     this.engine.tryStart();
@@ -66,6 +67,25 @@ class Room {
       name: this.names.get(st.id) || null,
       ready: !!g.ready[st.id], done: !!g.done[st.id]
     }));
+  }
+  /** Сетевая партия — создана с открытыми местами для других игроков.
+      Одиночные партии против бота в общий список не попадают (их видно только
+      по коду), законченные и брошенные — тоже: войти туда не к кому. */
+  listed() {
+    if (!this.engine || this.watch || this.engine.over) return false;   /* закрытая ещё может ждать уборки */
+    if (![...this.slot.values()].includes('open')) return false;
+    return [...this.clients].some(c => c.seat);
+  }
+  /** карточка партии для списка: без ников зрителей и без внутреннего состояния */
+  info() {
+    const g = this.engine, seats = this.seats();
+    return {
+      id: this.id, mode: this.mode, map: g.mapId, phase: g.phase, turn: g.turn, limit: g.limit,
+      seats: seats.map(st => ({ side: st.side, who: st.who, name: st.who === 'human' ? st.name : null })),
+      free: seats.filter(st => st.who === 'open').length,
+      viewers: [...this.clients].filter(c => !c.seat).length,
+      age: Math.round((Date.now() - this.created) / 1000)
+    };
   }
   /** как звать того, кто на месте: ник, иначе «Командир N» */
   who(seat) {

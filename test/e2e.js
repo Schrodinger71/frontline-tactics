@@ -144,6 +144,34 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
   assert.strictEqual(r22.clients.size, 0, 'close() отпускает клиентов');
   console.log('команды и уборка: ok');
 
+  /* сетевая игра: список открытых партий */
+  {
+    const host = client(port), solo = client(port), guest = client(port), look = client(port);
+    await Promise.all([host.open, solo.open, guest.open, look.open]);
+    host.send({ t: 'create', mode: 'both', side: 'n', map: 'steppe', seats: { n: ['me'], s: ['open'] }, name: 'Хозяин' });
+    const hj = await host.wait(m => m.t === 'joined');
+    solo.send({ t: 'create', mode: 'both', side: 'n', vsBot: true, name: 'Одиночка' });
+    const sj = await solo.wait(m => m.t === 'joined');
+    const listed = async () => { look.msgs = look.msgs.filter(m => m.t !== 'rooms'); look.send({ t: 'list' }); return (await look.wait(m => m.t === 'rooms')).list };
+    let list = await listed();
+    const mine = list.find(r => r.id === hj.room);
+    assert(mine, 'сетевая партия в списке');
+    assert.strictEqual(mine.free, 1, 'одно свободное место');
+    assert.strictEqual(mine.map, 'steppe');
+    assert(mine.seats.some(x => x.side === 'n' && x.who === 'human' && x.name === 'Хозяин'), 'ник хозяина виден');
+    assert(!list.some(r => r.id === sj.room), 'одиночная партия против бота в список не попадает');
+    guest.send({ t: 'join', room: hj.room, name: 'Гость' });
+    await guest.wait(m => m.t === 'joined');
+    list = await listed();
+    assert.strictEqual(list.find(r => r.id === hj.room).free, 0, 'после входа мест нет');
+    host.ws.close(); guest.ws.close();
+    await sleep(200);
+    list = await listed();
+    assert(!list.some(r => r.id === hj.room), 'брошенная партия из списка уходит');
+    for (const c of [solo, look]) c.ws.close();
+    console.log('сетевая игра: ok');
+  }
+
   for (const c of [a, p1, p2, sp, w]) c.ws.close();
   server.close();
   for (const r of rooms.values()) r.close();

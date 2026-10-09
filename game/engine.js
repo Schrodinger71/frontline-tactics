@@ -128,7 +128,9 @@ class Game {
     /* штаб каждому командиру, разнесены по фронту: так сторона с несколькими
        командирами сразу делится на направления */
     for (const side of [N, S]) {
-      const mine = this.seatsOf(side), x = side === N ? 45 : 255;
+      /* в глубине своей стороны: от своего края, а не от числа под карту в 300 км —
+         на широких картах штаб Союза иначе вставал посреди поля, вне зоны расстановки */
+      const mine = this.seatsOf(side), x = side === N ? 45 : this.WW - 45;
       mine.forEach((st, i) => {
         const y = Math.round(this.WH * (i + 1) / (mine.length + 1));
         this.spawn('hq', side, this.freeHex(x, y, 'hq'), { seat: st.id });

@@ -109,6 +109,12 @@ function createServer() {
         leave();
         client.name = cleanName(m.name);
         room.join(client, m.spec ? 'spec' : m.side);
+      } else if (m.t === 'list') {
+        /* список сетевых партий: сначала со свободными местами, внутри — свежие выше */
+        if (tooOften(client, '_list', 6, 3000)) return;
+        const list = [...rooms.values()].filter(r => r.listed()).map(r => r.info())
+          .sort((a, b) => (b.free > 0) - (a.free > 0) || a.age - b.age).slice(0, 60);
+        client.send({ t: 'rooms', list });
       } else if (m.t === 'leave') leave();
       else if (m.t === 'act') {
         if (!client.room) return client.send({ t: 'res', id: m.id, res: { ok: false, error: 'нет партии' } });

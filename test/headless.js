@@ -198,6 +198,22 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(worse > field * .6, `в снег поле снабжается хуже: ${worse} из ${field}`);
   console.log('механики 3.3: ok');
 }
+/* расстановка: штаб и КП каждого командира — в своей зоне на всех картах;
+   «Готов» — у места: второй командир стороны готовится после первого */
+{
+  for (const map of require('../shared/maps').MAP_ORDER) {
+    const g = new Game('both', N, 3, map, { teams: { n: [{}, {}], s: [{}, {}] } });
+    for (const u of g.units) if (u.k === 'hq' || u.k === 'fob') assert(g.inDeploy(u.side, u.hex), `${map}: ${u.k} ${u.seat} вне своей зоны расстановки`);
+  }
+  const g = new Game('both', N, 3, 'corridor', { teams: { n: [{}, {}], s: [{ bot: true }] } });
+  g.bots = { s: true };
+  const site = seat => { const f = g.units.find(u => u.k === 'fob' && u.seat === seat); return g.act(seat, { t: 'place', id: f.id, hex: f.hex }) };
+  for (const st of g.seatsOf(N)) assert(site(st.id).ok, 'КП на своём месте подтверждается: ' + st.id);
+  assert(g.act('n', { t: 'ready' }).ok && g.phase === 'deploy', 'первый командир готов, ждём второго');
+  assert(g.act('n2', { t: 'ready' }).ok, 'второй командир может нажать «Готов» после первого');
+  assert.strictEqual(g.phase, 'battle', 'оба готовы — бой');
+  console.log('расстановка по местам: ok');
+}
 /* механики 2.0: контрбатарея, ремонт моста, рельеф, взаимодействие, контрудар, жребий первого хода */
 {
   const Hex = require('../shared/hex'), Rules = require('../shared/rules');

@@ -81,6 +81,17 @@ function act(a) { netSend({ t: 'act', id: ++seq, a }) }
 
 function onMsg(m) {
   if (m.t === 'joined') return onJoined(m);
+  if (m.t === 'rooms') {
+    M.rooms = Array.isArray(m.list) ? m.list : [];
+    /* перерисовываем, только если список изменился: иначе кнопки под курсором мигали бы раз в 3 секунды */
+    const el = $('#netList'), html = netListHTML();
+    if (el && M.view === 'net' && el.dataset.v !== html) { el.innerHTML = html; el.dataset.v = html; drawPreviews() }
+    const st = $('#netStat'); if (st) st.textContent = netStatText();
+    /* на главном — счётчик открытых партий у кнопки «Сетевая игра» */
+    const nc = $('#netCount');
+    if (nc) { const open = M.rooms.filter(r => r.free > 0).length; nc.hidden = !open; nc.innerHTML = `<i></i>${open} ${open === 1 ? 'открыта' : 'открыто'}` }
+    return;
+  }
   if (m.t === 'snap') {
     /* вкладка скрыта — анимации не идут: показываем итог сразу */
     if (document.hidden || G.first) { skipAnims(); applySnapshot(m.v) }
@@ -349,11 +360,14 @@ function renderTop() {
   const btn = $('#btnEnd');
   btn.hidden = G.spec || !!G.over;
   if (G.phase === 'deploy') {
-    const site = needSite();
-    btn.textContent = G.ready && G.ready[G.side] ? 'Ждём соперника…' : site ? 'Сначала — КП' : 'Готов к бою';
-    btn.classList.toggle('warn', !!site);
+    /* готовность — у места, а не у стороны: у стороны может быть до трёх командиров,
+       и «Готов» первого не должен запирать кнопку остальным */
+    const site = needSite(), me = G.mySeat || G.side, done = !!(G.ready && G.ready[me]);
+    const mates = (G.lobby || []).filter(x => x.side === G.side && x.id !== me && x.who !== 'bot');
+    btn.textContent = done ? (mates.some(x => !x.ready) ? 'Ждём союзников…' : 'Ждём соперника…') : site ? 'Сначала — КП' : 'Готов к бою';
+    btn.classList.toggle('warn', !!site && !done);
     btn.title = site ? 'Разверните командный пункт: кликните по клетке в своей зоне расстановки' : '';
-    btn.disabled = !!(G.ready && G.ready[G.side]);
+    btn.disabled = done;
   }
   else { btn.classList.remove('warn'); btn.title = ''; const left = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted)).length; btn.textContent = G.isMyTurn ? `Конец хода${left ? ' (' + left + ')' : ''}` : 'Ход противника'; btn.disabled = !G.isMyTurn }
   const air = !G.spec && G.air && G.phase === 'battle';
@@ -833,37 +847,64 @@ function mPick(key, opts, dis) {
   return `<div class="mrow">${opts.map(([v, n]) => `<button class="btn ch${M[key] === v ? ' on' : ''}"
     data-pick="${key}" data-val="${v}"${dis ? ' disabled' : ''}>${esc(n)}</button>`).join('')}</div>`;
 }
-const joinHTML = () => `<div class="mjoin"><span>Код партии:</span>
-  <input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false">
-  <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>
-  <div class="mjoin sub"><span>В команду:</span>
-    ${mPick('joinSide', [['any', 'Любую'], [N, SIDE_NAME[N]], [S, SIDE_NAME[S]]])}</div>`;
 const backHTML = t => `<div class="mhead"><button class="btn" data-nav="root">‹ Назад</button><h1>${esc(t)}</h1></div>`;
+/* иконки меню: тонкая линия, цвет — от текста кнопки */
+const MI = d => `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const MICON = {
+  play: MI('<path d="M12 2.6l8.1 4.7v9.4L12 21.4l-8.1-4.7V7.3z"/><path d="M10 16.2V7.8l5.2 2.1-5.2 2.1"/>'),
+  net: MI('<circle cx="12" cy="12" r="1.9"/><path d="M8.6 15.4a4.8 4.8 0 010-6.8M15.4 8.6a4.8 4.8 0 010 6.8M5.7 18.3a8.9 8.9 0 010-12.6M18.3 5.7a8.9 8.9 0 010 12.6"/>'),
+  camp: MI('<path d="M3 6.2l6-2.2 6 2.2 6-2.2v13.6l-6 2.2-6-2.2-6 2.2z"/><path d="M9 4v13.6M15 6.2v13.6"/>'),
+  set: MI('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
+  news: MI('<path d="M5 4.5h10.5v15H6.2A1.2 1.2 0 015 18.3z"/><path d="M15.5 8.5H19v10.3a1.2 1.2 0 01-1.2 1.2h-2.3M8 8.5h4.5M8 12h4.5M8 15.5h2.5"/>'),
+  refresh: MI('<path d="M19.5 12a7.5 7.5 0 11-2.2-5.3"/><path d="M19.6 4.6v4.1h-4.1"/>'),
+  go: MI('<path d="M9.5 6l6 6-6 6"/>')
+};
+/** сегментный переключатель: та же логика data-pick, что у mPick, но компактный */
+function mSeg(key, opts) {
+  return `<div class="seg">${opts.map(([v, n]) => `<button class="${M[key] === v ? 'on' : ''}" data-pick="${key}" data-val="${v}">${esc(n)}</button>`).join('')}</div>`;
+}
+/** вход по коду — одна строка: поле, «Войти», «Смотреть» */
+const codeHTML = () => `<div class="codebox"><input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" aria-label="Код партии">
+  <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>`;
 
 function menuHTML() {
   if (M.view === 'play') return playHTML();
   if (M.view === 'camp') return campHTML();
   if (M.view === 'set') return setHTML();
   if (M.view === 'news') return newsHTML();
+  if (M.view === 'net') return netHTML();
   return rootHTML();
 }
 
 function rootHTML() {
   const strip = ['tnk', 'mot', 'inf', 'art', 'mlrs', 'eng', 'hq'].map(k => iconHTML(unitIcon(k, M.side || N), 'ic big')).join('');
-  return `<div class="mbox root"><h1>FRONTLINE TACTICS</h1>
-    <div class="msub">Пошаговая штабная игра о сухопутном фронте</div>
-    <div class="mstrip">${strip}</div>
-    <div class="mname"><label for="nick">Ваш ник</label>
-      <input id="nick" maxlength="${NAME_MAX}" placeholder="Командир" autocomplete="off" spellcheck="false" value="${esc(myName)}">
-      <i>латиница или кириллица, до ${NAME_MAX} знаков</i></div>
-    <div class="mmain">
-      <button class="btn pri big" data-nav="play">Играть</button>
-      <button class="btn big" data-nav="camp">Кампания</button>
-      <button class="btn big" data-nav="set">Настройки</button>
-      <button class="btn big" data-nav="news">Что нового${News.unseen() ? '<i class="dot" title="есть новое"></i>' : ''}</button>
+  let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
+  const camp = Object.keys(SCEN_TXT).filter(k => done[k]).length, open = (M.rooms || []).filter(r => r.free > 0).length;
+  const tile = (nav, ic, h, d, cls, extra) => `<button class="mtile ${cls || ''}" data-nav="${nav}"><span class="mt-ic">${MICON[ic]}</span>
+    <span class="mt-tx"><b>${h}</b>${d ? `<span>${d}</span>` : ''}</span>${extra || ''}<span class="mt-go">${MICON.go}</span></button>`;
+  return `<div class="mbox root"><header class="brand">
+      <div class="brandline"><i></i><h1>FRONTLINE <b>TACTICS</b></h1><i></i></div>
+      <div class="msub">Пошаговая штабная игра о сухопутном фронте</div>
+      <div class="mstrip">${strip}</div></header>
+    <div class="rgrid">
+      <nav class="rmain">
+        ${tile('play', 'play', 'Играть', 'Свободная операция: карта, режим и состав команд', 'hero')}
+        ${tile('net', 'net', 'Сетевая игра', 'Партии, которые ждут игроков', '', `<em class="live" id="netCount"${open ? '' : ' hidden'}><i></i>${open} ${open === 1 ? 'открыта' : 'открыто'}</em>`)}
+        ${tile('camp', 'camp', 'Кампания', `Красногорская операция · пройдено ${camp} из ${Object.keys(SCEN_TXT).length}`)}
+        <div class="mtiles2">
+          ${tile('set', 'set', 'Настройки', '', 'sm')}
+          ${tile('news', 'news', 'Что нового', '', 'sm', News.unseen() ? '<i class="dot" title="есть новое"></i>' : '')}
+        </div>
+      </nav>
+      <aside class="rside">
+        <div class="mcardx"><label class="mlab" for="nick">Ваш ник</label>
+          <input id="nick" class="field" maxlength="${NAME_MAX}" placeholder="Командир" autocomplete="off" spellcheck="false" value="${esc(myName)}">
+          <i class="mhint">латиница или кириллица, до ${NAME_MAX} знаков</i></div>
+        <div class="mcardx"><div class="mlab">Вход по коду</div>${codeHTML()}
+          <div class="mlab">В команду</div>${mSeg('joinSide', [['any', 'Любую'], [N, SIDE_NAME[N]], [S, SIDE_NAME[S]]])}</div>
+      </aside>
     </div>
-    ${joinHTML()}
-    <div class="mfoot">Версия ${GAME_VERSION} · колесо — масштаб, перетаскивание — карта, <kbd>?</kbd> — справка.</div></div>`;
+    <div class="mfoot">Версия ${GAME_VERSION} · колесо — масштаб, перетаскивание — карта, <kbd>?</kbd> — справка</div></div>`;
 }
 
 function playHTML() {
@@ -936,6 +977,77 @@ function setHTML() {
     <div class="mnote">Настройки сохраняются в этом браузере и действуют сразу.</div></div>`;
 }
 
+/* ---------- сетевая игра: список открытых партий ----------
+   Сервер отдаёт партии, созданные с открытыми местами, где ещё есть игрок.
+   Список обновляется сам раз в 3 секунды, пока экран открыт. */
+const PHASE_TXT = { deploy: 'расстановка', battle: 'бой' };
+function netHTML() {
+  return `<div class="mbox wide">${backHTML('Сетевая игра')}
+    <div class="ngrid">
+      <section class="nmain">
+        <div class="ntool">
+          <div class="nlive"><i class="pulse"></i><span id="netStat">${netStatText()}</span></div>
+          <div class="ntool-r"><span class="mlab inl">В команду</span>${mSeg('joinSide', [['any', 'Любую'], [N, SIDE_NAME[N]], [S, SIDE_NAME[S]]])}
+            <button class="btn icon" data-a="netRefresh" title="Обновить список">${MICON.refresh}</button></div>
+        </div>
+        <div id="netList">${netListHTML()}</div>
+      </section>
+      <aside class="nside">
+        <div class="mcardx"><h2>Своя партия</h2>
+          <p class="mhint">Во «Играть» отметьте места для других как «Игрок» — партия появится в этом списке.</p>
+          <button class="btn pri block" data-nav="play">Создать партию</button></div>
+        <div class="mcardx"><h2>Вход по коду</h2>
+          <p class="mhint">Код из четырёх букв — у хозяина партии в шапке игры.</p>${codeHTML()}</div>
+        <div class="mcardx tips"><h2>Как это работает</h2><ul>
+          <li>В списке — партии с местами для игроков, пока в них кто-то есть.</li>
+          <li>«Войти» сажает в выбранную команду, если там занято — в свободную.</li>
+          <li>«Смотреть» — зрителем, без тумана войны своей стороны.</li>
+          <li>Одиночные партии против бота сюда не попадают.</li></ul></div>
+      </aside>
+    </div></div>`;
+}
+function netStatText() {
+  if (!M.rooms) return 'ищем партии…';
+  const open = M.rooms.filter(r => r.free > 0).length;
+  return M.rooms.length ? `${M.rooms.length} ${plural(M.rooms.length, 'партия', 'партии', 'партий')} · со свободными местами — ${open}` : 'открытых партий нет';
+}
+function plural(n, one, few, many) { const a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many }
+function netListHTML() {
+  if (!M.rooms) return `<div class="nempty"><div class="radar"><i></i></div><b>Ищем партии…</b></div>`;
+  if (!M.rooms.length) return `<div class="nempty"><div class="radar"><i></i></div><b>Открытых партий нет</b>
+    <span>Создайте свою — другие увидят её здесь, а друзьям можно прислать код.</span>
+    <button class="btn pri" data-nav="play">Создать партию</button></div>`;
+  const ago = sec => sec < 60 ? 'только что' : sec < 3600 ? Math.round(sec / 60) + ' мин назад' : Math.round(sec / 3600) + ' ч назад';
+  const seat = x => x.who === 'bot' ? '<span class="seat bot">бот</span>'
+    : x.who === 'open' ? '<span class="seat open">свободно</span>'
+    : `<span class="seat hum"><i>${esc((x.name || '?').slice(0, 1).toUpperCase())}</i>${esc(x.name || 'игрок')}</span>`;
+  const team = (r, sd) => `<div class="rteam ${sd}"><span class="th">${SIDE_NAME[sd]}</span>${r.seats.filter(x => x.side === sd).map(seat).join('')}</div>`;
+  return `<div class="rooms">${M.rooms.map(r => {
+    const mode = SCEN_TXT[r.mode] ? SCEN_TXT[r.mode].n : MODE_LABEL[r.mode] || r.mode, map = MAPS[r.map] ? MAPS[r.map].n : r.map;
+    const stage = r.phase === 'battle'
+      ? `<span class="stage bt">ход ${r.turn + 1} из ${r.limit}<i style="width:${Math.round(100 * Math.min(1, (r.turn + 1) / Math.max(1, r.limit)))}%"></i></span>`
+      : `<span class="stage dp">${esc(PHASE_TXT[r.phase] || r.phase)}</span>`;
+    return `<article class="room${r.free ? '' : ' full'}">
+      <canvas data-prev="${esc(r.map)}" width="144" height="144"></canvas>
+      <div class="rbody">
+        <div class="rtop"><b class="code">${esc(r.id)}</b><b class="rmode">${esc(mode)}</b>${stage}</div>
+        <div class="rmeta">${esc(map)} · создана ${ago(r.age)}${r.viewers ? ` · зрителей: ${r.viewers}` : ''}</div>
+        <div class="rteams">${team(r, N)}<span class="rvs">против</span>${team(r, S)}</div>
+      </div>
+      <div class="ract">
+        <div class="rfree"><b>${r.free}</b><span>${r.free ? plural(r.free, 'место', 'места', 'мест') : 'мест нет'}</span></div>
+        ${r.free ? `<button class="btn pri" data-a="netJoin" data-room="${esc(r.id)}">Войти</button>` : ''}
+        <button class="btn" data-a="netWatch" data-room="${esc(r.id)}">Смотреть</button>
+      </div></article>` }).join('')}</div>`;
+}
+/** запросить список и обновлять, пока открыт экран сетевой игры */
+let netTimer = 0;
+function netPoll() {
+  clearTimeout(netTimer);
+  if ((M.view !== 'net' && M.view !== 'root') || !$('#menu').classList.contains('on')) return;
+  netSend({ t: 'list' });
+  netTimer = setTimeout(netPoll, M.view === 'net' ? 3000 : 8000);
+}
 function newsHTML() {
   return `<div class="mbox narrow">${backHTML('Что нового')}
     <div class="mpanel news">${News.html(esc)}</div></div>`;
@@ -947,6 +1059,7 @@ function showMenu() {
   $('#menu').innerHTML = menuHTML();
   $('#menu').classList.add('on');
   drawPreviews();
+  if (M.view === 'net' || M.view === 'root') netPoll();
 }
 /* ---------- миниатюры карт в меню: печём в простое по одной ---------- */
 const PREV = new Map();
@@ -1199,6 +1312,11 @@ function bind() {
     }
     else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
+    else if (a === 'netRefresh') netPoll();
+    else if (a === 'netJoin' || a === 'netWatch') {
+      clearTimeout(netTimer);
+      netSend({ t: 'join', room: el.dataset.room, spec: a === 'netWatch', name: myName, side: M.joinSide === 'any' ? undefined : M.joinSide });
+    }
     else if (a === 'join' || a === 'spec') {
       if (code.trim().length !== 4) return toast('Код — четыре буквы');
       netSend({
@@ -1236,17 +1354,23 @@ function bind() {
       return;
     }
     if (!G.roomId) return;
+    /* удержание клавиши шлёт keydown снова и снова: переключатели от этого мигали,
+       а Enter завершал бы ход за ходом. Повтор нужен только перебору частей (Tab) */
+    if (e.repeat && e.key !== 'Tab') return;
+    /* Ctrl+S, Ctrl+C и прочие сочетания — браузеру, а не игре */
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
     if (e.key === 'Tab') { e.preventDefault(); nextUnit() }
     else if (e.key === 'Enter') endTurn();
     else if (e.key === 'Escape') { G.mode = null; G.spawn = null; hint(''); setSel(null); hideModal() }
-    else if ((e.key === 'd' || e.key === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
-    else if ((e.key === 'a' || e.key === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
-    else if (e.key === 's' || e.key === 'ы') { G.showSupply = !G.showSupply; renderUI() }
-    else if (e.key === 'h' || e.key === 'р') { G.showCmd = !G.showCmd; renderUI() }
-    else if (e.key === 't' || e.key === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
-    else if (e.key === 'f' || e.key === 'а') camFit();
-    else if (e.key === 'l' || e.key === 'д') setTrees(!SCREEN.trees);
-    else if ((e.key === 'c' || e.key === 'с') && selUnit()) camTo(H.center(selUnit().hex));
+    else if ((k === 'd' || k === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
+    else if ((k === 'a' || k === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
+    else if (k === 's' || k === 'ы') { G.showSupply = !G.showSupply; renderUI() }
+    else if (k === 'h' || k === 'р') { G.showCmd = !G.showCmd; renderUI() }
+    else if (k === 't' || k === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
+    else if (k === 'f' || k === 'а') camFit();
+    else if (k === 'l' || k === 'д') setTrees(!SCREEN.trees);
+    else if ((k === 'c' || k === 'с') && selUnit()) camTo(H.center(selUnit().hex));
     else if (e.key === '?') showHelp();
   });
   window.addEventListener('keyup', e => KEYS.delete(e.key));

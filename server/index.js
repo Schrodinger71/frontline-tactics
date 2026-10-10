@@ -11,8 +11,12 @@
      { t:'act', id, a:{ t, … } }                 действие: move · attack · bombard · air · eng · dig ·
                                                  ambush · buy · replace · sell · place · ready · end
      { t:'pace', value }                         скорость наблюдения: 0 (пауза) · 1 · 2 · 4
+     { t:'save' }                                сохранить партию (игроку за столом) → { t:'saved', data, meta }
+     { t:'load', data, seat?, side? }            новая партия из сохранения (data — сжатый снимок)
+     { t:'seat', op:'add', side, who }           хозяин: новое место на стороне — 'bot' | 'open'
+     { t:'seat', op:'who', id, who }             хозяин: свободное место — боту или открыть для игрока
    сервер → клиент:
-     { t:'joined', room, mode, side, vsBot, watch, bots }
+     { t:'joined', room, mode, side, vsBot, watch, bots, host }
      { t:'snap', v }                             снимок стороны (game/views.js)
      { t:'ev', list }                            события хода — клиент проигрывает по очереди
      { t:'res', id, res }   { t:'seats', seats, note }   { t:'error', msg }
@@ -25,6 +29,8 @@ const { Room } = require('./room');
 const { N, S } = require('../shared/world');
 const { SCEN } = require('../game/scenarios');
 const { MAPS } = require('../shared/maps');
+const { Game } = require('../game/engine');
+const Save = require('../game/save');
 
 const ROOT = path.join(__dirname, '..');
 const STATIC = [['/shared/', path.join(ROOT, 'shared')], ['/', path.join(ROOT, 'client')]];
@@ -83,13 +89,15 @@ function serveStatic(req, res) {
 
 function createServer() {
   const server = http.createServer(serveStatic);
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
+  /* сообщения короткие, кроме загрузки сохранения (сжатый снимок партии) */
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: Save.MAX_PACKED + 4096 });
   wss.on('connection', ws => {
     if (wss.clients.size > MAX_CONN) return ws.close(1013, 'busy');
     const client = { room: null, side: null, seat: null, name: null, send(o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)) } };
     const leave = () => { if (client.room) client.room.leave(client); client.room = null; client.side = null };
     ws.on('message', raw => {
-      if (raw.length > 8192) return;
+      /* длинным может быть только сообщение загрузки */
+      if (raw.length > 8192 && !(raw.length <= Save.MAX_PACKED + 4096 && String(raw.subarray ? raw.subarray(0, 16) : raw).startsWith('{"t":"load"'))) return;
       let m;
       try { m = JSON.parse(raw) } catch (e) { return }
       if (!m || typeof m !== 'object') return;
@@ -121,6 +129,31 @@ function createServer() {
         if (tooOften(client, '_act', 40, 1000)) return client.send({ t: 'res', id: m.id, res: { ok: false, error: 'слишком часто' } });
         client.room.act(client, m.id, m.a);
       } else if (m.t === 'pace') { if (client.room) client.room.setPace(client, m.value) }
+      else if (m.t === 'seat') { if (client.room) client.room.seatOp(client, m) }
+      else if (m.t === 'save') {
+        const room = client.room;
+        if (!room || !room.engine || !client.seat || room.watch) return client.send({ t: 'error', msg: 'Сохранять может только игрок за столом' });
+        if (tooOften(client, '_save', 4, 5000)) return client.send({ t: 'error', msg: 'Слишком часто — подождите пару секунд' });
+        try {
+          const g = room.engine, st = g.saveState();
+          client.send({ t: 'saved', auto: !!m.auto, data: Save.pack(st), meta: {
+            map: g.mapId, mode: g.mode, turn: g.turn, phase: g.phase, side: client.side, seat: client.seat, at: st.at, v: st.v,
+            seats: g.seats.length, bots: g.seats.filter(x => room.slot.get(x.id) === 'bot').length, over: !!g.over
+          } });
+        } catch (e) { console.error(`[${room.id}] сохранение:`, e); client.send({ t: 'error', msg: 'Сохранить не удалось' }) }
+      } else if (m.t === 'load') {
+        if (!canCreate(client)) return;
+        let g;
+        try { g = Game.fromState(Save.unpack(m.data)) } catch (e) { return client.send({ t: 'error', msg: 'Сохранение повреждено или от другой игры' }) }
+        leave();
+        const room = new Room(newCode(), g.mode, N, true, false, g.mapId, null, { engine: g });
+        rooms.set(room.id, room);
+        client.name = cleanName(m.name);
+        /* садимся на своё прежнее место, если оно людское; иначе — на любое свободное */
+        const want = typeof m.seat === 'string' && g.seatById.has(m.seat) && room.slot.get(m.seat) !== 'bot' ? m.seat : null;
+        const st = want ? g.seatById.get(want) : room.freeSeat(m.side === N || m.side === S ? m.side : null);
+        if (st) room.joinAs(client, st.side, st.id); else room.join(client, 'spec');
+      }
     });
     ws.on('close', leave);
     /* ошибки сокета (слишком большое сообщение, обрыв) — закрыть соединение, а не уронить сервер */

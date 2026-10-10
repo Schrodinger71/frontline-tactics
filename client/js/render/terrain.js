@@ -22,6 +22,10 @@
      застройка — кварталы с улицами, дома с тенью, хутора.
    Реки, дороги, мосты и сетка гексов рисуются вектором поверх
    (render/base.js) — они остаются резкими на любом масштабе.
+   Зимние карты (MAPS[id].winter) — та же местность под снегом: поля —
+   наст с переметами и изгородями, лес — тёмный ельник со снегом на
+   кронах, озёра — тёмная вода с ледяной кромкой и льдинами, скалы —
+   со снежными шапками, крыши — под снегом, тени — холодные, синеватые.
    ============================================================ */
 
 const TPX = 4;
@@ -41,7 +45,7 @@ function bakeTerrain(id) {
   const fbm = Terrain.fbm, h2 = Terrain.h2, M = Terrain.METERS;
   const FT = T.FOREST_T;
   const hasLake = (def.lakes || []).length > 0, hasMarsh = (def.marsh || []).length > 0, hasRidge = (def.ridges || []).length > 0;
-  const steppe = !!(def.forest && def.forest.thr > .7);
+  const winter = !!def.winter, steppe = !winter && !!(def.forest && def.forest.thr > .7);
 
   /* ---------- грубая сетка: 2 узла на км ---------- */
   const CP = 2, cw = WW * CP + 2, ch = WH * CP + 2;
@@ -73,10 +77,12 @@ function bakeTerrain(id) {
   };
 
   /* ---------- палитры ---------- */
-  const FLD = steppe
+  const FLD = winter
+    ? [[214, 220, 226], [206, 213, 221], [220, 224, 229], [200, 208, 217], [211, 217, 224], [196, 205, 214], [217, 221, 226]]
+    : steppe
     ? [[104, 96, 60], [112, 102, 64], [96, 90, 56], [120, 108, 68], [106, 98, 62], [92, 86, 52], [124, 112, 74]]
     : [[74, 84, 52], [84, 90, 56], [66, 78, 48], [92, 92, 58], [80, 88, 52], [70, 78, 46], [90, 84, 54], [78, 90, 60]];
-  const FOR = steppe ? [40, 58, 36] : [32, 52, 34];
+  const FOR = winter ? [36, 52, 48] : steppe ? [40, 58, 36] : [32, 52, 34];
 
   const w = WW * TPX, h = WH * TPX;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -93,7 +99,14 @@ function bakeTerrain(id) {
       const sh = Math.max(.62, Math.min(1.4, 1 + ((bil(cH, x - .5, y) - bil(cH, x + .5, y)) + (bil(cH, x, y - .5) - bil(cH, x, y + .5))) * 14));
       const el = .9 + H * .32;
       let contour = 0, inForest = false;
-      if (lk > 0) {
+      if (lk > 0 && winter) {
+        /* холодная тёмная вода, у берега — лёд и снег, по воде — льдины */
+        const dp = Math.min(1, lk * 2.4), rip = (vn(x * 3.2, y * 1.1, 41) - .5) * 5;
+        r = 30 - dp * 10 + rip * .4; gg = 52 - dp * 14 + rip; b = 66 - dp * 10 + rip;
+        if (lk < .06) { r = 214; gg = 222; b = 228 }
+        else if (lk < .16) { const t = (lk - .06) / .1; r = 176 * (1 - t) + r * t; gg = 196 * (1 - t) + gg * t; b = 208 * (1 - t) + b * t }
+        else if (vn(x * 1.6, y * 1.6, 47) > .7 && dp < .8) { r = 168; gg = 186; b = 196 }
+      } else if (lk > 0) {
         const dp = Math.min(1, lk * 2.4), rip = (vn(x * 3.2, y * 1.1, 41) - .5) * 6;
         r = 22 - dp * 9 + rip * .4; gg = 56 - dp * 18 + rip; b = 74 - dp * 16 + rip;
         if (lk < .05) { r = 82; gg = 88; b = 72 }                         /* светлая кромка берега */
@@ -109,6 +122,7 @@ function bakeTerrain(id) {
           const k = (.74 + .42 * cr + lt * .9) * (.9 + .2 * fine) * (1 - dn * .18);
           r = FOR[0] * k; gg = FOR[1] * k; b = FOR[2] * k;
           if (fv < FT + .012) { r *= .62; gg *= .66; b *= .62 }           /* опушка */
+          else if (winter && (cr + lt * 1.6 + (fine - .5) * .35 > .9 || h2(i, j, 33) < .025)) { const t = clamp((cr + lt * 1.6 - .8) * 2.2, .35, .85); r = r * (1 - t) + 210 * t; gg = gg * (1 - t) + 220 * t; b = b * (1 - t) + 228 * t }   /* снег на кронах — с освещённой стороны */
           else if (h2(i, j, 33) < .012) { r += 20; gg += 22; b += 10 }    /* блики на кронах */
         } else {
           /* поля: лоскуты на повёрнутой сетке, межи, борозды */
@@ -118,16 +132,22 @@ function bakeTerrain(id) {
           const f = FLD[(hc * FLD.length) | 0];
           r = f[0]; gg = f[1]; b = f[2];
           const du = (u - cu * 2.3), dv = (v - cv * 1.7);
-          if (hc > .45) { const st = Math.sin((hc > .7 ? u : v) * 22) * .045; r *= 1 + st; gg *= 1 + st; b *= 1 + st }
-          const nz = (vn(x * 3, y * 3, 13) - .5) * .12;
+          if (hc > .45) { const st = Math.sin((hc > .7 ? u : v) * 22) * (winter ? .015 : .045); r *= 1 + st; gg *= 1 + st; b *= 1 + st }
+          /* зимой — переметы: длинные мягкие волны снега по ветру */
+          const nz = winter ? (vn(x * 1.2 + y * .5, y * 4.5, 13) - .5) * .07 : (vn(x * 3, y * 3, 13) - .5) * .12;
           r *= 1 + nz; gg *= 1 + nz; b *= 1 + nz;
-          /* межа / лесополоса — мягкий край, без «лесенки» */
+          /* межа / лесополоса (зимой — изгородь и кусты из-под снега) — мягкий край, без «лесенки» */
           const e = Math.min(du, dv), hk = e < .12 ? 1 : e < .3 ? 1 - (e - .12) / .18 : 0;
-          if (hk) { r *= 1 - .2 * hk; gg *= 1 - .16 * hk; b *= 1 - .22 * hk }
-          if (fv > FT - .03 && !steppe) { const t = (fv - FT + .03) / .03 * .45; r = r * (1 - t) + 36 * t; gg = gg * (1 - t) + 50 * t; b = b * (1 - t) + 32 * t }
+          if (hk) { const k2 = winter ? .55 : 1; r *= 1 - .2 * hk * k2; gg *= 1 - .16 * hk * k2; b *= 1 - .12 * hk * k2 }
+          if (fv > FT - .03 && !steppe) { const t = (fv - FT + .03) / .03 * .45, F2 = winter ? [70, 84, 84] : [36, 50, 32]; r = r * (1 - t) + F2[0] * t; gg = gg * (1 - t) + F2[1] * t; b = b * (1 - t) + F2[2] * t }
         }
         const mk = cM ? bil(cM, x, y) : 0;
-        if (mk > .05) {
+        if (mk > .05 && winter) {
+          /* замёрзшее болото: наст с кочками и сухим камышом */
+          const t = Math.min(1, (mk - .05) * 3);
+          r = r * (1 - t * .25) + 170 * t * .25; gg = gg * (1 - t * .25) + 184 * t * .25; b = b * (1 - t * .25) + 190 * t * .25;
+          if (((x * 5 + y * 1.6) % 1) < .14 && vn(x * 3, y * 3, 63) > .5) { r = r * .6 + 54; gg = gg * .6 + 52; b = b * .6 + 40 }
+        } else if (mk > .05) {
           const t = Math.min(1, (mk - .05) * 3);
           r = r * (1 - t * .55) + 40 * t * .55; gg = gg * (1 - t * .55) + 56 * t * .55; b = b * (1 - t * .55) + 46 * t * .55;
           const pool = vn(x * 1.9, y * 1.9, 61);
@@ -137,19 +157,34 @@ function bakeTerrain(id) {
         const rk = cR ? bil(cR, x, y) : 0;
         if (rk > .25) {
           const t = Math.min(1, (rk - .25) * 2.2), sc = (h2(i, j, 71) - .5) * 26 + (vn(x * 5, y * 5, 73) - .5) * 30;
-          r = r * (1 - t) + (98 + sc) * t; gg = gg * (1 - t) + (92 + sc) * t; b = b * (1 - t) + (82 + sc) * t;
-          if (rk > .82) { r += 26; gg += 26; b += 28 }
+          if (winter) {
+            /* скалы в снегу: тёмные выходы камня, выше — снежные шапки */
+            const snow = rk > .55 && vn(x * 2.2, y * 2.2, 75) > .38;
+            const R0 = snow ? 226 : 104 + sc, G0 = snow ? 232 : 106 + sc, B0 = snow ? 238 : 112 + sc;
+            r = r * (1 - t) + R0 * t; gg = gg * (1 - t) + G0 * t; b = b * (1 - t) + B0 * t;
+          } else {
+            r = r * (1 - t) + (98 + sc) * t; gg = gg * (1 - t) + (92 + sc) * t; b = b * (1 - t) + (82 + sc) * t;
+            if (rk > .82) { r += 26; gg += 26; b += 28 }
+          }
         }
         /* горизонтали через 20 м, каждая пятая толще */
         const hm = H * M, hr = bil(cH, x + px, y) * M, hd = bil(cH, x, y + px) * M;
         const l0 = Math.floor(hm / 20);
         if (l0 !== Math.floor(hr / 20) || l0 !== Math.floor(hd / 20)) contour = (Math.max(l0, Math.floor(hr / 20), Math.floor(hd / 20)) % 5 === 0) ? 2 : 1;
       }
-      let k = sh * el;
-      r *= k; gg *= k; b *= k;
-      if (contour) {
-        const m = contour === 2 ? (inForest ? .8 : .7) : (inForest ? .92 : .85);
-        r = r * m + (contour === 2 ? 14 : 8); gg = gg * m + (contour === 2 ? 8 : 5); b = b * m;
+      if (winter) {
+        /* на снегу свет мягче, а тени холодные — с синевой */
+        const k = Math.min(1.12, sh) * (.95 + H * .08);
+        r *= k; gg *= k; b *= k;
+        if (sh < 1) { const c = (1 - sh) * 46; b += c; gg += c * .25 }
+        if (contour) { const m = contour === 2 ? .8 : .9; r *= m; gg *= m; b = b * m + 6 }
+      } else {
+        const k = sh * el;
+        r *= k; gg *= k; b *= k;
+        if (contour) {
+          const m = contour === 2 ? (inForest ? .8 : .7) : (inForest ? .92 : .85);
+          r = r * m + (contour === 2 ? 14 : 8); gg = gg * m + (contour === 2 ? 8 : 5); b = b * m;
+        }
       }
       D[o] = r; D[o + 1] = gg; D[o + 2] = b; D[o + 3] = 255;
     }
@@ -165,9 +200,10 @@ function bakeTerrain(id) {
   /** дом с тенью: x, y, ширина, глубина, угол */
   const house = (x, y, bw, bh, a, tone) => {
     g.save(); g.translate(x, y); g.rotate(a);
-    g.fillStyle = 'rgba(8,10,8,.55)'; g.fillRect(-bw / 2 + .08, -bh / 2 + .1, bw, bh);
+    g.fillStyle = winter ? 'rgba(40,52,66,.5)' : 'rgba(8,10,8,.55)'; g.fillRect(-bw / 2 + .08, -bh / 2 + .1, bw, bh);
     g.fillStyle = tone; g.fillRect(-bw / 2, -bh / 2, bw, bh);
-    g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(-bw / 2, -bh / 2, bw, bh * .42);
+    /* зимой скаты крыши под снегом */
+    g.fillStyle = winter ? 'rgba(236,241,246,.85)' : 'rgba(255,255,255,.12)'; g.fillRect(-bw / 2, -bh / 2, bw, bh * (winter ? .62 : .42));
     g.restore();
   };
   const TONES = ['#77746a', '#6c6a62', '#837c6c', '#7a6658', '#8a7f6a', '#686d6a', '#8c6f5c'];
@@ -175,7 +211,8 @@ function bakeTerrain(id) {
   const town = (cx0, cy0, R, dense) => {
     const a = rnd() * Math.PI, ca = Math.cos(a), sa = Math.sin(a), st = dense ? .8 : .95;
     const gr = g.createRadialGradient(cx0, cy0, 0, cx0, cy0, R * 1.08);
-    gr.addColorStop(0, 'rgba(70,68,62,.9)'); gr.addColorStop(.8, 'rgba(66,64,58,.6)'); gr.addColorStop(1, 'rgba(66,64,58,0)');
+    if (winter) { gr.addColorStop(0, 'rgba(150,156,162,.9)'); gr.addColorStop(.8, 'rgba(160,166,172,.6)'); gr.addColorStop(1, 'rgba(170,176,182,0)') }   /* утоптанный серый снег улиц */
+    else { gr.addColorStop(0, 'rgba(70,68,62,.9)'); gr.addColorStop(.8, 'rgba(66,64,58,.6)'); gr.addColorStop(1, 'rgba(66,64,58,0)') }
     g.fillStyle = gr; g.beginPath(); g.arc(cx0, cy0, R * 1.08, 0, 7); g.fill();
     const n = Math.ceil(R / st) + 1;
     g.save(); g.translate(cx0, cy0); g.rotate(a);
@@ -193,6 +230,7 @@ function bakeTerrain(id) {
       if (d < .6) g.fillRect(bx - bw * .22, by - bw * .22, bw * .44, bw * .44);
       else { g.fillRect(bx - st / 2 + m / 2 + bw * .48, by - st / 2 + m / 2, bw * .06, bw); g.fillRect(bx - st / 2 + m / 2, by - st / 2 + m / 2 + bw * .48, bw, bw * .06) }
       g.fillStyle = 'rgba(255,255,255,.1)'; g.fillRect(bx - st / 2 + m / 2, by - st / 2 + m / 2, bw, bw * .18);
+      if (winter) { g.fillStyle = 'rgba(232,238,244,.62)'; g.fillRect(bx - st / 2 + m / 2, by - st / 2 + m / 2, bw, bw * .5) }   /* снег на крышах */
     }
     /* проспекты */
     g.strokeStyle = 'rgba(176,164,134,.55)'; g.lineWidth = .16;

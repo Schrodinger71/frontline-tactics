@@ -23,9 +23,9 @@ const Rules = require('../shared/rules');
 const { N, S, UT, MAX_STR } = W;
 
 const MIX = {
-  attacker: { inf: 3, mot: 3, tnk: 4, rec: 1, art: 2, mlrs: 1, aa: 1, eng: 1, at: .5 },
-  defender: { inf: 5, mot: 2, tnk: 2, rec: 1, art: 3, mlrs: 1, aa: 1, eng: 1.5, at: 1.5 },
-  both:     { inf: 4, mot: 3, tnk: 3, rec: 1, art: 2, mlrs: 1, aa: 1, eng: 1, at: 1 }
+  attacker: { inf: 3, mot: 3, tnk: 4, rec: 1, art: 2, mlrs: 1, aa: 1.3, eng: 1, at: .5 },
+  defender: { inf: 5, mot: 2, tnk: 2, rec: 1, art: 3, mlrs: 1, aa: 1.6, eng: 1.5, at: 1.5 },
+  both:     { inf: 4, mot: 3, tnk: 3, rec: 1, art: 2, mlrs: 1, aa: 1.4, eng: 1, at: 1 }
 };
 const TERR = { open: 0, forest: 3, hill: 4, city: 5, marsh: 1, mount: 5, lake: -99 };
 const val = u => UT[u.k].price * u.str / MAX_STR;
@@ -132,11 +132,18 @@ module.exports = {
       }
       if (best) this.act(seat, { t: 'bombard', id: a.id, hex: best.hex });
     }
-    while (this.air[seat].strike > 0) {
-      const t = targets().filter(x => !this.units.some(a => a.side === en && UT[a.k].aa && this.H.hexDist(a.hex, x.e.hex) <= 2) || com.trait === 'решительный')
-        .sort((a, b) => val(b.e) * (1 + b.adj) - val(a.e) * (1 + a.adj))[0];
-      if (!t) break;
-      this.act(seat, { t: 'air', kind: 'strike', hex: t.e.hex });
+    /* авиаудары: по расчёту, как у игрока — ПВО над целью режет урон и может сбить
+       штурмовик, поэтому под зонтик бот лезет только ради очень ценной цели */
+    for (let guard = 0; this.air[seat].strike > 0 && guard < 6; guard++) {
+      const ctx = this.ctxFor(side, false), risk = com.trait === 'решительный' ? .2 : .35;
+      let best = null, bs = 0;
+      for (const { e, adj } of targets()) {
+        const o = Rules.airOdds(ctx, e), go = (1 - o.shot) * Math.min(1, o.kill / 2);
+        if ((1 - o.shot) * o.cut < risk) continue;
+        const s = val(e) * (1 + adj * .6) * go * (objective && this.H.hexDist(e.hex, objective.hex) <= 2 ? 1.4 : 1);
+        if (s > bs) { bs = s; best = e }
+      }
+      if (!best || !this.act(seat, { t: 'air', kind: 'strike', hex: best.hex }).ok) break;
     }
 
     /* 3. атаки группами */

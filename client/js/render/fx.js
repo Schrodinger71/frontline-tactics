@@ -26,7 +26,9 @@ const FX = [];          /* живые эффекты */
 const SCORCH = [];      /* воронки: { x, y, turn, pw, seed, t0 } */
 const PLUMES = [];      /* шлейфы дыма: { x, y, t0, d, pw, seed, dark } */
 const hsh = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x) };
-const zk = () => clamp(G.view.s / 4.5, .55, 2.6);
+/* размер дыма растёт с масштабом, но не бесконечно: на максимальном приближении
+   столбы в 2,6 раза крупнее стоили втрое дороже, а читаемости не добавляли */
+const zk = () => clamp(G.view.s / 4.5, .55, LOWFX() ? 1.5 : 2.1);
 
 /** ветер для дыма и облаков: от погоды и хода, плавно меняется */
 function windVec() {
@@ -37,6 +39,8 @@ function windVec() {
 }
 
 function fxAdd(o) { o.t0 = o.t0 || RT(); FX.push(o); if (FX.length > 260) FX.shift(); return o }
+/** сколько шлейфов держим одновременно */
+const plumeMax = () => LOWFX() ? 18 : 36;
 function fxReset() { FX.length = 0; SCORCH.length = 0; PLUMES.length = 0 }
 
 /** точка вокруг центра клетки — разрывы и воронки видны рядом с фишкой, а не под ней */
@@ -46,13 +50,52 @@ function fxBoom(p, pw, delay, opt) {
   const t0 = RT() + (delay || 0), seed = Math.random() * 1000;
   fxAdd({ k: 'boom', x: p.x, y: p.y, pw, t0, d: 1.5 + pw * .5, seed });
   if (!(opt && opt.noMark)) SCORCH.push({ x: p.x, y: p.y, turn: G.turn, pw, seed, t0 });
-  PLUMES.push({ x: p.x, y: p.y, t0, d: 6 + pw * 5, pw, seed, dark: pw > .8 });
+  /* серия разрывов у одной цели даёт один густой шлейф, а не пять наложенных:
+     на экране то же, а клубов в кадре в разы меньше */
+  const near = PLUMES.find(q => Math.abs(q.t0 - t0) < 1.6 && (q.x - p.x) ** 2 + (q.y - p.y) ** 2 < 9);
+  if (near) { near.pw = Math.min(1.5, Math.max(near.pw, pw) + .08); near.d = Math.max(near.d, 6 + near.pw * 5); near.dark = near.dark || pw > .8 }
+  else PLUMES.push({ x: p.x, y: p.y, t0, d: 6 + pw * 5, pw, seed, dark: pw > .8 });
   if (SCORCH.length > 420) SCORCH.splice(0, SCORCH.length - 420);
-  if (PLUMES.length > 70) PLUMES.splice(0, PLUMES.length - 70);
+  if (PLUMES.length > plumeMax()) PLUMES.splice(0, PLUMES.length - plumeMax());
   setTimeout(() => shakeFrom(p, pw), (delay || 0) * 1000);
 }
 
-/* ---------- воронки ---------- */
+/* ---------- воронки ----------
+   Неподвижная часть воронки (гарь, выброс грунта, чаша) печётся спрайтом —
+   по вариантам рисунка и ступеням размера — и в кадре это одно копирование
+   с прозрачностью по возрасту. Раньше каждая воронка каждый кадр рисовалась
+   из двух клубов шума, девяти лучей и трёх эллипсов. Тлеет — поверх, первые
+   секунды. */
+const SCORCH_SPR = new Map();
+const SCORCH_STEP = Math.log(1.12);
+function scorchSprite(v, R) {
+  const b = Math.ceil(Math.log(R) / SCORCH_STEP - 1e-9), Rb = Math.exp(b * SCORCH_STEP);
+  const key = v + '|' + b + '|' + DPR;
+  let c = SCORCH_SPR.get(key);
+  if (c) return c;
+  const ext = Rb * 3.4, side = Math.ceil(ext * 2 * DPR) + 2;
+  c = document.createElement('canvas'); c.width = c.height = side;
+  const g = c.getContext('2d'), seed = v * 7.31 + 3.7, sd = v;
+  g.setTransform(DPR, 0, 0, DPR, side / 2, side / 2);
+  SmokeTex.draw(g, sd, 0, 0, Rb * 2.4, .75, [26, 20, 14], hsh(seed, 1) * 6.28, 1.3);
+  SmokeTex.draw(g, sd + 2, Rb * .2, -Rb * .1, Rb * 1.6, .65, [16, 12, 9], hsh(seed, 2) * 6.28, 1.15);
+  if (Rb > 4) {
+    g.strokeStyle = 'rgba(120,102,76,.5)'; g.lineWidth = Math.max(1, Rb * .12); g.lineCap = 'round';
+    g.beginPath();
+    for (let k = 0; k < 9; k++) {
+      const an = hsh(seed, k + 5) * 6.28, r0 = Rb * .7, r1 = Rb * (1.2 + hsh(k, seed) * .9);
+      g.moveTo(Math.cos(an) * r0, Math.sin(an) * r0 * .8); g.lineTo(Math.cos(an) * r1, Math.sin(an) * r1 * .8);
+    }
+    g.stroke();
+  }
+  g.fillStyle = 'rgba(112,96,72,.75)'; g.beginPath(); g.ellipse(0, 0, Rb * .78, Rb * .62, 0, 0, 7); g.fill();
+  g.fillStyle = 'rgba(14,10,8,.9)'; g.beginPath(); g.ellipse(Rb * .06, Rb * .05, Rb * .58, Rb * .44, 0, 0, 7); g.fill();
+  g.fillStyle = 'rgba(48,38,28,.7)'; g.beginPath(); g.ellipse(Rb * .14, Rb * .12, Rb * .34, Rb * .24, 0, 0, 7); g.fill();
+  c.R = Rb; c.ext = ext;
+  if (SCORCH_SPR.size > 64) SCORCH_SPR.clear();
+  SCORCH_SPR.set(key, c);
+  return c;
+}
 function drawScorch() {
   const s = G.view.s, now = RT();
   for (let i = SCORCH.length - 1; i >= 0; i--) {
@@ -61,36 +104,54 @@ function drawScorch() {
     if (now < b.t0) continue;
     const q = w2s(b);
     if (!onScreen(q, 60)) continue;
-    const R = clamp(s * 1.1 * b.pw, 5, 40), a = (1 - age) * .9, sd = b.seed | 0;
-    cx.save(); cx.translate(q.x, q.y);
-    /* гарь вокруг: рваное пятно */
-    SmokeTex.draw(cx, sd, 0, 0, R * 2.4, a * .75, [26, 20, 14], hsh(b.seed, 1) * 6.28, 1.3);
-    SmokeTex.draw(cx, sd + 2, R * .2, -R * .1, R * 1.6, a * .65, [16, 12, 9], hsh(b.seed, 2) * 6.28, 1.15);
-    /* выброс грунта лучами */
-    if (R > 4) {
-      cx.strokeStyle = `rgba(120,102,76,${a * .5})`; cx.lineWidth = Math.max(1, R * .12); cx.lineCap = 'round';
-      cx.beginPath();
-      for (let k = 0; k < 9; k++) {
-        const an = hsh(b.seed, k + 5) * 6.28, r0 = R * .7, r1 = R * (1.2 + hsh(k, b.seed) * .9);
-        cx.moveTo(Math.cos(an) * r0, Math.sin(an) * r0 * .8); cx.lineTo(Math.cos(an) * r1, Math.sin(an) * r1 * .8);
-      }
-      cx.stroke();
-    }
-    /* чаша: светлый бруствер, тёмное дно с тенью от света с северо-запада */
-    cx.fillStyle = `rgba(112,96,72,${a * .75})`; cx.beginPath(); cx.ellipse(0, 0, R * .78, R * .62, 0, 0, 7); cx.fill();
-    cx.fillStyle = `rgba(14,10,8,${a * .9})`; cx.beginPath(); cx.ellipse(R * .06, R * .05, R * .58, R * .44, 0, 0, 7); cx.fill();
-    cx.fillStyle = `rgba(48,38,28,${a * .7})`; cx.beginPath(); cx.ellipse(R * .14, R * .12, R * .34, R * .24, 0, 0, 7); cx.fill();
+    const R = clamp(s * 1.1 * b.pw, 5, 40), a = (1 - age) * .9;
+    const spr = scorchSprite((b.seed | 0) % 8, R), k = R / spr.R, e = spr.ext * k;
+    cx.globalAlpha = a;
+    cx.drawImage(spr, q.x - e, q.y - e, e * 2, e * 2);
+    cx.globalAlpha = 1;
     /* тлеет первые секунды */
-    const e = now - b.t0;
-    if (e < 5) {
-      cx.globalCompositeOperation = 'lighter';
-      const fl = (1 - e / 5) * (.6 + .4 * Math.sin(now * 9 + b.seed));
-      const g = cx.createRadialGradient(0, 0, 0, 0, 0, R);
+    const el = now - b.t0;
+    if (el < 5) {
+      cx.save(); cx.globalCompositeOperation = 'lighter';
+      const fl = (1 - el / 5) * (.6 + .4 * Math.sin(now * 9 + b.seed));
+      const g = cx.createRadialGradient(q.x, q.y, 0, q.x, q.y, R);
       g.addColorStop(0, `rgba(255,120,40,${.6 * fl})`); g.addColorStop(1, 'rgba(255,60,20,0)');
-      cx.fillStyle = g; cx.beginPath(); cx.arc(0, 0, R, 0, 7); cx.fill();
+      cx.fillStyle = g; cx.beginPath(); cx.arc(q.x, q.y, R, 0, 7); cx.fill();
+      cx.restore();
     }
-    cx.restore();
   }
+}
+
+/* ---------- слой дыма в половинном разрешении ----------
+   Дым — мягкие клубы из шума: в половинном разрешении его не отличить, а
+   закрашивать вчетверо меньше точек. Шлейфы и дымовые завесы рисуются в свой
+   холст (на экран он ложится одним копированием), только если они есть. */
+let SMOKE_L = null, SMOKE_MAIN = null;
+function smokeBegin() {
+  if (!PLUMES.length && !(G.smoke || []).length) return false;
+  /* своё копирование на весь экран окупается, только когда дыма много:
+     прикидываем площадь клубов на экране */
+  const Z = zk(), s = G.view.s, now = RT();
+  let area = 0;
+  for (const b of PLUMES) { if (now < b.t0 || !onScreen(w2s(b), 240)) continue; const R = 11 * b.pw * Z; area += 140 * R * R }
+  for (const h of G.smoke || []) if (onScreen(w2s(H.center(h)), 100)) { const R = Hex.R * s * .62 * 1.25; area += 4 * 3.14 * R * R }
+  if (area < CW * CH * 1.4) return false;
+  const w = Math.max(1, Math.ceil(CW * DPR / 2)), h = Math.max(1, Math.ceil(CH * DPR / 2));
+  if (!SMOKE_L || SMOKE_L.width !== w || SMOKE_L.height !== h) { SMOKE_L = document.createElement('canvas'); SMOKE_L.width = w; SMOKE_L.height = h }
+  const g = SMOKE_L.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+  g.setTransform(DPR / 2, 0, 0, DPR / 2, 0, 0);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'low';
+  SMOKE_MAIN = cx; cx = g;
+  return true;
+}
+function smokeEnd() {
+  if (!SMOKE_MAIN) return;
+  cx = SMOKE_MAIN; SMOKE_MAIN = null;
+  cx.save(); cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
+  cx.drawImage(SMOKE_L, 0, 0, SMOKE_L.width * 2 / DPR, SMOKE_L.height * 2 / DPR);
+  cx.restore();
 }
 
 /* ---------- шлейфы дыма ---------- */
@@ -104,7 +165,8 @@ function drawPlumes() {
     if (!onScreen(q, 240)) continue;
     const dens = Math.pow(1 - age, 1.3) * (b.dark ? .9 : .7), dark = clamp(1 - age * 2.4, 0, 1);
     const cr = Math.round(lerp(150, 58, dark * (b.dark ? 1 : .6))), cg = Math.round(lerp(146, 52, dark * (b.dark ? 1 : .6))), cb = Math.round(lerp(140, 48, dark * (b.dark ? 1 : .6)));
-    const R = 11 * b.pw * Z, L = R * 8 * clamp(.25 + age * 3, .25, 1), N = 12;
+    /* клубов в шлейфе: крупные (вблизи) — реже и шире, в экономном режиме — вдвое меньше */
+    const R = 11 * b.pw * Z, L = R * 8 * clamp(.25 + age * 3, .25, 1), N = LOWFX() ? 6 : R > 16 ? 9 : 12, gk = 12 / N;
     for (let k = 0; k < N; k++) {
       const ph = (now * .07 + k / N + hsh(b.seed, k) * .1) % 1;
       const r = R * (.55 + ph * 2.3) * (.8 + .4 * hsh(b.seed, k + 3));
@@ -112,7 +174,7 @@ function drawPlumes() {
       const sx = q.x + w.x * ph * L - w.y * wob, sy = q.y + w.y * ph * L + w.x * wob - ph * R * 1.4;
       const a = dens * (1 - ph) * Math.min(1, ph * 5 + .2) * (.7 + .45 * hsh(k, b.seed));
       if (a < .01) continue;
-      SmokeTex.draw(cx, k + (b.seed | 0), sx, sy, r * 1.25, a, [cr, cg, cb], wa + hsh(b.seed, k) * 6.28 + now * .05 * (k % 2 ? 1 : -1), 1 + ph * .6);
+      SmokeTex.drawFast(cx, k + (b.seed | 0), sx, sy, r * 1.25 * (1 + (gk - 1) * .25), Math.min(1, a * (1 + (gk - 1) * .45)), [cr, cg, cb], (k + (b.seed | 0)) & 3, 1 + ph * .6);
     }
   }
 }
@@ -135,8 +197,8 @@ function drawBoom(f, k) {
     g.addColorStop(0, `rgba(255,140,50,${.4 * gk})`); g.addColorStop(1, 'rgba(255,90,30,0)');
     cx.fillStyle = g; cx.beginPath(); cx.arc(a.x, a.y, rr, 0, 7); cx.fill();
   }
-  const grow = 1 - Math.exp(-k * 9), heat = clamp(1 - k * 2.2, 0, 1);
-  for (let i = 0; i < 6 && heat > 0; i++) {
+  const grow = 1 - Math.exp(-k * 9), heat = clamp(1 - k * 2.2, 0, 1), nb = LOWFX() ? 3 : 6;
+  for (let i = 0; i < nb && heat > 0; i++) {
     const an = hsh(f.seed + i, 1) * 6.28, d = R0 * .45 * hsh(i, f.seed) * grow;
     const bx = a.x + Math.cos(an) * d, by = a.y + Math.sin(an) * d - grow * R0 * .3 * hsh(f.seed, i);
     const r = R0 * (.3 + .55 * grow) * (.6 + .5 * hsh(i + 7, f.seed));
@@ -168,11 +230,11 @@ function drawBoom(f, k) {
   }
   if (k > .12) {
     const sk = clamp((k - .12) / .88, 0, 1), sa = Math.sin(sk * Math.PI) * .6;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0, n = LOWFX() ? 3 : 5; i < n; i++) {
       const an = hsh(i + 3, f.seed) * 6.28, d = R0 * .5 * hsh(f.seed, i + 3);
       const bx = a.x + Math.cos(an) * d, by = a.y + Math.sin(an) * d - sk * R0 * .8;
       const r = R0 * (.5 + .7 * sk) * (.7 + .4 * hsh(i, f.seed + 2));
-      SmokeTex.draw(cx, i, bx, by, r * 1.3, sa, [44, 38, 34], an + sk, 1.15);
+      SmokeTex.drawFast(cx, i, bx, by, r * 1.3, sa, [44, 38, 34], i & 3, 1.15);
     }
   }
   if (k < .3) {
@@ -295,6 +357,28 @@ function drawPlane(f, k) {
   drawIcon(cx, f.icon || 'jet', 0, 0, W, f.theme || 'own', false);
   cx.restore();
 }
+/** сбитый штурмовик: падает по дуге, горит и дымит, у земли — вспышка */
+function drawDowned(f, k) {
+  const q = w2s(f.p), s = G.view.s, dir = f.dir || 1, W = clamp(s * 7, 30, 64);
+  const x = q.x + dir * k * W * 1.6, y = q.y - W * .6 + k * k * W * 1.5;
+  for (let j = 1; j < 8; j++) {
+    const t = Math.max(0, k - j * .05), tx = q.x + dir * t * W * 1.6, ty = q.y - W * .6 + t * t * W * 1.5;
+    SmokeTex.draw(cx, j, tx, ty, 4 + j * 1.5, .5 * (1 - j / 8), [40, 36, 34], j, 1.2);
+  }
+  if (k < .92) {
+    cx.save(); cx.translate(x, y); cx.rotate(dir * (.4 + k * 1.1)); if (dir < 0) cx.scale(-1, 1);
+    drawIcon(cx, 'jet', 0, 0, W * .8, 'enemy', false, 1 - k * .3);
+    cx.restore();
+    cx.save(); cx.globalCompositeOperation = 'lighter';
+    const g = cx.createRadialGradient(x, y, 0, x, y, 9); g.addColorStop(0, 'rgba(255,200,110,.9)'); g.addColorStop(1, 'rgba(255,90,30,0)');
+    cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, 9, 0, 7); cx.fill(); cx.restore();
+  } else {
+    const t = (k - .92) / .08;
+    cx.save(); cx.globalCompositeOperation = 'lighter';
+    const g = cx.createRadialGradient(x, y, 0, x, y, 26 * t + 6); g.addColorStop(0, `rgba(255,230,170,${1 - t})`); g.addColorStop(1, 'rgba(255,120,40,0)');
+    cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, 26 * t + 6, 0, 7); cx.fill(); cx.restore();
+  }
+}
 /** парашюты с грузом */
 function drawDrop(f, k) {
   const q = w2s(f.p);
@@ -337,6 +421,7 @@ function drawFxList() {
     else if (f.k === 'shell') drawShell(f, k);
     else if (f.k === 'plane') drawPlane(f, k);
     else if (f.k === 'drop') drawDrop(f, k);
+    else if (f.k === 'downed') drawDowned(f, k);
     else if (f.k === 'capture') drawCapture(f, k);
   }
 }
@@ -355,13 +440,13 @@ function drawFire(p, f, k, seed) {
   if (!onScreen(q, 160)) return;
   const T = RT(), w = windVec(), Z = clamp(G.view.s / 5, .55, 1.8);
   const R = (4 + f * 8) * k * Z;
-  const wa = Math.atan2(w.y - 1.2, w.x);
-  for (let i = 0; i < 12; i++) {
-    const ph = (T * .14 + i / 12 + seed) % 1;
+  const wa = Math.atan2(w.y - 1.2, w.x), NF = LOWFX() ? 6 : 12;
+  for (let i = 0; i < NF; i++) {
+    const ph = (T * .14 + i / NF + seed) % 1;
     const r = R * (.55 + ph * 1.7);
     const sx = q.x + w.x * ph * R * 3.6 + Math.sin(seed + i) * R * .25, sy = q.y - R * .7 - ph * R * 4.6 + w.y * ph * R * 1.6;
     const c = Math.round(56 + ph * 46);
-    SmokeTex.draw(cx, i + (seed | 0), sx, sy, r, ((1 - ph) * .55 * f + .08) * Math.min(1, ph * 6), [c, c - 4, c - 8], wa + i * 1.3 + T * .05 * (i % 2 ? 1 : -1), 1 + ph * .5);
+    SmokeTex.drawFast(cx, i + (seed | 0), sx, sy, r, ((1 - ph) * .55 * f + .08) * Math.min(1, ph * 6), [c, c - 4, c - 8], (i + (seed | 0)) & 3, 1 + ph * .5);
   }
   cx.save();
   cx.globalCompositeOperation = 'lighter';

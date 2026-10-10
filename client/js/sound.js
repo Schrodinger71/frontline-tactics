@@ -436,14 +436,16 @@ const Sound = (() => {
     if (!ready() || !amb) return;
     const t = ac.currentTime, w = G.weather || 'clear', night = nightK(G.t);
     const live = !!G.roomId && G.phase === 'battle' && !G.over;
-    const windV = { clear: .04, cloud: .07, rain: .1, fog: .02, snow: .09, storm: .2 }[w] || .05;
+    const windV = { clear: .04, cloud: .07, rain: .1, fog: .02, snow: .09, storm: .2, frost: .05, blizzard: .24 }[w] || .05;
+    const winter = typeof mapWinter === 'function' && mapWinter();
     amb.wind.g.gain.setTargetAtTime(windV, t, 1.5);
     amb.wind.fl.frequency.setTargetAtTime(300 + windV * 1500, t, 2);
     amb.rain.g.gain.setTargetAtTime(w === 'rain' ? .07 : w === 'storm' ? .12 : 0, t, 2);
     amb.hum.g.gain.setTargetAtTime(live ? .04 : .015, t, 2);
     const nx = amb.next;
-    if (live && night < .5 && w !== 'rain' && w !== 'storm' && t > nx.bird) { bird(t); nx.bird = t + 4 + Math.random() * 12 }
-    if (live && night > .6 && (w === 'clear' || w === 'cloud') && t > nx.cricket) { cricket(t); nx.cricket = t + 1 + Math.random() * 4 }
+    /* зимой птиц мало, сверчков нет */
+    if (live && night < .5 && w !== 'rain' && w !== 'storm' && w !== 'blizzard' && t > nx.bird) { if (!winter || Math.random() < .25) bird(t); nx.bird = t + 4 + Math.random() * 12 }
+    if (live && night > .6 && !winter && (w === 'clear' || w === 'cloud') && t > nx.cricket) { cricket(t); nx.cricket = t + 1 + Math.random() * 4 }
     if (live && performance.now() - busyT < 8000 && t > nx.rumble) { rumble(t); nx.rumble = t + 3 + Math.random() * 6 }
     engines();
     musicTick(t);

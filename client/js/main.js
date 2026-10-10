@@ -101,7 +101,8 @@ function onMsg(m) {
   }
   if (m.t === 'ev') { for (const e of m.list) { if (e.e === 'log') radio(e); else playEvent(e) } return }
   if (m.t === 'res') { if (m.res && !m.res.ok && m.res.error) toast(m.res.error); return }
-  if (m.t === 'seats') { if (Array.isArray(m.seats)) G.lobby = m.seats; if (m.note) toast(m.note); renderLobby(); return }
+  if (m.t === 'seats') { if (Array.isArray(m.seats)) G.lobby = m.seats; if ('host' in m) G.host = m.host; if (m.note) toast(m.note); renderLobby(); return }
+  if (m.t === 'saved') { onSaved(m); return }
   if (m.t === 'error') { toast(m.msg); if (!G.roomId) showMenu() }
 }
 function onJoined(m) {
@@ -113,6 +114,8 @@ function onJoined(m) {
   $('#hdRoomBox').style.display = G.vsBot && !G.spec ? 'none' : '';
   $('#hdRoom').textContent = m.room;
   G.mySeat = m.seat || null;
+  G.host = m.host || null;
+  G._wasMyTurn = true;     /* сразу после входа автосохранение не нужно */
   G.lobby = Array.isArray(m.seats) ? m.seats : [];
   /* лобби показываем, пока ждём живых игроков */
   G.lobbyHidden = !G.lobby.some(x => x.who === 'open');
@@ -120,12 +123,17 @@ function onJoined(m) {
   hideMenu(); hideModal(); renderLobby();
 }
 /* ---------- лобби: кто на каком месте ---------- */
+const isHost = () => !!G.host && G.host === G.mySeat && !G.spec;
 function lobbyHTML() {
   const list = G.lobby || [];
   if (!list.length) return '';
+  const host = isHost() && !G.over;
   const side = sd => {
     const rows = list.filter(x => x.side === sd).map(x => {
       const mine = x.id === G.mySeat;
+      /* хозяин: свободное место — отдать боту или открыть для игрока */
+      const ctl = host && !mine && x.who !== 'human'
+        ? `<button class="btn tiny" data-seat-who="${esc(x.id)}:${x.who === 'bot' ? 'open' : 'bot'}" title="${x.who === 'bot' ? 'Освободить место для игрока: его увидят в «Сетевой игре», войти можно по коду' : 'Отдать место боту'}">${x.who === 'bot' ? 'игроку' : 'боту'}</button>` : '';
       const who = x.who === 'bot' ? '<i class="lb bot">бот</i>'
         : x.who === 'open' ? '<i class="lb open">ждём игрока</i>'
         : `<b>${esc(x.name || 'Командир ' + x.n)}</b>${mine ? '<i class="lb me">вы</i>' : ''}`;
@@ -139,10 +147,12 @@ function lobbyHTML() {
       }
       const money = ec && x.side === G.side && !G.spec
         ? `<td class="lmon">${ec.budget}<i>+${ec.income}</i></td>` : '<td></td>';
-      return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td>${money}<td>${st}</td></tr>`;
+      return `<tr class="${mine ? 'on' : ''}"><td>${x.n}</td><td>${who}</td>${money}<td>${st}${ctl}</td></tr>`;
     }).join('');
+    const more = host && list.filter(x => x.side === sd).length < MAX_SEATS
+      ? `<div class="ladd"><span class="mu">+ место:</span><button class="btn tiny" data-seat-add="${sd}:open" title="Новый командир-игрок: место ждёт человека, пока его нет — ходит бот">игрок</button><button class="btn tiny" data-seat-add="${sd}:bot">бот</button></div>` : '';
     return `<div class="lcol"><div class="lhd" style="color:${COL[sd]}">${esc(SIDE_NAME[sd])}</div>
-      <table class="ltab">${rows}</table></div>`;
+      <table class="ltab">${rows}</table>${more}</div>`;
   };
   const open = list.filter(x => x.who === 'open').length;
   const sub = open
@@ -157,6 +167,7 @@ function lobbyHTML() {
     ${(G.team || []).length > 1 && !G.spec ? `<p class="lnote">Очки у каждого командира свои: доход стороны
       (${G.sideIncome} за ход) делится поровну между ${G.team.length} командирами. Покупает каждый на своё,
       чужой частью не командует. У вашей команды сейчас ${G.team.reduce((a, x) => a + x.budget, 0)} очк.</p>` : ''}
+    ${host ? `<p class="lnote">Вы — хозяин партии: можно добавить командира прямо по ходу игры — игрока (место появится в «Сетевой игре» и по коду ${esc(G.roomId || '')}) или бота. Новому командиру — свой штаб, а свободные очки стороны делятся между командирами заново.</p>` : ''}
     <p class="acts"><button class="btn pri" id="btnLobbyClose">${G.phase === 'battle' ? 'Закрыть' : 'К расстановке'}</button></p></div>`;
 }
 function renderLobby() {
@@ -213,6 +224,10 @@ function applySnapshot(v) {
   renderUI(true);
   renderLobby();
   if (G.over && !G._overShown) { G._overShown = true; setTimeout(showEnd, 700) }
+  /* автосохранение — в начале каждого своего хода: закрыли вкладку или пропала
+     связь — партию можно продолжить из «Сохранений» */
+  if (G.isMyTurn && !G._wasMyTurn && G.mySeat && !G.over) netSend({ t: 'save', auto: 1 });
+  G._wasMyTurn = G.isMyTurn;
 }
 function firstView() {
   const own = G.units.filter(u => G.spec || u.side === G.side);
@@ -272,8 +287,23 @@ function clientCtx() {
   /* H — та же сетка гексов, что у сервера: без неё Rules.reachable падает и части не ходят */
   return { H, map: H.build(G.mapId), br: new Map(G.br || []), occ, mines, forts: new Map(G.forts || []), obst: new Set(G.obst || []), support, smoke: new Set(G.smoke || []), side: G.side, mud: wx.mud < .8, night: G.night, acc: wx.acc || 1, cmd, counter: G.counter && !G.spec ? new Set([].concat(...G.pts.filter(p => p.home === G.side).map(p => H.within(p.hex, 1)))) : null };
 }
+/** Авиаудар: расчёт по каждой видимой цели — с ПВО над ней. Цифры на карте:
+    потери, подавление и шанс, что штурмовик собьют; голубые круги — зонтики ПВО. */
+function computeAirTargets() {
+  G.targets = [];
+  if (G.mode !== 'air:strike' || !G.isMyTurn) return;
+  const ctx = clientCtx();
+  for (const e of G.units) {
+    if (e.side === G.side) continue;
+    const o = Rules.airOdds(ctx, { ...e, org: e.org ?? 80, xp: e.xp ?? .2 });
+    /* под зонтиком ПВО главное — шанс потерять штурмовик, подавление — в подсказке */
+    const lb = o.cover > 0 ? `−${o.loss[0]}…${o.loss[1]} · ПВО ${Math.round(o.shot * 100)}%` : `−${o.loss[0]}…${o.loss[1]} · ⚡${o.supp[0]}…${o.supp[1]}`;
+    G.targets.push({ hex: e.hex, id: e.id, lb, col: o.cover > 0 ? '#9fd3f5' : '#ffb070', air: o });
+  }
+}
 function computeSel() {
   G.reach = null; G.targets = []; G.selRiv = '';
+  if (G.mode === 'air:strike') return computeAirTargets();
   const u = selUnit();
   if (!u || !myUnit(u) || !G.isMyTurn) return;
   const ctx = clientCtx(), T = utFor(u.side)[u.k];
@@ -370,6 +400,7 @@ function renderTop() {
     btn.disabled = done;
   }
   else { btn.classList.remove('warn'); btn.title = ''; const left = G.units.filter(u => myUnit(u) && (u.mp > 0 || !u.acted)).length; btn.textContent = G.isMyTurn ? `Конец хода${left ? ' (' + left + ')' : ''}` : 'Ход противника'; btn.disabled = !G.isMyTurn }
+  $('#btnSave').hidden = G.spec || !G.mySeat || !!G.over;
   const air = !G.spec && G.air && G.phase === 'battle';
   $('#airBox').hidden = !air;
   if (air) { $('#btnStrike').textContent = `✈ Удар ${G.air.strike}`; $('#btnRecon').textContent = `👁 Разведка ${G.air.recon}`; $('#btnStrike').disabled = !G.isMyTurn || !G.air.strike; $('#btnRecon').disabled = !G.isMyTurn || !G.air.recon; $('#btnStrike').classList.toggle('on', G.mode === 'air:strike'); $('#btnRecon').classList.toggle('on', G.mode === 'air:recon') }
@@ -642,6 +673,15 @@ function renderTip(sp) {
       <div class="row"><span>Шанс отхода противника</span><b>${Math.round(o.retreat * 100)}%</b></div>
       <div class="bar sm"><div style="width:${Math.round(o.retreat * 100)}%;background:var(--ac)"></div></div>
       <p class="hint">Мораль и опыт противника неизвестны — расчёт по типичным.</p>`;
+  } else if (t.air) {
+    const o = t.air, e = G.units.find(x => x.id === t.id);
+    h = `<b>Авиаудар${e ? ' → ' + esc(unitName(e.side, e.k)) : ''}</b>
+      ${o.mods.map(m => `<div class="row mod ${m.v > 1 ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}
+      ${o.cover > 0 ? `<div class="row big"><span>Шанс, что собьют</span><b class="bad">${Math.round(o.shot * 100)}%</b></div>
+        <p class="hint">Над целью ${o.by.length ? 'ПВО: ' + o.by.length + ' дивизион' + (o.by.length > 1 ? 'а' : '') : ''}${o.by.length && e && e.att === 'aaa' ? ' и ' : ''}${e && e.att === 'aaa' ? 'зенитный взвод' : ''}. Сбитый штурмовик — удара нет, и в следующий ход на вылет меньше.</p>` : '<p class="hint">ПВО над целью не видно — удар в полную силу.</p>'}
+      <div class="lbl">Если долетит</div>
+      <div class="row"><span>Потери цели</span><b class="good">${o.loss[0]}…${o.loss[1]}</b></div>
+      <div class="row"><span>Подавлено шагов</span><b class="good">${o.supp[0]}…${o.supp[1]}</b></div>`;
   } else if (t.bomb) {
     h = `<b>Огонь</b>${t.bomb.mods.map(m => `<div class="row mod ${m.v > 1 ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}
       <div class="row"><span>Потери цели</span><b class="good">${t.bomb.loss[0]}…${t.bomb.loss[1]}</b></div><div class="row"><span>Подавление</span><b>да: оборона ×0,8</b></div>`;
@@ -663,8 +703,10 @@ function showHelp() {
     <p><b>Приказы штаба</b> (★): артподготовка, <b>контрудар</b> (атаки у ваших потерянных исходных точек ×1,3), форсированный марш, стоять насмерть, дымовая завеса, снабжение по воздуху, резерв ставки.</p>
     <p><b>Подавленные шаги.</b> Бой и огонь не только убивают, но и прижимают: часть шагов подавлена (оранжевые на шкале фишки, ⚡) и не воюет до начала своего хода — цифра на фишке показывает действующие шаги. Огонь больше прижимает, чем убивает: подготовьте атаку артиллерией и бейте в тот же ход. Часть, у которой подавлены все шаги, не атакует, а в обороне отходит. В начале своего хода подавленные возвращаются: на снабжении 4+ — все, на 1–3 — половина, в котле — по одному.</p>
     <p><b>Боеприпасы и топливо.</b> У части два запаса по 0–3. Боеприпасы — для боя: без них нет атаки и огня, оборона слабее. Топливо — только технике: на 2 — минус очко хода, на 1 — половина хода, на 0 — машина стоит (⛽ на фишке). Пехоте топливо не нужно: из котла она уходит пешком, а танки встают. Оба запаса пополняются по снабжению клетки, «Снабжение по воздуху» добавляет по 2.</p>
-    <p><b>Приданные специалисты.</b> К части можно придать одного специалиста за очки — в карточке части или справка во вкладке «Закупка»: штурмовые сапёры (атака по городу, окопу, укреплениям ×1,3), противотанковый взвод (против брони атака ×1,2, оборона ×1,25), разведдозор (обзор +1, ночью не слепнет), тяжёлая батарея (огонь артиллерии ×1,25), зенитный взвод (авиаудар по части срывается в 45% случаев). В бою придание — вместо действий в этот ход, на снабжении 3+ и без противника рядом. Специалист погибает вместе с частью.</p>
+    <p><b>Приданные специалисты.</b> К части можно придать одного специалиста за очки — в карточке части или справка во вкладке «Закупка»: штурмовые сапёры (атака по городу, окопу, укреплениям ×1,3), противотанковый взвод (против брони атака ×1,2, оборона ×1,25), разведдозор (обзор +1, ночью не слепнет), тяжёлая батарея (огонь артиллерии ×1,25), зенитный взвод (своё прикрытие от авиации: удар по части на треть слабее, 15% — сбит). В бою придание — вместо действий в этот ход, на снабжении 3+ и без противника рядом. Специалист погибает вместе с частью.</p>
+    <p><b>Авиация и ПВО.</b> Штурмовики (✈ Удар) бьют любую видимую часть: в поле — около двух шагов потерь и столько же подавленных, броня не спасает. <b>Зенитный дивизион</b> держит зонтик на 2 клетки: под ним каждый налёт вдвое слабее, с шансом 30% штурмовик сбит (тогда удара нет, а у командира в следующий ход на вылет меньше), и авиаразведка там ничего не видит. Подавленные расчёты ПВО не стреляют — сначала артиллерия, потом авиация. В режиме удара зонтики видимых ПВО и расчёт по каждой цели — прямо на карте.</p>
     <p><b>Опыт.</b> Части растут: «обстрелянные» ★ и «ветераны» ★★ бьют и держатся лучше.</p>
+    <p><b>Сохранения и состав.</b> 💾 в шапке сохраняет партию, автосохранение — в начале каждого вашего хода; продолжить — «Меню → Сохранения» (там же — скачать файлом и загрузить на другом устройстве). Хозяин партии в окне «Состав» может по ходу игры добавить командира — игрока или бота — и отдать свободное место боту или открыть его для человека.</p>
     <p><b>Перевес</b> — счёт операции, он же условие победы. В конце каждого хода к нему прибавляется разница
     весов точек: ваши города и узлы минус города противника (вес крупного города больше). Держите больше — перевес
     растёт в вашу пользу, потеряли город — пошёл назад. Дошёл до <b>+100</b> — вы победили, до <b>−100</b> — проиграли;
@@ -690,7 +732,7 @@ function showHelp() {
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
     развалить целое направление.</p>
     <div class="lbl">Управление</div>
-    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
@@ -857,6 +899,7 @@ const MICON = {
   set: MI('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
   news: MI('<path d="M5 4.5h10.5v15H6.2A1.2 1.2 0 015 18.3z"/><path d="M15.5 8.5H19v10.3a1.2 1.2 0 01-1.2 1.2h-2.3M8 8.5h4.5M8 12h4.5M8 15.5h2.5"/>'),
   refresh: MI('<path d="M19.5 12a7.5 7.5 0 11-2.2-5.3"/><path d="M19.6 4.6v4.1h-4.1"/>'),
+  save: MI('<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>'),
   go: MI('<path d="M9.5 6l6 6-6 6"/>')
 };
 /** сегментный переключатель: та же логика data-pick, что у mPick, но компактный */
@@ -867,7 +910,81 @@ function mSeg(key, opts) {
 const codeHTML = () => `<div class="codebox"><input id="joinCode" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" aria-label="Код партии">
   <button class="btn" data-a="join">Войти</button><button class="btn" data-a="spec">Смотреть</button></div>`;
 
+/* ---------- сохранения ----------
+   Снимок партии делает сервер (сжатый, без тумана войны), клиент хранит его в
+   этом браузере: до 12 ручных сохранений и одно автосохранение — в начале
+   каждого своего хода. Любое можно скачать файлом и загрузить на другом
+   устройстве. Загрузка — новая партия с новым кодом: боты остаются ботами,
+   места людей открыты для входа, вы садитесь на своё прежнее место. */
+const SAVES_KEY = 'ft.saves', SAVES_MAX = 12;
+function savesList() { try { const a = JSON.parse(localStorage.getItem(SAVES_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => x && typeof x.data === 'string' && x.meta) : [] } catch (e) { return [] } }
+/** записать список; не влезает в хранилище — выбрасываем самые старые */
+function savesPut(list) {
+  for (let a = list.slice(); ; a = a.slice(0, -1)) {
+    try { localStorage.setItem(SAVES_KEY, JSON.stringify(a)); return a.length === list.length } catch (e) { if (a.length <= 1) return false }
+  }
+}
+function saveTitle(meta) {
+  const map = MAPS[meta.map] ? MAPS[meta.map].n : meta.map, mode = SCEN_TXT[meta.mode] ? SCEN_TXT[meta.mode].n : MODE_LABEL[meta.mode] || meta.mode;
+  return `${mode} · ${map}`;
+}
+function onSaved(m) {
+  if (typeof m.data !== 'string' || !m.meta) return;
+  const e = { id: m.auto ? 'auto' : 's' + Date.now().toString(36), auto: !!m.auto, at: m.meta.at || Date.now(), meta: m.meta, data: m.data };
+  let list = savesList().filter(x => x.id !== e.id);
+  if (e.auto) list.unshift(e);
+  else {
+    const auto = list.filter(x => x.auto), rest = list.filter(x => !x.auto);
+    list = auto.concat([e], rest.slice(0, SAVES_MAX - 1));
+  }
+  const ok = savesPut(list);
+  if (!m.auto) toast(ok ? `Партия сохранена: ход ${m.meta.turn + 1}. Продолжить — Меню → Сохранения.` : 'Сохранено, но место в браузере кончилось — старые сохранения удалены.');
+}
+function savesHTML() {
+  const list = savesList();
+  const when = t => { try { return new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) } catch (e) { return '' } };
+  const rows = list.map(x => `<article class="save${x.auto ? ' auto' : ''}">
+      <canvas data-prev="${esc(x.meta.map)}" width="96" height="96"></canvas>
+      <div class="sbody"><b>${x.auto ? '<i class="lb open">авто</i> ' : ''}${esc(saveTitle(x.meta))}</b>
+        <span class="mu">${x.meta.phase === 'deploy' ? 'расстановка' : 'ход ' + (x.meta.turn + 1)} · за ${esc(SIDE_NAME[x.meta.side] || '')}${x.meta.seats > 2 ? ` · командиров: ${x.meta.seats}` : ''}${x.meta.over ? ' · окончена' : ''} · ${esc(when(x.at))}</span></div>
+      <div class="sact"><button class="btn pri sm" data-a="ldSave" data-id="${esc(x.id)}">Продолжить</button>
+        <button class="btn sm" data-a="dlSave" data-id="${esc(x.id)}" title="Скачать файлом — загрузить на другом устройстве">Файл</button>
+        <button class="btn sm" data-a="rmSave" data-id="${esc(x.id)}" title="Удалить">✕</button></div></article>`).join('');
+  return `<div class="mbox wide">${backHTML('Сохранения')}
+    <div class="mnote">Сохранить партию — кнопка 💾 в игре; автосохранение — в начале каждого вашего хода. Продолжение — новая партия с новым кодом: боты остаются ботами, места других игроков ждут их по коду.</div>
+    <div class="saves">${rows || '<div class="nempty"><b>Сохранений пока нет</b><span>В партии нажмите 💾 — сохранение появится здесь.</span></div>'}</div>
+    <div class="macts"><button class="btn" data-a="upSave">Загрузить из файла…</button><input type="file" id="saveFile" accept=".json,application/json" hidden></div></div>`;
+}
+function loadSave(x) {
+  if (!x) return;
+  netSend({ t: 'load', data: x.data, seat: x.meta.seat, side: x.meta.side, name: myName });
+}
+function downloadSave(x) {
+  const body = JSON.stringify({ fmt: 'frontline-tactics-save', meta: x.meta, data: x.data });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+  a.download = `frontline-${x.meta.map}-hod${x.meta.turn + 1}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function uploadSave(file) {
+  if (!file) return;
+  if (file.size > 600000) return toast('Файл слишком большой для сохранения');
+  const r = new FileReader();
+  r.onload = () => {
+    let o = null;
+    try { o = JSON.parse(String(r.result)) } catch (e) { /* не JSON */ }
+    if (!o || o.fmt !== 'frontline-tactics-save' || typeof o.data !== 'string' || !o.meta || typeof o.meta !== 'object') return toast('Это не сохранение Frontline Tactics');
+    const meta = { map: String(o.meta.map || ''), mode: String(o.meta.mode || ''), turn: +o.meta.turn || 0, phase: o.meta.phase === 'deploy' ? 'deploy' : 'battle', side: o.meta.side === S ? S : N, seat: typeof o.meta.seat === 'string' ? o.meta.seat.slice(0, 4) : null, at: +o.meta.at || Date.now(), seats: +o.meta.seats || 2, over: !!o.meta.over };
+    const e = { id: 's' + Date.now().toString(36), at: meta.at, meta, data: o.data };
+    savesPut([e].concat(savesList()).slice(0, SAVES_MAX + 1));
+    loadSave(e);
+  };
+  r.readAsText(file);
+}
+
 function menuHTML() {
+  if (M.view === 'saves') return savesHTML();
   if (M.view === 'play') return playHTML();
   if (M.view === 'camp') return campHTML();
   if (M.view === 'set') return setHTML();
@@ -891,6 +1008,7 @@ function rootHTML() {
         ${tile('play', 'play', 'Играть', 'Свободная операция: карта, режим и состав команд', 'hero')}
         ${tile('net', 'net', 'Сетевая игра', 'Партии, которые ждут игроков', '', `<em class="live" id="netCount"${open ? '' : ' hidden'}><i></i>${open} ${open === 1 ? 'открыта' : 'открыто'}</em>`)}
         ${tile('camp', 'camp', 'Кампания', `Красногорская операция · пройдено ${camp} из ${Object.keys(SCEN_TXT).length}`)}
+        ${tile('saves', 'save', 'Сохранения', (() => { const n = savesList().length; return n ? `Продолжить партию · ${n} ${plural(n, 'сохранение', 'сохранения', 'сохранений')}` : 'Продолжить сохранённую партию' })())}
         <div class="mtiles2">
           ${tile('set', 'set', 'Настройки', '', 'sm')}
           ${tile('news', 'news', 'Что нового', '', 'sm', News.unseen() ? '<i class="dot" title="есть новое"></i>' : '')}
@@ -944,7 +1062,7 @@ function playHTML() {
 <canvas data-prev="${id}" width="112" height="112"></canvas>
       <div class="mtx"><b>${esc(MAPS[id].n)}</b><i>${esc(MAPS[id].tag)}</i>
         ${(() => { const d = Hex.dimsOf(id);
-          return `<em class="msize ${d[0] > d[1] ? 'wide' : 'tall'}">${d[0]}×${d[1]} км · ${d[0] > d[1] ? 'широкая' : 'высокая'}</em>` })()}
+          return `<em class="msize ${d[0] > d[1] ? 'wide' : 'tall'}${MAPS[id].winter ? ' winter' : ''}">${d[0]}×${d[1]} км · ${d[0] > d[1] ? 'широкая' : 'высокая'}${MAPS[id].winter ? ' · ❄ зима' : ''}</em>` })()}
         <span>${esc(MAPS[id].desc)}</span></div></div>`).join('')}</div>
 
     <div class="macts"><button class="btn pri big" data-a="go"${err ? ' disabled' : ''}>${M.me ? 'В бой' : 'Смотреть'}</button></div></div>`;
@@ -1071,13 +1189,13 @@ function mapPreview(id) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d'), img = g.createImageData(w, h), D = img.data;
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-    const x = (i + .5) * k, y = (j + .5) * k, o = (j * w + i) * 4, H = T.height(x, y);
-    let col = def.forest && def.forest.thr > .7 ? [104, 96, 60] : [76, 86, 54];
-    if ((def.lakes || []).length && T.lakeK(x, y) > 0) col = [24, 58, 80];
-    else if (T.forestV(x, y, H) > T.FOREST_T) col = [30, 50, 32];
-    if ((def.marsh || []).length && T.marshK(x, y) > .1) col = [44, 66, 58];
-    if ((def.ridges || []).length && T.ridgeK(x, y) > .35) col = [110, 104, 92];
-    const e = .8 + H * .45;
+    const x = (i + .5) * k, y = (j + .5) * k, o = (j * w + i) * 4, H = T.height(x, y), wn = !!def.winter;
+    let col = wn ? [196, 204, 212] : def.forest && def.forest.thr > .7 ? [104, 96, 60] : [76, 86, 54];
+    if ((def.lakes || []).length && T.lakeK(x, y) > 0) col = wn ? [40, 62, 76] : [24, 58, 80];
+    else if (T.forestV(x, y, H) > T.FOREST_T) col = wn ? [52, 68, 64] : [30, 50, 32];
+    if ((def.marsh || []).length && T.marshK(x, y) > .1) col = wn ? [168, 180, 186] : [44, 66, 58];
+    if ((def.ridges || []).length && T.ridgeK(x, y) > .35) col = wn ? [226, 232, 238] : [110, 104, 92];
+    const e = wn ? .9 + H * .15 : .8 + H * .45;
     D[o] = col[0] * e; D[o + 1] = col[1] * e; D[o + 2] = col[2] * e; D[o + 3] = 255;
   }
   g.putImageData(img, 0, 0);
@@ -1132,7 +1250,8 @@ function clickHex(h, e) {
   const m = G.mode;
   if (m && m.startsWith('buy:')) { act({ t: 'buy', k: m.slice(4), hex: h }); if (!e.shiftKey) { G.mode = null; G.spawn = null; hint('') } return }
   if (m && m.startsWith('ord:')) { act({ t: 'order', k: m.slice(4), hex: h }); G.mode = null; G.spawn = null; hint(''); renderUI(); return }
-  if (m && m.startsWith('air:')) { act({ t: 'air', kind: m.slice(4), hex: h }); G.mode = null; hint(''); renderUI(); return }
+  if (m === 'air:strike' && !(G.targets || []).some(t => t.hex === h)) { toast('Авиаудар — по видимой части противника'); return }
+  if (m && m.startsWith('air:')) { act({ t: 'air', kind: m.slice(4), hex: h }); G.mode = null; G.targets = []; hint(''); renderUI(); return }
   if (m && m.startsWith('eng:') && u) { act({ t: 'eng', id: u.id, task: m.slice(4), hex: h }); G.mode = null; hint(''); return }
   if (G.phase === 'deploy') {
     if (there && myUnit(there)) return setSel(there.id);
@@ -1188,7 +1307,7 @@ let last = performance.now(), uiAcc = 0;
 const KEYS = new Set();
 function loop(now) {
   requestAnimationFrame(loop);
-  const rdt = Math.min(.25, (now - last) / 1000), dt = Math.min(.05, rdt); last = now;
+  const raw = (now - last) / 1000, rdt = Math.min(.25, raw), dt = Math.min(.05, rdt); last = now;
   try {
     const v = 520 * dt / G.view.s;
     if (KEYS.size) {
@@ -1204,6 +1323,7 @@ function loop(now) {
     const t0 = performance.now();
     draw(dt);
     loop.ms = performance.now() - t0; loop.max = Math.max(loop.max || 0, loop.ms);
+    perfWatch(raw);
     Sound.update(dt);
     uiAcc += dt; if (uiAcc > .5 && G.roomId) { uiAcc = 0; renderTop() }
   } catch (e) { if (!loop.err) { loop.err = 1; console.error(e) } }
@@ -1219,12 +1339,16 @@ function bind() {
   $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML().replace('<p class="acts">', screenPanelHTML() + '<p class="acts">'); $('#modal').hidden = false } };
   const onScr = e => {
     const el = e.target.closest && e.target.closest('[data-scr]'); if (!el) return;
-    if (el.dataset.scr === 'trees') setTrees(el.checked);
-    else setScreen(el.dataset.scr, el.checked);
+    setScreen(el.dataset.scr, el.type === 'checkbox' ? el.checked : el.value);
   };
   document.addEventListener('change', onScr);
-  { const tb = document.querySelector('[data-z=trees]'); if (tb) tb.classList.toggle('on', !!SCREEN.trees) }
-  $('#btnStrike').onclick = () => { G.mode = G.mode === 'air:strike' ? null : 'air:strike'; hint(G.mode ? 'Авиаудар: кликните по видимой цели. ПВО рядом с целью может сорвать удар.' : ''); renderTop() };
+  syncScreenUI();
+  $('#btnStrike').onclick = () => {
+    const on = G.mode !== 'air:strike';
+    G.sel = null; G.spawn = null; G.mode = on ? 'air:strike' : null; computeSel();
+    hint(on ? 'Авиаудар: кликните по видимой цели. Голубые зоны — ПВО противника: там удар слабее, а штурмовик могут сбить (минус вылет в следующий ход). Подавите ПВО артиллерией.' : '');
+    renderUI();
+  };
   $('#btnRecon').onclick = () => { G.mode = G.mode === 'air:recon' ? null : 'air:recon'; hint(G.mode ? 'Авиаразведка: кликните по району — откроется радиус 3 клетки.' : ''); renderTop() };
   $('#paceBox').addEventListener('click', e => { const b = e.target.closest('[data-pace]'); if (!b) return; G.pace = +b.dataset.pace || 1; netSend({ t: 'pace', value: +b.dataset.pace }); document.querySelectorAll('#paceBox button').forEach(x => x.classList.toggle('on', x === b)) });
   const dtog = $('#dockToggle');
@@ -1238,6 +1362,12 @@ function bind() {
     if (e.target.id === 'btnLobbyClose' || e.target.id === 'lobby') { G.lobbyHidden = true; G.lobbyOpen = false; renderLobby() }
   });
   $('#btnTeams').onclick = () => { G.lobbyOpen = !G.lobbyOpen; if (G.lobbyOpen) G.lobbyHidden = true; renderLobby() };
+  $('#btnSave').onclick = () => netSend({ t: 'save' });
+  $('#lobby').addEventListener('click', e => {
+    const a = e.target.closest('[data-seat-add]'), w = e.target.closest('[data-seat-who]');
+    if (a) { const [side, who] = a.dataset.seatAdd.split(':'); netSend({ t: 'seat', op: 'add', side, who }) }
+    if (w) { const i = w.dataset.seatWho.lastIndexOf(':'); netSend({ t: 'seat', op: 'who', id: w.dataset.seatWho.slice(0, i), who: w.dataset.seatWho.slice(i + 1) }) }
+  });
   document.querySelectorAll('#left .tabs button').forEach(b => b.onclick = () => {
     G.tabL = b.dataset.tab;
     document.querySelectorAll('#left .tabs button').forEach(x => x.classList.toggle('on', x === b));
@@ -1266,6 +1396,7 @@ function bind() {
     else if (k === 'ambush') act({ t: 'ambush', id: u.id });
     else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
+  $('#menu').addEventListener('change', e => { if (e.target && e.target.id === 'saveFile') uploadSave(e.target.files && e.target.files[0]) });
   $('#menu').addEventListener('input', e => {
     const el = e.target.closest && e.target.closest('#nick');
     if (!el) return;
@@ -1313,6 +1444,14 @@ function bind() {
     else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'netRefresh') netPoll();
+    else if (a === 'ldSave' || a === 'dlSave' || a === 'rmSave') {
+      const x = savesList().find(s => s.id === el.dataset.id);
+      if (!x) return;
+      if (a === 'ldSave') loadSave(x);
+      else if (a === 'dlSave') downloadSave(x);
+      else if (confirm('Удалить это сохранение?')) { savesPut(savesList().filter(s => s.id !== x.id)); showMenu() }
+    }
+    else if (a === 'upSave') { const f = $('#saveFile'); if (f) { f.value = ''; f.click() } }
     else if (a === 'netJoin' || a === 'netWatch') {
       clearTimeout(netTimer);
       netSend({ t: 'join', room: el.dataset.room, spec: a === 'netWatch', name: myName, side: M.joinSide === 'any' ? undefined : M.joinSide });
@@ -1340,6 +1479,7 @@ function bind() {
     if (b.dataset.z === 'in') zoomAt(c, 1.45); else if (b.dataset.z === 'out') zoomAt(c, 1 / 1.45);
     else if (b.dataset.z === 'fit') camFit(); else if (b.dataset.z === 'types') { G.showTypes = !G.showTypes; b.classList.toggle('on', G.showTypes) }
     else if (b.dataset.z === 'trees') setTrees(!SCREEN.trees)
+    else if (b.dataset.z === 'wx') setWeatherFX(!SCREEN.weather)
     else if (b.dataset.z === 'sel') { const u = selUnit(); if (u) camTo(H.center(u.hex), Math.max(G.view.s, S_WORK())) }
   });
   window.addEventListener('keydown', e => {
@@ -1370,6 +1510,7 @@ function bind() {
     else if (k === 't' || k === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
     else if (k === 'f' || k === 'а') camFit();
     else if (k === 'l' || k === 'д') setTrees(!SCREEN.trees);
+    else if (k === 'w' || k === 'ц') setWeatherFX(!SCREEN.weather);
     else if ((k === 'c' || k === 'с') && selUnit()) camTo(H.center(selUnit().hex));
     else if (e.key === '?') showHelp();
   });

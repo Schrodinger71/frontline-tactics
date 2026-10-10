@@ -172,6 +172,54 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
     console.log('сетевая игра: ok');
   }
 
+  /* сохранение и загрузка; состав по ходу партии */
+  {
+    const host = client(port), guest = client(port), other = client(port);
+    await Promise.all([host.open, guest.open, other.open]);
+    host.send({ t: 'create', mode: 'both', side: 'n', map: 'tundra', vsBot: true, name: 'Хозяин' });
+    const hj = await host.wait(m => m.t === 'joined');
+    assert.strictEqual(hj.host, 'n', 'хозяин — создатель');
+    await sleep(100);
+    /* хозяин добавляет место игроку на своей стороне и бота противнику */
+    host.send({ t: 'seat', op: 'add', side: 'n', who: 'open' });
+    let seats = await host.wait(m => m.t === 'seats' && m.seats.length === 3);
+    assert(seats.seats.some(x => x.id === 'n2' && x.who === 'open'), 'новое место ждёт игрока');
+    host.send({ t: 'seat', op: 'add', side: 's', who: 'bot' });
+    seats = await host.wait(m => m.t === 'seats' && m.seats.length === 4);
+    assert(seats.seats.some(x => x.id === 's2' && x.who === 'bot'), 'новое место бота');
+    /* гость входит на открытое место; менять состав он не может */
+    guest.send({ t: 'join', room: hj.room, name: 'Гость' });
+    const gj = await guest.wait(m => m.t === 'joined');
+    assert.strictEqual(gj.seat, 'n2', 'гость сел на новое место');
+    guest.send({ t: 'seat', op: 'add', side: 's', who: 'bot' });
+    await guest.wait(m => m.t === 'error' && /хозяин/.test(m.msg));
+    host.send({ t: 'seat', op: 'who', id: 'n2', who: 'bot' });
+    await host.wait(m => m.t === 'error' && /занято/.test(m.msg));
+    /* сохранение: только игроку за столом */
+    other.send({ t: 'save' });
+    await other.wait(m => m.t === 'error');
+    host.send({ t: 'save' });
+    const sv = await host.wait(m => m.t === 'saved');
+    assert(typeof sv.data === 'string' && sv.data.length > 100 && sv.meta.map === 'tundra' && sv.meta.seat === 'n', 'снимок пришёл');
+    /* загрузка: новая партия с новым кодом, хозяин на своём месте, место гостя открыто */
+    other.send({ t: 'load', data: sv.data, seat: sv.meta.seat, name: 'Хозяин' });
+    const lj = await other.wait(m => m.t === 'joined');
+    assert.notStrictEqual(lj.room, hj.room, 'загрузка — новая партия');
+    assert.strictEqual(lj.seat, 'n', 'сел на своё место');
+    assert(lj.seats.some(x => x.id === 'n2' && x.who === 'open') && lj.seats.some(x => x.id === 's2' && x.who === 'bot'), 'места восстановлены');
+    const ls = await other.wait(m => m.t === 'snap' && m.v.map === 'tundra');
+    assert(ls.v.units.length > 0, 'снимок загруженной партии');
+    /* мусор вместо снимка — отказ, сервер жив */
+    other.msgs = [];
+    other.send({ t: 'load', data: 'это не снимок' });
+    await other.wait(m => m.t === 'error');
+    other.ws.send(JSON.stringify({ t: 'list', pad: 'x'.repeat(20000) }));   /* длинное — только загрузке */
+    await sleep(150);
+    assert(!other.msgs.some(m => m.t === 'rooms'), 'длинное сообщение не-загрузки отброшено');
+    for (const c of [host, guest, other]) c.ws.close();
+    console.log('сохранение и состав: ok');
+  }
+
   for (const c of [a, p1, p2, sp, w]) c.ws.close();
   server.close();
   for (const r of rooms.values()) r.close();

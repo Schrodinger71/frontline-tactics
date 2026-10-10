@@ -14,14 +14,45 @@
      освещение по времени суток: рассвет, день, закат, ночь.
    ============================================================ */
 
-/* Подложку печём с запасом PAD вокруг экрана и держим вместе с положением
-   камеры, для которого она испечена. Пока камера не ушла за этот запас и
-   масштаб не менялся, кадр — просто копирование готового слоя (сотые доли мс)
-   вместо перерисовки (на максимальном приближении это были десятки мс). */
-const PAD = 170;
-let BASE = null, baseKey = '', baseAt = null;
-/** подложку печём в свой холст и дальше только копируем, пока вид не изменился */
-function renderBaseTo(s) { const main = cx; cx = BASE.getContext('2d'); try { renderBase(s) } finally { cx = main } }
+/* ---------- подложка плитками ----------
+   Подложка печётся квадратными плитками TILE×TILE пикселей экрана под
+   «испечённый» масштаб BS и дальше только копируется. Раньше она была одним
+   слоем размером с экран и запасом 170 пикс.: при прокрутке на крупном масштабе
+   его перепекали целиком каждые 170 пикселей, а во время жеста зума — каждые
+   140 мс (на слабом устройстве кадр длиннее, и перепечка шла каждый кадр —
+   отсюда «чем ближе, тем сильнее лагает»). Теперь:
+     прокрутка — допекаются только открывшиеся плитки, остальные на месте;
+     жест зума — готовые плитки растягиваются, пока масштаб не уйдёт вдвое;
+       чёткие плитки печём, когда масштаб постоял ~0,2 с, и не все сразу:
+       за кадр — сколько успеем за несколько мс, остальные пока показывает
+       растянутый прежний слой;
+     в простое плитки вокруг экрана допекаются заранее, по одной за кадр. */
+const TILE = 384;
+const TILES = new Map();          /* `${bs}|${tx}|${ty}` → холст */
+let tileKey = '', tileBS = 0, tilePrevBS = 0, tilePx = 0, lastS = 0, lastSAt = 0;
+function tileId(bs, tx, ty) { return bs + '|' + tx + '|' + ty }
+/** испечь одну плитку: подменяем экран (CW/CH и центр вида) на плитку */
+function renderTile(bs, tx, ty) {
+  const side = Math.ceil(TILE * DPR), c = document.createElement('canvas');
+  c.width = c.height = side;
+  const main = cx, oCW = CW, oCH = CH, ov = G.view;
+  CW = CH = TILE;
+  G.view = { x: (tx + .5) * TILE / bs, y: (ty + .5) * TILE / bs, s: bs };
+  cx = c.getContext('2d');
+  try { renderBase(bs) } finally { cx = main; CW = oCW; CH = oCH; G.view = ov }
+  const id = tileId(bs, tx, ty);
+  TILES.set(id, c); tilePx += side * side;
+  return c;
+}
+/** самые давние плитки — вон, пока не уложимся в бюджет памяти (~3 экрана) */
+function tileEvict(keep) {
+  const max = Math.max(4e6, (CW + TILE * 2) * (CH + TILE * 2) * DPR * DPR * 2.2);
+  for (const [k, v] of TILES) {
+    if (tilePx <= max) break;
+    if (keep.has(k)) continue;
+    TILES.delete(k); tilePx -= v.width * v.height;
+  }
+}
 const MAPGEO = { id: null, edges: null, rivers: null, roads: null, bridges: null };
 
 /** геометрия карты, которую рисуем вектором: один раз на карту */
@@ -78,58 +109,89 @@ function todLook() {
 }
 
 function drawBase() {
-  const v = G.view, s = v.s;
+  const v = G.view, s = v.s, now = performance.now();
   const brKey = (G.br || []).map(b => b.join(':')).join(',');
-  /* в ключе нет ни положения камеры, ни масштаба: сдвиг гасится запасом,
-     а масштаб — растягиванием готового слоя во время жеста */
-  const key = [CW, CH, DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, SCREEN.trees ? 1 : 0, brKey, G.selRiv || ''].join('|');
-  const needW = Math.ceil((CW + PAD * 2) * DPR), needH = Math.ceil((CH + PAD * 2) * DPR);
-  if (!BASE || BASE.width !== needW || BASE.height !== needH) {
-    BASE = document.createElement('canvas'); BASE.width = needW; BASE.height = needH; baseKey = ''; baseAt = null;
-  }
-  const now = performance.now();
-  const k = baseAt ? s / baseAt.s : 1;                     /* во сколько раз тянем готовый слой */
-  const drift = baseAt ? Math.max(Math.abs((baseAt.x - v.x) * s), Math.abs((baseAt.y - v.y) * s)) : 0;
-  /* растянутый слой обязан закрывать экран целиком, иначе по краям будет пусто */
-  const covers = baseAt && (CW + PAD * 2) * k >= CW + drift * 2 + 4 && (CH + PAD * 2) * k >= CH + drift * 2 + 4;
-  const exact = baseAt && k === 1 && drift <= PAD;
-  /* печём заново, если слой не годится вовсе либо жест кончился и пора вернуть чёткость */
-  const stale = !baseAt || key !== baseKey || !covers || k < .55 || k > 2.2;
-  const settled = !exact && !stale && now - (baseAt.t || 0) > 140;
-  if (stale || settled) {
-    baseKey = key; baseAt = { x: v.x, y: v.y, s, t: now };
-    /* печём на вьюпорт с запасом: w2s и слои читают CW/CH, поэтому подменяем их */
-    const oCW = CW, oCH = CH;
-    CW = oCW + PAD * 2; CH = oCH + PAD * 2;
-    try { renderBaseTo(s) } finally { CW = oCW; CH = oCH }
-  }
-  const kk = s / baseAt.s, wpx = (CW + PAD * 2) * kk, hpx = (CH + PAD * 2) * kk;
-  const dx = CW / 2 - wpx / 2 + (baseAt.x - v.x) * s;
-  const dy = CH / 2 - hpx / 2 + (baseAt.y - v.y) * s;
+  /* в ключе нет ни положения камеры, ни масштаба: они — в номере плитки */
+  const key = [DPR, G.mapId, hourOfTurn(G.turn || 0), G.showTypes ? 1 : 0, SCREEN.trees ? 1 : 0, brKey].join('|');
+  if (key !== tileKey) { TILES.clear(); tilePx = 0; tileKey = key; tileBS = 0; tilePrevBS = 0 }
+  if (s !== lastS) { lastS = s; lastSAt = now }
+  if (!tileBS) tileBS = s;
+  /* жест кончился (масштаб стоит) или растяжение ушло далеко — новый испечённый масштаб */
+  const k0 = s / tileBS;
+  if (k0 !== 1 && (k0 < .6 || k0 > 1.7 || now - lastSAt > 200)) { tilePrevBS = tileBS; tileBS = s }
   cx.save(); cx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
-  cx.drawImage(BASE, dx, dy, wpx, hpx);
-  cx.restore();
-}
-
-function renderBase(s) {
-  const geo = mapGeo(G.mapId);
-  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  /* стол штабной карты */
+  /* стол штабной карты — только если лист не закрывает экран целиком */
   const a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
-  /* стол виден, только если лист карты не закрывает холст целиком */
   if (a.x > 0 || a.y > 0 || b.x < CW || b.y < CH) {
     const bg = cx.createRadialGradient(CW / 2, CH / 2, 0, CW / 2, CH / 2, Math.max(CW, CH) * .75);
     bg.addColorStop(0, '#0b1116'); bg.addColorStop(1, '#030507');
     cx.fillStyle = bg; cx.fillRect(0, 0, CW, CH);
   }
+  const bs = tileBS, kk = s / bs, tw = TILE * kk;
+  /* левый верхний угол экрана в пикселях испечённого масштаба */
+  let ox = CW / 2 - v.x * bs * kk, oy = CH / 2 - v.y * bs * kk;
+  if (kk === 1) { ox = Math.round(ox * DPR) / DPR; oy = Math.round(oy * DPR) / DPR }   /* без пересэмплирования — чётко */
+  const M = 64;                                                   /* поле за краем листа: тень, деления, подписи */
+  const lo = o => Math.floor(Math.max(-M, -o / kk) / TILE);
+  const tx0 = lo(ox), ty0 = lo(oy);
+  const tx1 = Math.floor(Math.min(H.WW * bs + M, (CW - ox) / kk) / TILE), ty1 = Math.floor(Math.min(H.WH * bs + M, (CH - oy) / kk) / TILE);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
+  const keep = new Set(), budget = CAM.moving ? 4 : 9;
+  const put = (c, x, y, w) => cx.drawImage(c, x, y, w, w);
+  for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+    const id = tileId(bs, tx, ty), x = ox + tx * tw, y = oy + ty * tw;
+    let c = TILES.get(id);
+    if (c) { TILES.delete(id); TILES.set(id, c); keep.add(id); put(c, x, y, tw); continue }
+    /* нет чёткой плитки: пока есть время — печём, иначе растягиваем прежний масштаб */
+    if (performance.now() - now > budget && fallbackTile(x, y, tw, keep)) continue;
+    c = renderTile(bs, tx, ty); keep.add(id); put(c, x, y, tw);
+  }
+  /* простой: допекаем по плитке из кольца вокруг экрана, чтобы прокрутка не ждала */
+  if (!CAM.moving && kk === 1 && performance.now() - now < 3) {
+    let done = false;
+    for (let ty = ty0 - 1; ty <= ty1 + 1 && !done; ty++) for (let tx = tx0 - 1; tx <= tx1 + 1 && !done; tx++) {
+      if (ty >= ty0 && ty <= ty1 && tx >= tx0 && tx <= tx1) continue;
+      if (tx * TILE > H.WW * bs + M || ty * TILE > H.WH * bs + M || (tx + 1) * TILE < -M || (ty + 1) * TILE < -M) continue;
+      const id = tileId(bs, tx, ty);
+      if (TILES.has(id)) { keep.add(id); continue }
+      renderTile(bs, tx, ty); keep.add(id); done = true;
+    }
+  }
+  cx.restore();
+  tileEvict(keep);
+}
+/** закрыть место плитки (экранный квадрат x, y, w) растянутыми плитками прежнего масштаба; false — их нет */
+function fallbackTile(x, y, w, keep) {
+  const pb = tilePrevBS, v = G.view, s = v.s;
+  if (!pb) return false;
+  const k = s / pb, pw = TILE * k, ox = CW / 2 - v.x * pb * k, oy = CH / 2 - v.y * pb * k;
+  const a0 = Math.floor((x - ox) / pw), a1 = Math.floor((x + w - ox - .01) / pw);
+  const b0 = Math.floor((y - oy) / pw), b1 = Math.floor((y + w - oy - .01) / pw);
+  const list = [];
+  for (let ty = b0; ty <= b1; ty++) for (let tx = a0; tx <= a1; tx++) {
+    const c = TILES.get(tileId(pb, tx, ty));
+    if (!c) return false;
+    list.push([c, tx, ty]);
+  }
+  cx.save(); cx.beginPath(); cx.rect(x, y, w, w); cx.clip();
+  for (const [c, tx, ty] of list) { keep.add(tileId(pb, tx, ty)); cx.drawImage(c, ox + tx * pw, oy + ty * pw, pw, pw) }
+  cx.restore();
+  return true;
+}
+
+function renderBase(s) {
+  const geo = mapGeo(G.mapId);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  /* стол (фон вокруг листа) рисуется в кадре, плитка за краем листа прозрачная */
+  const a = w2s({ x: 0, y: 0 }), b = w2s({ x: H.WW, y: H.WH });
   /* Тень под листом карты. На приближении лист больше экрана в разы, а размытие
      по такому прямоугольнику стоит десятки миллисекунд — поэтому тень рисуем
      только когда край листа вообще виден, а подложку заливаем обрезанной. */
-  const edgeVisible = a.x > -40 || a.y > -40 || b.x < CW + 40 || b.y < CH + 40;
+  /* обрезаем с запасом 120 пикс.: тень от обрезанного края не должна залезать в плитку */
+  const edgeVisible = a.x > -120 || a.y > -120 || b.x < CW + 120 || b.y < CH + 120;
   const cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const fx = cl(a.x, -40, CW + 40), fy = cl(a.y, -40, CH + 40);
-  const fw = cl(b.x, -40, CW + 40) - fx, fh = cl(b.y, -40, CH + 40) - fy;
+  const fx = cl(a.x, -120, CW + 120), fy = cl(a.y, -120, CH + 120);
+  const fw = cl(b.x, -120, CW + 120) - fx, fh = cl(b.y, -120, CH + 120) - fy;
   if (fw > 0 && fh > 0) {
     cx.save();
     if (edgeVisible) { cx.shadowColor = 'rgba(0,0,0,.7)'; cx.shadowBlur = 28 }
@@ -170,12 +232,13 @@ function renderBase(s) {
   drawBridgesBase(geo, s);
   if (G.showTypes) drawTypeTint(s);
   drawGrid(geo, s);
-  if (G.selRiv) drawRiverEdges(s);
   const tod = todLook();
   if (tod) {
     cx.fillStyle = tod.shade; cx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
     if (tod.tint) {
-      const g = cx.createLinearGradient(tod.dir > 0 ? CW : 0, 0, tod.dir > 0 ? 0 : CW, 0);
+      /* свет зари/заката — от края карты, а не экрана: плитки стыкуются без швов */
+      const ga = w2s({ x: tod.dir > 0 ? H.WW : 0, y: 0 }).x, gb = w2s({ x: tod.dir > 0 ? 0 : H.WW, y: 0 }).x;
+      const g = cx.createLinearGradient(ga, 0, gb, 0);
       g.addColorStop(0, tod.tint); g.addColorStop(.7, 'rgba(0,0,0,0)');
       cx.fillStyle = g; cx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
     }
@@ -208,11 +271,12 @@ function drawFrame(a, b, s) {
   }
   cx.stroke();
   cx.textAlign = 'center';
-  for (let x = 50; x < H.WW; x += 50) { const q = w2s({ x, y: 0 }); if (q.x > 0 && q.x < CW) { cx.fillText(x, q.x, a.y - 11); cx.fillText(x, q.x, b.y + 19) } }
+  /* подписи — и у самого края плитки: соседняя дорисует остальное */
+  for (let x = 50; x < H.WW; x += 50) { const q = w2s({ x, y: 0 }); if (q.x > -40 && q.x < CW + 40) { cx.fillText(x, q.x, a.y - 11); cx.fillText(x, q.x, b.y + 19) } }
   cx.textAlign = 'right';
-  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: 0, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, a.x - 10, q.y + 3) }
+  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: 0, y }); if (q.y > -20 && q.y < CH + 20) cx.fillText(y, a.x - 10, q.y + 3) }
   cx.textAlign = 'left';
-  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: H.WW, y }); if (q.y > 0 && q.y < CH) cx.fillText(y, b.x + 10, q.y + 3) }
+  for (let y = 50; y < H.WH; y += 50) { const q = w2s({ x: H.WW, y }); if (q.y > -20 && q.y < CH + 20) cx.fillText(y, b.x + 10, q.y + 3) }
 }
 
 /* ---------- кроны деревьев: вблизи лес из отдельных крон с тенью ----------
@@ -226,19 +290,28 @@ function drawFrame(a, b, s) {
    Отключаются в настройках экрана («Деревья вблизи») и кнопкой ♣. */
 const TREE_SPR = new Map();
 function treeSprite(rp) {
-  let c = TREE_SPR.get(rp);
+  const winter = mapWinter(), key = rp + (winter ? 'w' : '');
+  let c = TREE_SPR.get(key);
   if (c) return c;
   const R = rp / DPR, sz = Math.ceil(rp * 2.9) + 2;
   c = document.createElement('canvas'); c.width = c.height = sz;
   const g = c.getContext('2d'), o = sz / 2 - rp * .2;
-  g.fillStyle = 'rgba(6,12,6,.5)'; g.beginPath(); g.arc(o + rp * .35, o + rp * .4, rp, 0, 7); g.fill();
+  g.fillStyle = winter ? 'rgba(40,56,76,.42)' : 'rgba(6,12,6,.5)'; g.beginPath(); g.arc(o + rp * .35, o + rp * .4, rp, 0, 7); g.fill();
   const gr = g.createRadialGradient(o - rp * .3, o - rp * .35, rp * .1, o, o, rp);
-  gr.addColorStop(0, '#4b6a42'); gr.addColorStop(.55, '#2c4a30'); gr.addColorStop(1, '#1d3322');
+  if (winter) { gr.addColorStop(0, '#46625a'); gr.addColorStop(.55, '#253d36'); gr.addColorStop(1, '#162823') }
+  else { gr.addColorStop(0, '#4b6a42'); gr.addColorStop(.55, '#2c4a30'); gr.addColorStop(1, '#1d3322') }
   g.fillStyle = gr; g.beginPath(); g.arc(o, o, rp, 0, 7); g.fill();
-  g.strokeStyle = 'rgba(8,16,8,.6)'; g.lineWidth = Math.max(.6, rp * .08); g.stroke();
+  g.strokeStyle = winter ? 'rgba(10,20,22,.6)' : 'rgba(8,16,8,.6)'; g.lineWidth = Math.max(.6, rp * .08); g.stroke();
+  if (winter) {
+    /* снег на кроне — с освещённой стороны */
+    g.fillStyle = 'rgba(226,234,240,.72)';
+    g.beginPath(); g.ellipse(o - rp * .26, o - rp * .32, rp * .46, rp * .3, -.5, 0, 7); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.85)';
+    g.beginPath(); g.ellipse(o - rp * .32, o - rp * .4, rp * .22, rp * .14, -.5, 0, 7); g.fill();
+  }
   c.off = o; c.R = R;
   if (TREE_SPR.size > 60) TREE_SPR.clear();
-  TREE_SPR.set(rp, c);
+  TREE_SPR.set(key, c);
   return c;
 }
 
@@ -307,22 +380,20 @@ function drawTrees(s) {
   cx.globalAlpha = 1;
 }
 /** вкл/выкл кроны (кнопка ♣ и настройки экрана) */
-function setTrees(on) {
-  setScreen('trees', !!on);
-  const b = document.querySelector('[data-z=trees]'); if (b) b.classList.toggle('on', !!on);
-  document.querySelectorAll('[data-scr=trees]').forEach(el => { el.checked = !!on });
-}
+function setTrees(on) { setScreen('trees', !!on) }
 
 /* ---------- реки ---------- */
 function strokePts(pts) { cx.beginPath(); for (let i = 0; i < pts.length; i++) { const q = w2s(pts[i]); i ? cx.lineTo(q.x, q.y) : cx.moveTo(q.x, q.y) } }
 function drawRivers(geo, s) {
   cx.lineJoin = 'round'; cx.lineCap = 'round';
+  const winter = mapWinter();
   for (const r of geo.rivers) {
     const wpx = Math.max(1.6, r.w * s);
     strokePts(r.pts);
-    cx.strokeStyle = 'rgba(28,40,30,.85)'; cx.lineWidth = wpx + Math.max(2, s * .5); cx.stroke();      /* берег */
-    cx.strokeStyle = '#16405a'; cx.lineWidth = wpx; cx.stroke();
-    cx.strokeStyle = 'rgba(64,124,160,.75)'; cx.lineWidth = wpx * .62; cx.stroke();
+    /* зимой у берегов — ледяные закраины, посередине — тёмная вода */
+    cx.strokeStyle = winter ? 'rgba(232,238,243,.95)' : 'rgba(28,40,30,.85)'; cx.lineWidth = wpx + Math.max(2, s * (winter ? .9 : .5)); cx.stroke();      /* берег */
+    cx.strokeStyle = winter ? '#1f3a4a' : '#16405a'; cx.lineWidth = wpx; cx.stroke();
+    cx.strokeStyle = winter ? 'rgba(96,136,158,.7)' : 'rgba(64,124,160,.75)'; cx.lineWidth = wpx * .62; cx.stroke();
     if (wpx > 5) { cx.strokeStyle = 'rgba(150,200,225,.22)'; cx.lineWidth = Math.max(1, wpx * .16); cx.setLineDash([wpx * 1.6, wpx * 2.2]); cx.stroke(); cx.setLineDash([]) }
   }
   /* подписи рек на крупном масштабе */
@@ -331,7 +402,7 @@ function drawRivers(geo, s) {
     cx.fillStyle = 'rgba(150,205,230,.75)'; cx.textAlign = 'center';
     for (const r of geo.rivers) for (const t of [.3, .7]) {
       const i = Math.floor(r.pts.length * t), p = r.pts[i], p2 = r.pts[Math.min(r.pts.length - 1, i + 4)], q = w2s(p);
-      if (!onScreen(q, -20)) continue;
+      if (!onScreen(q, 160)) continue;
       let ang = Math.atan2(p2.y - p.y, p2.x - p.x); if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
       cx.save(); cx.translate(q.x, q.y); cx.rotate(ang); cx.fillText(r.n, 0, -r.w * s * .5 - 6); cx.restore();
     }
@@ -339,10 +410,11 @@ function drawRivers(geo, s) {
 }
 /* ---------- дороги ---------- */
 function drawRoads(geo, s) {
-  const wm = clamp(s * .42, 1.3, 4.4), ws = clamp(s * .28, 1, 3);
+  const wm = clamp(s * .42, 1.3, 4.4), ws = clamp(s * .28, 1, 3), winter = mapWinter();
   cx.lineJoin = 'round'; cx.lineCap = 'round';
-  for (const r of geo.roads) { strokePts(r.pts); cx.strokeStyle = 'rgba(14,12,8,.62)'; cx.lineWidth = (r.main ? wm : ws) + 1.8; cx.stroke() }
-  for (const r of geo.roads) { strokePts(r.pts); cx.strokeStyle = r.main ? '#b8a171' : '#8d8262'; cx.lineWidth = r.main ? wm : ws; cx.stroke() }
+  /* зимой дорога — накатанный серый снег с тёмной обочиной */
+  for (const r of geo.roads) { strokePts(r.pts); cx.strokeStyle = winter ? 'rgba(52,60,68,.55)' : 'rgba(14,12,8,.62)'; cx.lineWidth = (r.main ? wm : ws) + 1.8; cx.stroke() }
+  for (const r of geo.roads) { strokePts(r.pts); cx.strokeStyle = winter ? (r.main ? '#8e8a82' : '#a3a098') : r.main ? '#b8a171' : '#8d8262'; cx.lineWidth = r.main ? wm : ws; cx.stroke() }
   if (s > 5) for (const r of geo.roads) if (r.main) { strokePts(r.pts); cx.strokeStyle = 'rgba(250,236,190,.32)'; cx.lineWidth = 1; cx.setLineDash([5, 7]); cx.stroke(); cx.setLineDash([]) }
 }
 /* ---------- мосты ---------- */
@@ -393,10 +465,15 @@ function drawGrid(geo, s) {
   };
   cx.lineCap = 'butt';
   cx.lineWidth = 1;
-  /* гравировка: тёмная тень на пиксель ниже и светлая линия ребра */
+  /* гравировка: тёмная тень на пиксель ниже и светлая линия ребра (на снегу — тёмная линия и блик) */
   cx.lineWidth = hw > 60 ? 1.25 : 1;
-  path(1, true); cx.strokeStyle = `rgba(0,0,0,${.5 * k})`; cx.stroke();
-  path(0, false); cx.strokeStyle = `rgba(230,238,216,${.3 * k})`; cx.stroke();
+  if (mapWinter()) {
+    path(1, true); cx.strokeStyle = `rgba(255,255,255,${.35 * k})`; cx.stroke();
+    path(0, false); cx.strokeStyle = `rgba(36,52,66,${.42 * k})`; cx.stroke();
+  } else {
+    path(1, true); cx.strokeStyle = `rgba(0,0,0,${.5 * k})`; cx.stroke();
+    path(0, false); cx.strokeStyle = `rgba(230,238,216,${.3 * k})`; cx.stroke();
+  }
   /* номера клеток: КККРР, как на штабной карте */
   if (hw > 74) {
     cx.font = `500 ${Math.round(clamp(hw * .11, 8, 11))}px ui-monospace,Consolas,monospace`;

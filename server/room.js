@@ -36,15 +36,23 @@ function planFrom(side, vsBot, watch, raw) {
 }
 
 class Room {
-  constructor(id, mode, side, vsBot, watch, map, rawPlan) {
+  /** pre — готовая партия из сохранения: { engine } (места-боты остаются ботами, людские — открыты) */
+  constructor(id, mode, side, vsBot, watch, map, rawPlan, pre) {
     this.id = id; this.mode = mode;
     this.watch = !!watch;
-    this.plan = planFrom(side, vsBot, this.watch, rawPlan);
-    const teams = { [N]: this.plan[N].map(x => ({ bot: x === 'bot' })), [S]: this.plan[S].map(x => ({ bot: x === 'bot' })) };
-    this.engine = new Game(mode, side, undefined, map, { teams });
     /* кто сидит на месте: 'bot' держит бот, 'open' ждёт человека */
     this.slot = new Map();
-    for (const sd of [N, S]) this.engine.seatsOf(sd).forEach((st, i) => this.slot.set(st.id, this.plan[sd][i] || 'open'));
+    if (pre && pre.engine) {
+      this.engine = pre.engine;
+      for (const st of this.engine.seats) this.slot.set(st.id, this.engine.bots[st.id] ? 'bot' : 'open');
+    } else {
+      const plan = planFrom(side, vsBot, this.watch, rawPlan);
+      const teams = { [N]: plan[N].map(x => ({ bot: x === 'bot' })), [S]: plan[S].map(x => ({ bot: x === 'bot' })) };
+      this.engine = new Game(mode, side, undefined, map, { teams });
+      for (const sd of [N, S]) this.engine.seatsOf(sd).forEach((st, i) => this.slot.set(st.id, plan[sd][i] || 'open'));
+    }
+    /* хозяин партии — первый севший человек: он может менять состав по ходу игры */
+    this.host = null;
     this.taken = new Map();   /* место → клиент */
     this.names = new Map();   /* место → ник игрока (уже очищенный на входе) */
     this.vsBot = this.watch || [...this.slot.values()].includes('bot');
@@ -108,10 +116,11 @@ class Room {
   joinAs(client, side, seat) {
     client.room = this; client.side = side; client.seat = seat;
     if (seat) { this.taken.set(seat, client); if (client.name) this.names.set(seat, client.name) }
+    if (seat && !this.host) this.host = client;
     this.clients.add(client);
     client.send({
       t: 'joined', room: this.id, mode: this.mode, side, seat, vsBot: this.vsBot, watch: this.watch,
-      bots: this.engine.bots, seats: this.seats()
+      bots: this.engine.bots, seats: this.seats(), host: this.hostSeat()
     });
     client.send({ t: 'snap', v: this.engine.snapshotFor(seat || 'spec') });
     this.note(client, seat ? `${SIDE_NAME[side]}: ${this.who(seat)} подключился` : null);
@@ -120,13 +129,45 @@ class Room {
   leave(client) {
     if (!this.clients.delete(client)) return;
     if (client.seat && this.taken.get(client.seat) === client) this.taken.delete(client.seat);
+    if (this.host === client) this.host = [...this.clients].find(c => c.seat) || null;
     if (!this.clients.size) { this.emptySince = Date.now(); clearTimeout(this.timer); this.timer = null }
     if (client.seat) { this.note(null, `${SIDE_NAME[client.side]}: ${this.who(client.seat)} отключился`); this.names.delete(client.seat) }
     else this.note(null, null);
     client.seat = null;
     this.kick();
   }
-  note(except, text) { for (const c of this.clients) c.send({ t: 'seats', seats: this.seats(), note: c === except ? null : text }) }
+  note(except, text) { for (const c of this.clients) c.send({ t: 'seats', seats: this.seats(), host: this.hostSeat(), note: c === except ? null : text }) }
+  hostSeat() { return this.host && this.host.seat || null }
+
+  /** Состав по ходу партии (только хозяин): добавить место игроку или боту,
+      отдать свободное место боту или открыть его для человека. */
+  seatOp(client, m) {
+    const err = msg => client.send({ t: 'error', msg });
+    if (!client.seat || client !== this.host) return err('Менять состав может только хозяин партии');
+    if (this.watch || !this.engine || this.engine.over) return err('Состав этой партии не меняется');
+    const who = m.who === 'bot' ? 'bot' : 'open';
+    let text = '';
+    if (m.op === 'add') {
+      const side = m.side === N || m.side === S ? m.side : null;
+      if (!side) return err('Нет такой стороны');
+      const r = this.engine.addSeat(side, who === 'bot');
+      if (!r.ok) return err(r.error);
+      this.slot.set(r.id, who);
+      text = `${SIDE_NAME[side]}: новое место — ${who === 'bot' ? 'бот' : 'ждём игрока'}`;
+    } else if (m.op === 'who') {
+      const id = typeof m.id === 'string' ? m.id : '';
+      if (!this.engine.seatById.has(id)) return err('Нет такого места');
+      if (this.taken.has(id)) return err('Место занято игроком');
+      if (this.slot.get(id) === who) return;
+      this.slot.set(id, who);
+      this.engine.setSeatBot(id, who === 'bot');
+      text = `${SIDE_NAME[this.engine.sideOf(id)]}: место ${this.engine.seatById.get(id).n} — ${who === 'bot' ? 'теперь бот' : 'ждёт игрока'}`;
+    } else return err('Неизвестная операция');
+    this.vsBot = this.watch || [...this.slot.values()].includes('bot');
+    this.note(null, text);
+    this.flush();
+    this.kick();
+  }
 
   /** действие стороны */
   act(client, id, a) {

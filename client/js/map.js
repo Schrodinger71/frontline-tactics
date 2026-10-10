@@ -146,21 +146,55 @@ function supplyNetPath() {
   }
   return (NET_PATH = path);
 }
+/** цвет значения снабжения 0–10: от красного через янтарный к зелёному — без ступеней */
+const SUP_STOPS = [[0, 255, 91, 71], [3, 242, 179, 61], [6, 201, 211, 107], [10, 111, 209, 141]];
+function supRGB(v) {
+  for (let i = 1; i < SUP_STOPS.length; i++) {
+    const a = SUP_STOPS[i - 1], b = SUP_STOPS[i];
+    if (v <= b[0]) { const k = (v - a[0]) / (b[0] - a[0]); return [1, 2, 3].map(j => Math.round(a[j] + (b[j] - a[j]) * k)).join(',') }
+  }
+  return SUP_RGB.full;
+}
+/** Что останется без подвоза, если линию перережут в клетке под курсором: клетки сети,
+    до которых от источников уже не дойти, и свои части, которые кормятся только с них.
+    Связность — по соседству клеток сети (на глаз, без мостов и зон контроля). */
+let CUT = null, CUT_KEY = '';
+function supplyCut() {
+  const h0 = G.hover;
+  if (!(h0 >= 0) || !G.svNet || !G.svNet[h0]) return null;
+  const key = h0 + '|' + G.svStr + '|' + G.mapId;
+  if (key === CUT_KEY) return CUT;
+  CUT_KEY = key;
+  const seen = new Uint8Array(H.NH), q = [];
+  for (const sr of G.svSrc || []) if (sr.hex !== h0 && !seen[sr.hex]) { seen[sr.hex] = 1; q.push(sr.hex) }
+  for (let i = 0; i < q.length; i++) for (const n of H.neighbors(q[i])) if (!seen[n] && n !== h0 && G.svNet[n]) { seen[n] = 1; q.push(n) }
+  const hexes = [];
+  for (let h = 0; h < H.NH; h++) if (G.svNet[h] && !seen[h] && h !== h0) hexes.push(h);
+  if (!hexes.length) return (CUT = null);
+  const lost = new Set(hexes); lost.add(h0);
+  let units = 0;
+  for (const u of G.units) {
+    if (u.side !== G.side) continue;
+    const near = H.within(u.hex, 3).filter(h => G.svNet[h]);
+    if (near.length && near.every(h => lost.has(h))) units++;
+  }
+  return (CUT = { hexes, units });
+}
 function drawSupplyOverlay() {
   if (!G.showSupply || !G.sv || !G.terr) return;
   const own = G.spec ? 1 : G.side === N ? 1 : 2, s = G.view.s;
   cx.save();
-  /* поле: подкраска клеток по уровню */
-  const by = { full: [], ok: [], low: [], none: [] };
+  /* поле: подкраска клеток по значению — плавно бледнеет с удалением от дороги */
+  const by = Array.from({ length: 11 }, () => []);
   for (let h = 0; h < H.NH; h++) {
     if (G.terr[h] !== own) continue;
     const q = w2s(H.center(h));
-    if (onScreen(q, 40)) by[supTier(G.sv[h])].push(h);
+    if (onScreen(q, 40)) by[Math.min(10, G.sv[h])].push(h);
   }
-  for (const t in by) {
-    if (!by[t].length) continue;
-    cx.beginPath(); for (const h of by[t]) addHex(h, .96);
-    cx.fillStyle = `rgba(${SUP_RGB[t]},${t === 'none' ? .2 : t === 'low' ? .16 : .1})`; cx.fill();
+  for (let v = 0; v <= 10; v++) {
+    if (!by[v].length) continue;
+    cx.beginPath(); for (const h of by[v]) addHex(h, .96);
+    cx.fillStyle = `rgba(${supRGB(v)},${v === 0 ? .2 : .2 - .011 * v})`; cx.fill();
   }
   /* сеть: по самим дорогам карты — те же сглаженные линии, что нарисованы
      на местности; берём участки, чьи точки лежат в клетках на линии снабжения */
@@ -175,15 +209,29 @@ function drawSupplyOverlay() {
     cx.setLineDash([3 / s, 9 / s]); cx.lineDashOffset = -ANIM * 14 / s; cx.stroke(NET); cx.setLineDash([]);
     cx.restore();
   }
+  /* курсор на линии снабжения: что погаснет, если её перережут здесь */
+  const cut = G.spec ? null : supplyCut();
+  if (cut) {
+    const k = .5 + .5 * Math.sin(ANIM * 5);
+    cx.beginPath(); for (const h of cut.hexes) { const q = w2s(H.center(h)); if (onScreen(q, 40)) addHex(h, .9) }
+    cx.fillStyle = `rgba(255,70,50,${.22 + .14 * k})`; cx.fill();
+    cx.strokeStyle = `rgba(255,110,90,${.5 + .4 * k})`; cx.lineWidth = 1.4; cx.stroke();
+    hexPath(G.hover, .9); cx.strokeStyle = '#ff5b47'; cx.lineWidth = 3; cx.stroke();
+    const q = w2s(H.center(G.hover)), txt = `разрыв здесь: без подвоза ${cut.hexes.length} кл. дороги${cut.units ? ' · частей: ' + cut.units : ''}`;
+    cx.font = '700 11px system-ui'; cx.textAlign = 'center';
+    const w = cx.measureText(txt).width + 14, y = q.y - Hex.R * s * .9 - 20;
+    cx.fillStyle = 'rgba(30,8,6,.94)'; rr(cx, q.x - w / 2, y, w, 18, 5); cx.fill();
+    cx.strokeStyle = '#ff6b55'; cx.lineWidth = 1.2; cx.stroke();
+    cx.fillStyle = '#ffd2c8'; cx.fillText(txt, q.x, y + 13);
+  }
   /* числа в поле — когда клетка достаточно крупная */
   if (s >= 3.2) {
     cx.font = `700 ${Math.round(clamp(s * 1.5, 9, 15))}px system-ui`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-    for (const t in by) for (const h of by[t]) {
+    for (let v = 1; v <= 10; v++) for (const h of by[v]) {
       if (G.svNet && G.svNet[h]) continue;
-      const q = w2s(H.center(h)), v = G.sv[h];
-      if (!v) continue;
+      const q = w2s(H.center(h));
       cx.fillStyle = 'rgba(0,0,0,.55)'; cx.fillText(v, q.x + 1, q.y + 1);
-      cx.fillStyle = `rgb(${SUP_RGB[t]})`; cx.fillText(v, q.x, q.y);
+      cx.fillStyle = `rgb(${supRGB(v)})`; cx.fillText(v, q.x, q.y);
     }
     cx.textBaseline = 'alphabetic';
   }
@@ -194,7 +242,7 @@ function drawSupplyOverlay() {
     shown.push(sr);
     const q = w2s(H.center(sr.hex));
     if (!onScreen(q, 60)) continue;
-    const txt = (sr.k === 'rear' ? 'станция' : sr.k === 'fob' ? 'КП' : 'склад') + ' · ' + sr.v;
+    const txt = (sr.k === 'rear' ? 'станция' : sr.k === 'fob' ? 'КП' : sr.k === 'depot' ? 'полевой склад' : 'склад') + ' · ' + sr.v;
     cx.font = '700 11px system-ui'; cx.textAlign = 'center';
     const w = cx.measureText(txt).width + 14, y = q.y + Hex.R * s * .9 + 3;   /* под клеткой: сверху — подпись города */
     cx.fillStyle = 'rgba(8,22,40,.92)'; rr(cx, q.x - w / 2, y, w, 17, 5); cx.fill();
@@ -238,15 +286,20 @@ function drawCmdSectors() {
   cx.restore();
 }
 
-/* ---------- территория и линия фронта (как в Order of Battle) ----------
-   Земля каждой стороны чуть подкрашена, линия фронта идёт по рёбрам клеток
-   между территориями. Пути строятся в координатах карты один раз на снимок. */
+/* ---------- территория и линия фронта ----------
+   Земля каждой стороны чуть подкрашена (общий слой с туманом, overlayLayer).
+   Линия фронта — двухцветная лента по границе территорий: со своей стороны
+   синяя, со стороны противника красная. Углы клеток сглажены, чтобы лента
+   шла плавно, а не пилой. Там, где у линии стоят части, лента толще; где
+   части сторон стоят друг против друга — самая толстая и пульсирует.
+   Котлы (острова земли без источников снабжения) обведены бегущим пунктиром. */
 let FRONT = null, FRONT_KEY = '';
 function buildFront() {
   if (FRONT_KEY === G.terrStr + '|' + G.mapId) return FRONT;
   FRONT_KEY = G.terrStr + '|' + G.mapId;
   if (!G.terr || typeof Path2D !== 'function') return (FRONT = null);
-  const fill = { 1: new Path2D(), 2: new Path2D() }, line = new Path2D(), segs = [];
+  /* line — граница по рёбрам клеток, для мини-карты */
+  const fill = { 1: new Path2D(), 2: new Path2D() }, line = new Path2D();
   for (let h = 0; h < H.NH; h++) {
     const t = G.terr[h];
     if (!t) continue;
@@ -258,23 +311,93 @@ function buildFront() {
       if (n < 0 || n < h || !G.terr[n] || G.terr[n] === t) continue;
       const [i, j] = EDGE_V[d];
       line.moveTo(ce[i].x, ce[i].y); line.lineTo(ce[j].x, ce[j].y);
-      segs.push(ce[i].x, ce[i].y, ce[j].x, ce[j].y);
     }
   }
-  return (FRONT = { fill, line, segs });
+  return (FRONT = { fill, line });
 }
-/** линия фронта; подкраска земли — в общем слое с туманом (overlayLayer) */
+/* полуширина одной полосы ленты, км: тихий участок · части у линии · соприкосновение */
+const RIB_OFF = [.26, .4, .62];
+let RIBBON = null, RIB_KEY = '';
+function buildRibbon() {
+  const key = G.terrStr + '|' + G.mapId + '|' + (G.units || []).map(u => u.hex).join(',');
+  if (key === RIB_KEY) return RIBBON;
+  RIB_KEY = key;
+  if (!G.terr || typeof Path2D !== 'function') return (RIBBON = null);
+  const occ = new Map();
+  for (const u of G.units || []) occ.set(u.hex, u.side === N ? 1 : 2);
+  const verts = new Map(), segs = [];
+  const vk = p => Math.round(p.x * 8) + ':' + Math.round(p.y * 8);
+  const vert = p => { const k = vk(p); if (!verts.has(k)) verts.set(k, { x: p.x, y: p.y, nb: [] }); return k };
+  for (let h = 0; h < H.NH; h++) {
+    const t = G.terr[h];
+    if (!t) continue;
+    const ce = H.corners(h), c0 = H.center(h);
+    for (let d = 0; d < 6; d++) {
+      const n = H.nb(h, d);
+      if (n < 0 || n < h || !G.terr[n] || G.terr[n] === t) continue;
+      const [i, j] = EDGE_V[d], cn = H.center(n), L = Math.hypot(cn.x - c0.x, cn.y - c0.y) || 1;
+      const ka = vert(ce[i]), kb = vert(ce[j]);
+      verts.get(ka).nb.push(kb); verts.get(kb).nb.push(ka);
+      const uh = occ.get(h), un = occ.get(n);
+      segs.push({ ka, kb, nx: (cn.x - c0.x) / L, ny: (cn.y - c0.y) / L, t, tn: G.terr[n], heat: uh === t && un === G.terr[n] ? 2 : uh || un ? 1 : 0 });
+    }
+  }
+  /* сглаживание: вершина на непрерывной линии тянется к середине между соседними */
+  const pos = new Map();
+  for (const [k, v] of verts) {
+    if (v.nb.length !== 2) { pos.set(k, v); continue }
+    const a = verts.get(v.nb[0]), b = verts.get(v.nb[1]);
+    pos.set(k, { x: v.x * .5 + (a.x + b.x) * .25, y: v.y * .5 + (a.y + b.y) * .25 });
+  }
+  const band = { 1: [new Path2D(), new Path2D(), new Path2D()], 2: [new Path2D(), new Path2D(), new Path2D()] };
+  for (const sg of segs) {
+    const A = pos.get(sg.ka), B = pos.get(sg.kb), o = RIB_OFF[sg.heat], ox = sg.nx * o, oy = sg.ny * o;
+    band[sg.t][sg.heat].moveTo(A.x - ox, A.y - oy); band[sg.t][sg.heat].lineTo(B.x - ox, B.y - oy);
+    band[sg.tn][sg.heat].moveTo(A.x + ox, A.y + oy); band[sg.tn][sg.heat].lineTo(B.x + ox, B.y + oy);
+  }
+  return (RIBBON = { band });
+}
 function drawFront() {
-  const F = buildFront();
-  if (!F) return;
-  const s = G.view.s;
-  cx.save();
-  cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
-  cx.lineJoin = 'round'; cx.lineCap = 'round';
-  cx.strokeStyle = 'rgba(242,179,61,.16)'; cx.lineWidth = 9 / s; cx.stroke(F.line);
-  cx.strokeStyle = 'rgba(20,14,4,.65)'; cx.lineWidth = 3.6 / s; cx.stroke(F.line);
-  cx.strokeStyle = 'rgba(242,179,61,.9)'; cx.lineWidth = 1.8 / s; cx.stroke(F.line);
-  cx.restore();
+  const F = buildRibbon();
+  if (F) {
+    const s = G.view.s, own = G.spec ? 1 : G.side === N ? 1 : 2;
+    cx.save();
+    cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
+    cx.lineJoin = 'round'; cx.lineCap = 'round';
+    /* тёмная подложка под обе полосы — чтобы лента читалась на любой местности */
+    for (const t of [1, 2]) for (let hq = 0; hq < 3; hq++) { cx.strokeStyle = 'rgba(4,8,12,.6)'; cx.lineWidth = Math.max(RIB_OFF[hq] * 2, 2 / s) + 2.2 / s; cx.stroke(F.band[t][hq]) }
+    const pulse = .78 + .22 * Math.sin(ANIM * 4);
+    for (const t of [1, 2]) for (let hq = 0; hq < 3; hq++) {
+      const a = hq === 2 ? pulse : hq === 1 ? .9 : .72;
+      cx.strokeStyle = t === own ? `rgba(108,195,255,${a})` : `rgba(255,107,85,${a})`;
+      cx.lineWidth = Math.max(RIB_OFF[hq] * 2, 2 / s); cx.stroke(F.band[t][hq]);
+    }
+    cx.restore();
+  }
+  drawPockets();
+}
+/** котлы: пульсирующий контур; свой — тревожно-красный, чужой — золотой */
+function drawPockets() {
+  for (const p of G.pockets || []) {
+    const mine = G.spec ? p.side === N : p.side === G.side;
+    const set = p._set || (p._set = new Set(p.hexes)), k = .5 + .5 * Math.sin(ANIM * 4);
+    let sx = 0, sy = 0, vis = 0;
+    cx.beginPath();
+    for (const h of p.hexes) { const c = H.center(h), q = w2s(c); sx += c.x; sy += c.y; if (onScreen(q, 40)) { addHex(h, 1); vis++ } }
+    if (!vis) continue;
+    cx.fillStyle = mine ? `rgba(255,70,50,${.07 + .06 * k})` : `rgba(242,179,61,${.05 + .05 * k})`; cx.fill();
+    regionEdges(n => set.has(n), p.hexes);
+    cx.lineWidth = 4.4; cx.strokeStyle = 'rgba(0,0,0,.5)'; cx.stroke();
+    cx.lineWidth = 2.4; cx.strokeStyle = mine ? `rgba(255,90,70,${.55 + .45 * k})` : `rgba(255,214,121,${.5 + .5 * k})`;
+    cx.setLineDash([8, 5]); cx.lineDashOffset = -ANIM * 12; cx.stroke(); cx.setLineDash([]);
+    if (p.hexes.length >= 2 && G.view.s >= 1.6) {
+      const q = w2s({ x: sx / p.hexes.length, y: sy / p.hexes.length });
+      cx.font = '800 11px system-ui'; cx.textAlign = 'center';
+      const w = cx.measureText('КОТЁЛ').width + 12;
+      cx.fillStyle = 'rgba(6,10,14,.88)'; rr(cx, q.x - w / 2, q.y + Hex.R * G.view.s * .5, w, 16, 4); cx.fill();
+      cx.fillStyle = mine ? '#ff8a72' : '#ffd479'; cx.fillText('КОТЁЛ', q.x, q.y + Hex.R * G.view.s * .5 + 12);
+    }
+  }
 }
 
 /* ---------- понтоны, мины, укрепления, заграждения ---------- */
@@ -401,6 +524,16 @@ function drawSelection() {
     regionEdges(has, list.concat([u.hex]));
     cx.strokeStyle = 'rgba(0,0,0,.55)'; cx.lineWidth = 3.4; cx.stroke();
     cx.strokeStyle = 'rgba(140,210,255,.9)'; cx.lineWidth = 1.6; cx.stroke();
+    /* клетки в зоне контроля противника: войдя, часть встанет — знак «стоп» */
+    if (G.reachZoc) for (const h of list) {
+      if (!G.reachZoc.has(h)) continue;
+      const q = w2s(H.center(h));
+      if (!onScreen(q, 20)) continue;
+      const r = clamp(s * 1.1, 4, 8);
+      cx.beginPath(); cx.arc(q.x, q.y, r, 0, 7); cx.fillStyle = 'rgba(200,40,30,.92)'; cx.fill();
+      cx.lineWidth = 1.2; cx.strokeStyle = 'rgba(0,0,0,.7)'; cx.stroke();
+      cx.fillStyle = '#fff'; cx.fillRect(q.x - r * .62, q.y - r * .2, r * 1.24, r * .4);
+    }
     /* путь под курсором: стрелка и стоимость */
     if (G.hover >= 0 && G.reach.has(G.hover) && G.hover !== u.hex && !G.reach.get(G.hover).through) {
       const raw = Rules.pathTo(G.reach, G.hover).map(h => H.center(h));
@@ -414,7 +547,7 @@ function drawSelection() {
       cx.beginPath(); cx.moveTo(e.x + Math.cos(ang) * 3, e.y + Math.sin(ang) * 3);
       cx.lineTo(e.x - Math.cos(ang - .5) * A, e.y - Math.sin(ang - .5) * A); cx.lineTo(e.x - Math.cos(ang + .5) * A, e.y - Math.sin(ang + .5) * A); cx.closePath(); cx.stroke(); cx.fill();
       const r = G.reach.get(G.hover), left = Math.max(0, u.mp - r.c);
-      const txt = r.ford ? 'брод · весь ход' : `${fmtMp(r.c)} оч. · ост. ${fmtMp(left)}`;
+      const txt = (r.ford ? 'брод · весь ход' : `${fmtMp(r.c)} оч. · ост. ${fmtMp(left)}`) + (G.reachZoc && G.reachZoc.has(G.hover) ? ' · стоп: рядом противник' : '');
       cx.font = '700 11px system-ui'; cx.textAlign = 'center';
       const tw = cx.measureText(txt).width + 12, tq = w2s(H.center(G.hover)), ty = tq.y + Hex.R * s * .55;
       cx.fillStyle = 'rgba(6,10,14,.92)'; rr(cx, tq.x - tw / 2, ty, tw, 17, 5); cx.fill();
@@ -425,6 +558,48 @@ function drawSelection() {
   drawTargets();
 }
 /** цели: перекрестие и плашка с соотношением сил (или расчётом огня, авиаудара) */
+/** стрелка от a к b в координатах экрана: тёмная обводка, древко, наконечник */
+function arrowLine(a, b, col, w, opt) {
+  const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+  if (L < 4) return;
+  const ux = dx / L, uy = dy / L, o = opt || {}, hd = o.noHead ? 0 : w * 2.3;
+  const p0 = { x: a.x + ux * (o.from || 0), y: a.y + uy * (o.from || 0) }, p1 = { x: b.x - ux * (o.to || 0), y: b.y - uy * (o.to || 0) };
+  if ((p1.x - p0.x) * ux + (p1.y - p0.y) * uy < hd + 2) return;
+  const e = { x: p1.x - ux * hd * .85, y: p1.y - uy * hd * .85 };
+  cx.save();
+  cx.globalAlpha *= o.alpha === undefined ? 1 : o.alpha;
+  cx.lineCap = 'round'; cx.lineJoin = 'round';
+  if (o.dash) cx.setLineDash(o.dash);
+  cx.beginPath(); cx.moveTo(p0.x, p0.y); cx.lineTo(e.x, e.y);
+  cx.strokeStyle = 'rgba(0,0,0,.7)'; cx.lineWidth = w + 3; cx.stroke();
+  cx.strokeStyle = col; cx.lineWidth = w; cx.stroke();
+  cx.setLineDash([]);
+  if (hd) {
+    const px = -uy, py = ux;
+    cx.beginPath(); cx.moveTo(p1.x, p1.y); cx.lineTo(p1.x - ux * hd + px * hd * .55, p1.y - uy * hd + py * hd * .55); cx.lineTo(p1.x - ux * hd - px * hd * .55, p1.y - uy * hd - py * hd * .55); cx.closePath();
+    cx.strokeStyle = 'rgba(0,0,0,.7)'; cx.lineWidth = 3; cx.stroke();
+    cx.fillStyle = col; cx.fill();
+  }
+  cx.restore();
+}
+/** план удара по цели под курсором: жирная стрелка от выбранной части цветом соотношения;
+    части, дающие охват, показаны тонкими стрелками, сходящимися на цели */
+function planArrows(u, t) {
+  const s = G.view.s, R = Hex.R * s, B = w2s(H.center(t.hex));
+  if (t.odds) for (const h of H.neighbors(t.hex)) {
+    const o = G.units.find(x => x.hex === h);
+    if (!o || o.side !== u.side || o.id === u.id || o.rem || !(UT[o.k] && UT[o.k].atk.soft > 0)) continue;
+    arrowLine(w2s(H.center(h)), B, t.col, clamp(s * .7, 2.4, 4.5), { from: R * .42, to: R * .56, dash: [6, 5], alpha: .8 });
+  }
+  const w = clamp(s * 1.5, 5, 10);
+  arrowLine(w2s(H.center(u.hex)), B, t.col, t.odds ? w : w * .6, { from: R * .36, to: R * .5, dash: t.odds ? null : t.fire ? [w * 1.1, w * .9] : [3, 6], alpha: .94 });
+}
+/** стрелки плана — поверх фишек: на крупном масштабе фишки соседних клеток стоят вплотную */
+function drawPlan() {
+  const su = selUnit();
+  if (!su || animBusy()) return;
+  for (const t of G.targets || []) if (t.hex === G.hover && (t.odds || t.fire || t.probe)) planArrows(su, t);
+}
 function drawTargets() {
   const s = G.view.s;
   for (const t of G.targets || []) {
@@ -471,6 +646,103 @@ function drawUnits() {
   list.sort((a, b) => (a.u.id === G.sel) - (b.u.id === G.sel) || a.p.y - b.p.y);
   for (const { u, p } of list) { const q = w2s(p); if (onScreen(q, 70)) counter(u, q) }
   for (const d of ANIMS.dying) { const k = clamp((RT() - d.t0) / .9, 0, 1); counter(d.u, w2s(d.p), 1 - k, 1 - k * .25) }
+  /* призрак хода: полупрозрачная фишка там, куда часть придёт */
+  const su = selUnit();
+  if (su && G.isMyTurn && G.reach && G.hover >= 0 && G.hover !== su.hex && !animBusy()) {
+    const r = G.reach.get(G.hover);
+    if (r && !r.through) counter({ ...su, id: -1, ent: 0, amb: 0, prep: 0 }, w2s(H.center(G.hover)), .5);
+  }
+}
+
+/* ---------- сводка хода противника ----------
+   Пока ходит противник, запоминаем, что случилось на наших глазах: атаки, обстрелы,
+   потери, отходы, взятые точки. В начале своего хода это коротко показано стрелками
+   на карте и строкой сверху; гаснет само или по клику. Клавиша V — показать снова. */
+const RECAP = { rec: false, on: false, items: [], t0: 0, sum: '' };
+const RECAP_T = 16;
+function recapNote(e) {
+  if (G.spec) return;
+  if (e.e === 'turn') { if (e.side !== G.side) { RECAP.rec = true; RECAP.on = false; RECAP.items = [] } else RECAP.rec = false; return }
+  if (!RECAP.rec) return;
+  const mineAt = h => G.units.some(u => u.hex === h && u.side === G.side);
+  const mineId = id => { const u = G.units.find(x => x.id === id); return !!u && u.side === G.side };
+  const I = RECAP.items;
+  if (e.e === 'fight') I.push({ k: e.amb ? 'amb' : e.fire ? 'fire' : e.probe ? 'probe' : 'atk', a: e.ah, b: e.dh, la: e.la || 0, ld: e.ld || 0, su: e.su || 0 });
+  else if (e.e === 'shell' && e.from !== null && e.from !== undefined) I.push({ k: 'shell', a: e.from, b: e.hex, mine: mineAt(e.from) });
+  else if (e.e === 'blast' && e.ld && e.id !== undefined && mineId(e.id)) I.push({ k: 'hit', b: e.hex, ld: e.ld });
+  else if (e.e === 'dead') I.push({ k: 'dead', b: e.hex, mine: e.side === G.side, how: e.how });
+  else if (e.e === 'capture') I.push({ k: 'cap', b: e.hex, mine: e.side === G.side, n: e.n });
+  else if (e.e === 'move' && e.retreat && e.side === G.side && e.path.length > 1) I.push({ k: 'ret', a: e.path[0], b: e.path[e.path.length - 1], rem: e.rem });
+  else if (e.e === 'air' && e.kind === 'strike' && e.side !== undefined && e.side !== G.side) I.push({ k: 'air', b: e.hex });
+}
+/** начало своего хода: собрать итог и показать */
+function recapShow() {
+  const I = RECAP.items;
+  if (!I.length) { RECAP.on = false; return }
+  const n = k => I.filter(x => x.k === k).length;
+  const lost = I.reduce((a, x) => a + (x.k === 'atk' || x.k === 'fire' || x.k === 'probe' || x.k === 'hit' ? x.ld : 0), 0);
+  const dead = I.filter(x => x.k === 'dead' && x.mine).length, caps = I.filter(x => x.k === 'cap' && !x.mine).map(x => x.n);
+  const parts = [];
+  if (n('atk')) parts.push('атак: ' + n('atk'));
+  if (n('fire') + n('probe')) parts.push('обстрелов: ' + (n('fire') + n('probe')));
+  const sh = I.filter(x => x.k === 'shell' && !x.mine).length + n('air');
+  if (sh) parts.push('огневых налётов: ' + sh);
+  if (lost) parts.push('потеряно шагов: ' + lost);
+  if (dead) parts.push('частей уничтожено: ' + dead);
+  if (caps.length) parts.push('потеряны: ' + caps.join(', '));
+  RECAP.sum = parts.join(' · ');
+  RECAP.on = !!parts.length; RECAP.t0 = RT();
+}
+function recapToggle() {
+  if (!RECAP.items.length) { if (typeof toast === 'function') toast('За прошлый ход противника показать нечего'); return }
+  if (RECAP.on) RECAP.on = false; else { recapShow(); if (!RECAP.on) toast('За прошлый ход противника показать нечего') }
+}
+function drawRecap() {
+  if (!RECAP.on) return;
+  const age = RT() - RECAP.t0;
+  if (age > RECAP_T) { RECAP.on = false; return }
+  const s = G.view.s, R = Hex.R * s, c = h => w2s(H.center(h)), al = clamp(Math.min(age / .4, (RECAP_T - age) / 2), 0, 1);
+  const tag = (q, txt, col) => {
+    cx.font = '800 11px system-ui'; cx.textAlign = 'center';
+    const w = cx.measureText(txt).width + 10;
+    cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, q.y - 8, w, 16, 4); cx.fill();
+    cx.fillStyle = col; cx.fillText(txt, q.x, q.y + 4);
+  };
+  cx.save(); cx.globalAlpha = al;
+  for (const x of RECAP.items) {
+    if (x.k === 'atk') { arrowLine(c(x.a), c(x.b), '#ff6b55', clamp(s * 1.2, 4, 8), { from: R * .45, to: R * .6 }); if (x.ld) tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, '−' + x.ld, '#ff8f80') }
+    else if (x.k === 'fire' || x.k === 'probe') { arrowLine(c(x.a), c(x.b), '#ffb070', clamp(s * .8, 3, 5), { from: R * .45, to: R * .6, dash: [6, 5] }); if (x.ld || x.su) tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, (x.ld ? '−' + x.ld + ' ' : '') + (x.su ? '⚡' + x.su : ''), '#ffb070') }
+    else if (x.k === 'amb') { arrowLine(c(x.a), c(x.b), '#9fe0a8', clamp(s * .8, 3, 5), { from: R * .45, to: R * .6 }); tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, 'засада −' + x.ld, '#9fe0a8') }
+    else if (x.k === 'shell') arrowLine(c(x.a), c(x.b), x.mine ? '#9fd3f5' : '#ffb070', 2.2, { from: R * .4, to: R * .5, dash: [2, 6], alpha: .85 });
+    else if (x.k === 'hit') tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, 'огонь −' + x.ld, '#ffb070');
+    else if (x.k === 'ret') { arrowLine(c(x.a), c(x.b), '#ffd479', clamp(s * .7, 2.5, 4.5), { from: R * .2, to: R * .5 }); tag({ x: c(x.a).x, y: c(x.a).y + R * .2 }, x.rem ? 'разбиты' : 'отошли', '#ffd479') }
+    else if (x.k === 'air') tag({ x: c(x.b).x, y: c(x.b).y - R * 1.35 }, '✈ налёт', '#ffb070');
+    else if (x.k === 'dead' && x.mine) {
+      const q = c(x.b), d = R * .42;
+      cx.lineCap = 'round'; cx.beginPath(); cx.moveTo(q.x - d, q.y - d); cx.lineTo(q.x + d, q.y + d); cx.moveTo(q.x + d, q.y - d); cx.lineTo(q.x - d, q.y + d);
+      cx.lineWidth = 6; cx.strokeStyle = 'rgba(0,0,0,.7)'; cx.stroke(); cx.lineWidth = 3; cx.strokeStyle = '#ff5b47'; cx.stroke();
+      tag({ x: q.x, y: q.y + R * .75 }, x.how === 'surrender' ? 'сдались' : x.how === 'captured' ? 'захвачен' : 'уничтожен', '#ff8f80');
+    } else if (x.k === 'cap' && !x.mine) { hexPath(x.b, 1.06); cx.strokeStyle = '#ff5b47'; cx.lineWidth = 3; cx.setLineDash([6, 4]); cx.stroke(); cx.setLineDash([]) }
+  }
+  /* свои части, оставшиеся без снабжения */
+  for (const u of G.units) if (u.side === G.side && u.supplied === 0) { const q = c(u.hex); cx.beginPath(); cx.arc(q.x, q.y, R * (.92 + .06 * Math.sin(ANIM * 6)), 0, 7); cx.strokeStyle = '#ff5b47'; cx.lineWidth = 2.4; cx.setLineDash([5, 4]); cx.stroke(); cx.setLineDash([]) }
+  /* строка итога — сверху по центру карты */
+  const cut = G.units.filter(u => u.side === G.side && u.supplied === 0).length;
+  /* между мини-картой и кнопками масштаба; не влезает в строку — переносим по пунктам */
+  const parts = ['Ход противника'].concat(RECAP.sum.split(' · '), cut ? ['без снабжения: ' + cut] : [], ['V — скрыть']);
+  const a = mapArea(), mr = miniRect(), xl = mr.x + mr.w + 12, maxW = Math.max(160, a.r - 58 - xl - 24);
+  cx.font = '700 12px system-ui'; cx.textAlign = 'left';
+  const lines = [''];
+  for (const p of parts) {
+    const cur = lines[lines.length - 1], next = cur ? cur + '  ·  ' + p : p;
+    if (cur && cx.measureText(next).width > maxW) lines.push(p); else lines[lines.length - 1] = next;
+  }
+  const w = Math.max(...lines.map(l => cx.measureText(l).width)) + 24, hgt = lines.length * 17 + 12, x0 = xl, y0 = a.t + 10;
+  cx.fillStyle = 'rgba(8,13,18,.93)'; rr(cx, x0, y0, w, hgt, 6); cx.fill();
+  cx.strokeStyle = 'rgba(255,107,85,.7)'; cx.lineWidth = 1.2; rr(cx, x0 + .5, y0 + .5, w - 1, hgt - 1, 6); cx.stroke();
+  lines.forEach((l, i) => { cx.fillStyle = i ? '#f1c9bf' : '#ffd9cf'; cx.fillText(l, x0 + 12, y0 + 19 + i * 17) });
+  cx.fillStyle = 'rgba(255,107,85,.8)'; cx.fillRect(x0 + 6, y0 + hgt - 3, (w - 12) * (1 - age / RECAP_T), 2);
+  cx.restore();
 }
 
 /* ---------- очередь событий хода ---------- */
@@ -513,7 +785,7 @@ function startAnim(e) {
       },
       done() { u.hex = e.path[e.path.length - 1]; ANIMS.pos.delete(e.id) }
     };
-    if (e.retreat) floatText(pts[pts.length - 1], 'отход', '#ffd479');
+    if (e.retreat) floatText(pts[pts.length - 1], e.rem ? 'остатки отходят' : 'отход', '#ffd479', !!e.rem);
     Sound.gun({ ...pts[0], kind: 'mg' });
   } else if (e.e === 'fight') {
     const A = center(e.ah), D = center(e.dh), ka = unitKind(e.a), kd = unitKind(e.d);
@@ -522,6 +794,7 @@ function startAnim(e) {
     if (!e.amb && !(e.fire && !e.la)) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
     if (e.fire) { fxAdd({ k: 'tracer', a: A, b: D, t0: now + .35 * k, d: .8 * k, heavy: heavyA, seed: Math.random() * 99 }); floatText({ x: A.x, y: A.y - 4 }, 'обстрел', '#ffb070') }
     if (e.amb) floatText({ x: D.x, y: D.y - 4 }, 'засада!', '#ffd479', 1);
+    if (e.probe) floatText({ x: A.x, y: A.y - 4 }, 'разведка боем', '#9fd3f5');
     const hits = 2 + Math.min(3, e.ld || 0);
     for (let i = 0; i < hits; i++) fxBoom(ringPt(D, 1.6, 4.2), heavyA ? .85 : .6, (.25 + i * .13) * k, { noMark: i > 2 });
     if (e.la) fxBoom(ringPt(A, 1.6, 4), heavyD ? .75 : .55, .5 * k, {});
@@ -545,8 +818,10 @@ function startAnim(e) {
   } else if (e.e === 'dead') {
     const u = G.units.find(x => x.id === e.id), p = center(e.hex);
     if (u) { ANIMS.dying.push({ u: { ...u }, p, t0: now }); ANIMS.hidden.add(e.id) }
-    if (e.how !== 'surrender') { fxBoom(p, 1.4, .05, {}); fxBoom(ringPt(p, 1.5, 3.5), .8, .2, {}); addWreck(e.hex, e.k, e.side) }
-    floatText({ x: p.x, y: p.y + 2 }, e.how === 'surrender' ? 'сдались' : 'уничтожен', '#ff6b55', 1);
+    /* сдались, захвачены, влились в соседа — без взрыва и остова */
+    const quiet = e.how === 'surrender' || e.how === 'captured' || e.how === 'merged';
+    if (!quiet) { fxBoom(p, 1.4, .05, {}); fxBoom(ringPt(p, 1.5, 3.5), .8, .2, {}); addWreck(e.hex, e.k, e.side) }
+    floatText({ x: p.x, y: p.y + 2 }, e.how === 'surrender' ? 'сдались' : e.how === 'captured' ? 'захвачен' : e.how === 'merged' ? 'влились' : 'уничтожен', e.how === 'merged' ? '#9fe0a8' : '#ff6b55', 1);
     ANIMS.cur = { end: now + .6 * k };
   } else if (e.e === 'capture') {
     const p = center(e.hex);
@@ -572,7 +847,7 @@ function startAnim(e) {
     const mine = !G.spec && e.side === G.side;
     showBanner(`Ход ${e.turn + 1} · ${e.clock}${e.night ? ' · ночь' : ''}`, G.spec ? 'Ходит ' + SIDE_GEN[e.side] : mine ? 'Ваш ход' : 'Ход противника', mine, e.side);
     ANIMS.cur = { end: now + (mine ? .9 : .5) * k };
-    if (mine) Sound.radio('hq');
+    if (mine) { Sound.radio('hq'); recapShow() }
   } else if (e.e === 'eng' || e.e === 'spawn' || e.e === 'replace') {
     const p = center(e.hex !== undefined ? e.hex : (G.units.find(x => x.id === e.id) || { hex: 0 }).hex);
     if (e.task === 'blow') fxBoom(p, 1.1, 0, {});
@@ -675,6 +950,8 @@ function draw(dt) {
   drawSelection();
   if (G.hover >= 0 && !animBusy()) { hexPath(G.hover, 1); cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 1.5; cx.stroke() }
   drawUnits();
+  drawPlan();
+  drawRecap();
   /* дыма много — в половинном разрешении (render/fx.js), иначе прямо на экран */
   if (smokeBegin()) { try { drawPlumes(); drawSmokeScreens() } finally { smokeEnd() } }
   else { drawPlumes(); drawSmokeScreens() }

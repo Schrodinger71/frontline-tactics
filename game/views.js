@@ -11,9 +11,14 @@ const Hex = require('../shared/hex');
 const { N, S, UT, GAME_VERSION, isNight, turnClock, dayOfTurn } = W;
 
 module.exports = {
-  unitView(u, full) {
+  unitView(u, full, intel) {
     const o = { id: u.id, k: u.k, side: u.side, hex: u.hex, str: u.str, ent: u.ent, sup: u.su > 0 ? 1 : 0, su: u.su || 0, att: u.att || null, sp: u.sp, hold: u.hold ? 1 : 0, mil: u.militia ? 1 : 0, hb: u.hb || 0 };
+    if (u.rem) o.rem = 1;
+    if (UT[u.k].depot) o.lvl = u.lvl || 1;
+    /* разведка боем: о вскрытой части известно то же, что о своей в бою */
+    if (!full && intel) Object.assign(o, { intel: 1, org: Math.round(u.org), xp: +u.xp.toFixed(2), fu: u.fu, supplied: u.supplied ? 1 : 0, sv: u.sv || 0, amb: u.amb ? 1 : 0, rear: u.rear ? 1 : 0 });
     if (!full) return Object.assign(o, { enemy: 1 });
+    Object.assign(o, { rear: u.rear ? 1 : 0, prep: u.prep ? 1 : 0, fed: u.fed ? 1 : 0 });
     return Object.assign(o, {
       org: Math.round(u.org), xp: +u.xp.toFixed(2), fu: u.fu, mp: +u.mp.toFixed(1), acted: u.acted ? 1 : 0, moved: u.moved ? 1 : 0,
       supplied: u.supplied ? 1 : 0, cut: u.cut, reload: u.reload, mines: u.mines, cs: u.cs, trait: u.trait, pre: u.pre ? 1 : 0,
@@ -34,7 +39,7 @@ module.exports = {
     for (const u of this.units) {
       if (u.str <= 0) continue;
       if (spec || u.side === side) units.push(this.unitView(u, true));
-      else if (this.phase === 'battle' && this.seen(side, u)) units.push(this.unitView(u, false));
+      else if (this.phase === 'battle' && this.seen(side, u)) units.push(this.unitView(u, false, this.hasIntel(side, u)));
     }
     const ghosts = [];
     if (!spec) for (const [id, m] of this.mem[side]) if (!units.some(x => x.id === id)) ghosts.push({ id, hex: m.hex, k: m.k, age: this.turn - m.turn });
@@ -69,11 +74,39 @@ module.exports = {
       sv: spec ? null : String.fromCharCode(...this.sv[side].map((v, h) => this.svNet[side][h] ? 65 + v : v < 10 ? 48 + v : 97)),
       svSrc: spec ? null : (this.svSrc[side] || []).map(x => ({ hex: x.hex, v: x.v, n: x.n, k: x.k })),
       cp: spec ? this.cp : this.cp[seat], barrage: spec ? this.barrage : this.barrage[side], counter: spec ? this.counter : this.counter[side], smoke: [...this.smoke.keys()],
-      frontY: this.frontY,
+      frontY: this.frontY, pockets: this.phase === 'battle' ? this.pockets(side) : [],
       scen: this.scen ? { id: this.scenId, n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
       stats: spec ? sv(N) : sv(side), enemyStats: spec || this.over ? sv(spec ? S : side === N ? S : N) : null,
       history: this.history
     };
+  },
+  /** свежи ли сведения разведки боем о части u у стороны side */
+  hasIntel(side, u) {
+    const t = this.intel && this.intel[side] && this.intel[side].get(u.id);
+    return t !== undefined && this.turn - t <= W.PROBE.intel;
+  },
+  /** котлы: острова земли стороны, где нет ни тыловой станции, ни своего города.
+      У противника считаются по открытым сведениям (территория и точки видны обеим
+      сторонам): его командные пункты и склады в расчёт не идут — их положение не выдаём.
+      Свои (и для зрителя) — со всеми источниками. */
+  pockets(viewer) {
+    const out = [], NH = this.H.NH, seen = new Uint8Array(NH);
+    for (const side of [N, S]) {
+      const t = side === N ? 1 : 2;
+      const all = viewer === side || viewer === 'spec';
+      const src = new Set(this.supplySources(side).concat(all ? this.depotSources(side) : []).filter(x => all || x.k === 'rear' || x.k === 'city').map(x => x.hex));
+      for (let h0 = 0; h0 < NH; h0++) {
+        if (seen[h0] || this.terr[h0] !== t) continue;
+        const comp = [h0]; seen[h0] = 1;
+        let fed = false;
+        for (let i = 0; i < comp.length; i++) {
+          if (src.has(comp[i])) fed = true;
+          for (const n of this.H.neighbors(comp[i])) if (!seen[n] && this.terr[n] === t) { seen[n] = 1; comp.push(n) }
+        }
+        if (!fed && comp.length <= 60) out.push({ side, hexes: comp });
+      }
+    }
+    return out;
   },
   raidLeft() {
     const left = this.units.filter(u => u.raid && u.str > 0).reduce((s, u) => s + UT[u.k].price * u.str / 10, 0);

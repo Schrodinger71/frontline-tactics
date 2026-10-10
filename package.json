@@ -1,6 +1,6 @@
 {
   "name": "frontline-tactics",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Frontline Tactics — пошаговая штабная игра о сухопутном фронте на гексах. Сервер с правилами, бот, дуэль по коду, наблюдение.",
   "private": true,
   "main": "server/index.js",

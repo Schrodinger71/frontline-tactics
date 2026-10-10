@@ -4,7 +4,8 @@
    ------------------------------------------------------------
    Видит только то, что видит его сторона, ходит теми же
    действиями, что игрок (this.act). Порядок хода:
-     1. пополнение потрёпанных в тылу и закупка в своих городах;
+     1. остатки разбитых частей вливаются в соседей своего типа; пополнение
+        потрёпанных в тылу и закупка в своих городах;
      2. авиаразведка над целью, артиллерия и авиаудары — по целям
         будущей атаки (подавленный противник обороняется хуже);
      3. атаки группой: к выбранной цели подводятся до четырёх
@@ -114,7 +115,11 @@ module.exports = {
     const foes = () => this.units.filter(u => u.side === en && u.str > 0 && this.seen(side, u));
     const objective = this.botObjective(side);
 
-    /* 1. пополнение и закупка */
+    /* 1. остатки — в соседнюю часть своего типа; пополнение и закупка */
+    for (const u of mine().filter(x => x.rem)) {
+      const v = this.H.neighbors(u.hex).map(h => this.unitAt(h)).find(x => x && x.side === side && x.k === u.k && !x.rem && x.str < MAX_STR);
+      if (v) this.act(seat, { t: 'merge', id: u.id, target: v.id });
+    }
     for (const u of mine()) if (u.str <= 6 && (u.sv || 0) >= 3 && !u.acted && !u.moved && this.budget[seat] > 30) this.act(seat, { t: 'replace', id: u.id });
     this.botBuy(seat);
     this.botSpecs(seat);
@@ -162,6 +167,7 @@ module.exports = {
     for (const u of mine()) {
       if (u.str <= 0 || u.acted) continue;
       if (UT[u.k].eng && this.botEngineer(u, objective)) continue;
+      if (this.botProbe(u)) continue;
       const t = this.map.hexes[u.hex].t, cover = t === 'forest' || t === 'city' || this.forts.get(u.hex);
       if ((cover || u.k === 'at') && near(u, 2) && !UT[u.k].bomb && u.k !== 'hq' && UT[u.k].atk.soft >= 2) { this.act(seat, { t: 'ambush', id: u.id }); continue }
       if (!u.moved && near(u, 1)) this.act(seat, { t: 'dig', id: u.id });
@@ -198,6 +204,28 @@ module.exports = {
       this.H.neighbors(u.hex).filter(h => { const e = this.unitAt(h); return e && e.side === en }).length >= 2)
       .sort((a, b) => this.ptAt(b.hex).w - this.ptAt(a.hex).w);
     for (const u of threatened) if (cp() >= O.hold.cp + 1) this.act(seat, { t: 'order', k: 'hold', id: u.id });
+    /* арьергард: потрёпанная часть в поле, на которую смотрит броня, — отойдёт под заслоном */
+    const exposed = mine.filter(u => u.seat === seat && !this.ptAt(u.hex) && UT[u.k].cap && !u.hold && !u.rear && !u.rem && u.str >= 2 && u.str <= 5 &&
+      this.H.neighbors(u.hex).some(h => { const e = this.unitAt(h); return e && e.side === en && this.seen(side, e) && ['tnk', 'mot', 'rec'].includes(e.k) }));
+    for (const u of exposed) if (cp() >= O.rear.cp + 2) this.act(seat, { t: 'order', k: 'rear', id: u.id });
+  },
+  /** разведка боем: разведрота — по любому соседу, остальные — только по окопавшемуся
+      противнику и только если это почти ничего не стоит */
+  botProbe(u) {
+    const T = UT[u.k], side = u.side, seat = u.seat || u.side;
+    if (!T.cap || T.bomb || u.rem || u.str < 5 || u.org < 40 || u.sp <= 0) return false;
+    const ctx = this.ctxFor(side, false);
+    let best = null, bs = 0;
+    for (const h of this.H.neighbors(u.hex)) {
+      const e = this.unitAt(h);
+      if (!e || e.side === side || e.rem || !this.seen(side, e) || this.hasIntel(side, e)) continue;
+      if (u.k !== 'rec' && !(e.ent >= 2 && this.role[side] !== 'defender')) continue;
+      const o = Rules.probeOdds(ctx, u, e);
+      if (o.back >= .6) continue;
+      const s = 1 + e.ent + val(e) / 100;
+      if (s > bs) { bs = s; best = e }
+    }
+    return !!best && this.act(seat, { t: 'probe', id: u.id, target: best.id }).ok;
   },
 
   /** главная цель: для наступающего — ценная близкая точка противника, для обороны — угрожаемая своя */
@@ -248,7 +276,8 @@ module.exports = {
       /* оценка: первый удар при полном охвате */
       const occ = new Map(ctx.occ);
       for (const c of group) { occ.delete(c.u.hex); occ.set(c.h, c.u) }
-      const lead = group[0], sim = { ...lead.u, hex: lead.h };
+      /* кто подходит к цели — уже не «подготовленная атака» */
+      const lead = group[0], sim = { ...lead.u, hex: lead.h, moved: lead.u.moved || lead.h !== lead.u.hex };
       occ.set(lead.h, sim);
       const o = Rules.odds({ ...ctx, occ }, sim, e);
       const prio = (objective && this.H.hexDist(e.hex, objective.hex) <= 1 ? 1.6 : 1) * (this.ptAt(e.hex) ? 1.3 : 1);

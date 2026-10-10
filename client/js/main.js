@@ -51,7 +51,7 @@ function supSummary() {
   return `<div class="row"><span>Частей по снабжению</span><b><span class="good">${c.full}</span> · <span style="color:#c9d36b">${c.ok}</span> · <span class="ac">${c.low}</span> · <span class="bad">${c.none}</span></b></div>`;
 }
 /** пункт блокирован: рядом стоит видимый противник — узел в этот ход не работает */
-function fobBlocked(f) { return H.neighbors(f.hex).some(h => { const e = G.units.find(x => x.hex === h); return !!e && e.side !== f.side }) }
+function fobBlocked(f) { return H.neighbors(f.hex).some(h => { const e = G.units.find(x => x.hex === h); return !!e && e.side !== f.side && !e.rem && !UT[e.k].depot }) }
 /** мой работающий командный пункт (развёрнут и не блокирован) — или null */
 function myFobLive() { const f = myFob(); return f && f.sited && !fobBlocked(f) ? f : null }
 /** клетка в секторе моего работающего пункта */
@@ -99,7 +99,7 @@ function onMsg(m) {
     else applySnapshot(m.v);
     return;
   }
-  if (m.t === 'ev') { for (const e of m.list) { if (e.e === 'log') radio(e); else playEvent(e) } return }
+  if (m.t === 'ev') { for (const e of m.list) { if (e.e === 'log') radio(e); else { recapNote(e); playEvent(e) } } return }
   if (m.t === 'res') { if (m.res && !m.res.ok && m.res.error) toast(m.res.error); return }
   if (m.t === 'seats') { if (Array.isArray(m.seats)) G.lobby = m.seats; if ('host' in m) G.host = m.host; if (m.note) toast(m.note); renderLobby(); return }
   if (m.t === 'saved') { onSaved(m); return }
@@ -204,7 +204,7 @@ function applySnapshot(v) {
     /* снабжение: '0'–'9','a' — поле, 'A'–'K' — клетка на линии снабжения (дорога) */
     sv: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? c.charCodeAt(0) - 65 : c === 'a' ? 10 : c.charCodeAt(0) - 48) : null,
     svNet: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? 1 : 0) : null, svStr: v.sv || '',
-    svSrc: v.svSrc || [],
+    svSrc: v.svSrc || [], pockets: v.pockets || [],
     br: v.br, mines: v.mines, frontY: v.frontY, turn: v.turn, active: v.active, clock: v.clock, day: v.day, night: v.night, weather: v.weather,
     budget: v.budget, income: v.income, air: v.air, score: v.score, scen: v.scen, stats: v.stats, enemyStats: v.enemyStats, history: v.history,
     commanders: v.commanders, role: v.role, over: v.over, limit: v.limit, mode0: v.mode, ready: v.ready
@@ -227,6 +227,8 @@ function applySnapshot(v) {
   /* автосохранение — в начале каждого своего хода: закрыли вкладку или пропала
      связь — партию можно продолжить из «Сохранений» */
   if (G.isMyTurn && !G._wasMyTurn && G.mySeat && !G.over) netSend({ t: 'save', auto: 1 });
+  /* вкладка была скрыта — события не проигрывались: сводку хода противника показываем по снимку */
+  if (G.isMyTurn && !G._wasMyTurn && !RECAP.on) recapShow();
   G._wasMyTurn = G.isMyTurn;
 }
 function firstView() {
@@ -302,13 +304,14 @@ function computeAirTargets() {
   }
 }
 function computeSel() {
-  G.reach = null; G.targets = []; G.selRiv = '';
+  G.reach = null; G.targets = []; G.selRiv = ''; G.reachZoc = null;
   if (G.mode === 'air:strike') return computeAirTargets();
   const u = selUnit();
   if (!u || !myUnit(u) || !G.isMyTurn) return;
   const ctx = clientCtx(), T = utFor(u.side)[u.k];
-  if (u.mp > 0 && !(u.acted && T.bomb)) { G.reach = Rules.reachable(ctx, u); G.selRiv = 'r' }
-  if (u.acted || u.sp <= 0) return;
+  /* зона контроля противника — для меток «стоп» на клетках хода */
+  if (u.mp > 0 && !(u.acted && T.bomb)) { G.reach = Rules.reachable(ctx, u); G.selRiv = 'r'; G.reachZoc = Rules.zocOf(ctx, u.side) }
+  if (u.acted || u.sp <= 0 || u.rem) return;
   /* о противнике мораль и опыт не известны — для расчёта берём типичные */
   const foes = G.units.filter(e => e.side !== G.side).map(e => ({ ...e, org: e.org ?? 80, xp: e.xp ?? .2 }));
   if (T.bomb) {
@@ -319,6 +322,11 @@ function computeSel() {
     }
   } else if (T.atk.soft >= 2 && u.k !== 'hq' && u.org >= 20) {
     for (const e of foes) if (H.hexDist(u.hex, e.hex) === 1) {
+      /* режим «Разведка боем»: потери малы, зато цель вскрыта и её окоп — на уровень ниже */
+      if (G.mode === 'probe') {
+        if (T.cap && !e.rem) { const p = Rules.probeOdds(ctx, u, e); G.targets.push({ hex: e.hex, id: e.id, lb: `разведка · −${p.lossA[0]}…${p.lossA[1]}`, col: '#9fd3f5', probe: p }) }
+        continue;
+      }
       /* режим «Обстрел»: те же цели, но расчёт огневого боя с места */
       if (G.mode === 'fire') {
         const f = Rules.fireOdds(ctx, u, e);
@@ -431,6 +439,7 @@ function goodFor(T) {
   if (T.aa) g.push('прикрытие от авиации');
   if (T.eng) g.push('мосты, мины, укрепления');
   if (T.cmd) g.push('управление сектором');
+  if (T.depot) g.push('снабжение вдали от дорог');
   return g;
 }
 /** Блок характеристик: атака по трём классам целей, оборона, огонь — полосками
@@ -446,6 +455,7 @@ function statsHTML(T, compact) {
   if (T.atd) chips.push('ПТ-оборона ×1,8');
   if (T.aa) chips.push(`ПВО ${T.aa} кл.`);
   if (T.cmd) chips.push(`сектор ${T.cmd} кл.`);
+  if (T.depot) chips.push(`источник снабжения ${DEPOT.v[1]}–${DEPOT.v[DEPOT.max]}`);
   const good = goodFor(T);
   return `<div class="stats${compact ? ' cmp' : ''}">
     <div class="sbars">${sb('по пехоте', T.atk.soft, MAXA)}${sb('по БТР и БМП', T.atk.light, MAXA)}${sb('по танкам', T.atk.hard, MAXA)}${sb('оборона', T.def, MAXD, 'def')}${
@@ -476,6 +486,15 @@ function unitCard(u) {
   if (!own) return `<div class="card">${head}
     ${bar('Сила', u.str, MAX_STR, strCls, strText(u, T))}
     <div class="row"><span>Боеприпасы</span><b>${pips(u.sp)}</b></div>${u.hold ? '<p class="ustate"><span class="ac">стоит насмерть — не отходит</span></p>' : ''}${u.mil ? '<p class="ustate">ополчение</p>' : ''}
+    ${u.rem ? '<p class="ustate"><span class="good">остатки разбитой части — не воюют, любая атака берёт их в плен</span></p>' : ''}
+    ${u.lvl ? `<div class="row"><span>Склад</span><b>уровень ${u.lvl} · источник ${DEPOT.v[u.lvl]}</b></div><p class="hint">Без охраны склад захватывают: +${DEPOT.loot * u.lvl} очков и полные запасы частям рядом.</p>` : ''}
+    ${u.intel ? `<div class="lbl">Разведка боем</div>
+      ${bar('Мораль', u.org, 100, u.org < 30 ? 'var(--rd)' : '#8fb8ff')}
+      <div class="row"><span>Опыт</span><b>${u.xp >= .6 ? 'ветераны' : u.xp >= .3 ? 'обстрелянные' : 'необстрелянные'}</b></div>
+      ${usesFuel(T) ? `<div class="row"><span>Топливо</span><b>${pips(u.fu)}</b></div>` : ''}
+      <div class="row"><span>Снабжение</span><b>${u.supplied ? (u.sv || 0) + ' из ' + SUPPLY.top : '<span class="good">в котле</span>'}</b></div>
+      ${u.amb ? '<p class="ustate"><span class="bad">в засаде — встретит огнём того, кто войдёт рядом</span></p>' : ''}
+      ${u.rear ? '<p class="ustate"><span class="ac">выставлен заслон — отойдёт, но клетку с ходу не занять</span></p>' : ''}` : ''}
     ${u.att ? specHTML(u, T, false) : ''}
     <div class="row"><span>Местность</span><b>${Rules.TNAME[hx.t]}, ${Math.round(hx.h)} м${u.ent ? ', окоп ' + u.ent : ''}</b></div>
     ${u.hb ? '<p class="ustate"><span class="good">связан боем — атака другим родом войск ×1,15</span></p>' : ''}
@@ -492,9 +511,16 @@ function unitCard(u) {
   }
   else if (G.isMyTurn && myUnit(u)) {
     canAttach = !u.acted && !u.moved && (u.sv || 0) >= SUPPLY.replaceMin;
-    if (!u.acted && !u.moved) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
-    if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
-    if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push(`<button class="btn sm ${G.mode === 'fire' ? 'on' : ''}" data-a="fire" title="Огонь с места по соседней цели: прижимает, клетку не занимает, окоп сохраняется. Быстро — Shift+клик по цели">Обстрел <kbd>R</kbd></button>`);
+    if (!u.acted && !u.moved && !u.rem) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
+    if (!u.acted && !u.rem && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
+    if (!u.acted && !u.rem && !T.bomb && T.cap) acts.push(`<button class="btn sm ${G.mode === 'probe' ? 'on' : ''}" data-a="probe" title="Малой силой вскрыть соседнюю часть противника: её мораль, опыт, запасы и засада известны до конца следующего хода, окоп — на уровень ниже. Потери малы у обеих сторон, клетку не занимаете">Разведка боем <kbd>E</kbd></button>`);
+    /* остатки: влиться в соседнюю часть своего типа */
+    if (u.rem) for (const h of H.neighbors(u.hex)) {
+      const v = G.units.find(x => x.hex === h);
+      if (v && v.side === u.side && v.k === u.k && v.str < MAX_STR) acts.push(`<button class="btn sm" data-a="merge:${v.id}" title="Шаги и специалист переходят к соседу; остатки расформированы">Влиться в «${esc(v.cs || T.sh)}»</button>`);
+    }
+    if (T.depot && (u.lvl || 1) < DEPOT.max) acts.push(`<button class="btn sm" data-a="depot" ${!u.acted && !u.moved && G.budget >= DEPOT.up ? '' : 'disabled'} title="Источник снабжения ${DEPOT.v[u.lvl || 1]} → ${DEPOT.v[(u.lvl || 1) + 1]}. Вместо действий в этот ход">Расширить склад (${DEPOT.up})</button>`);
+    if (!u.acted && !u.rem && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push(`<button class="btn sm ${G.mode === 'fire' ? 'on' : ''}" data-a="fire" title="Огонь с места по соседней цели: прижимает, клетку не занимает, окоп сохраняется. Быстро — Shift+клик по цели">Обстрел <kbd>R</kbd></button>`);
     if (u.str < MAX_STR && !u.acted && !u.moved) {
       const near = inFobZone(u.hex), rc = Math.max(1, Math.round(T.price / 10 * (near ? 1 - FOB.replaceOff : 1)));
       acts.push(`<button class="btn sm" data-a="replace" title="${near ? 'Склады командного пункта: на треть дешевле' : ''}">Пополнить (${rc} за шаг)${near ? ' <i class="cheap">КП</i>' : ''}</button>`);
@@ -505,6 +531,7 @@ function unitCard(u) {
     };
     ob('march', !u.acted && !u.march && (!usesFuel(T) || u.fu > 0));
     ob('hold', !u.hold);
+    if (!u.rem && !T.cmd && !T.depot) ob('rear', !u.rear && !u.hold && u.str >= 2);
     if (u.sp < SUPPLY.max || (usesFuel(T) && u.fu < SUPPLY.max)) ob('airdrop', wxById(G.weather).fly);
     if (T.eng && !u.acted) acts.push('<button class="btn sm" data-a="eng:fort">Укрепления…</button><button class="btn sm" data-a="eng:obst">Заграждения…</button><button class="btn sm" data-a="eng:mine">Мины…</button><button class="btn sm" data-a="eng:bridge">Понтон…</button><button class="btn sm" data-a="eng:blow">Взорвать мост…</button><button class="btn sm" data-a="eng:repair">Восстановить мост…</button><button class="btn sm" data-a="eng:clear">Разминировать…</button>');
   }
@@ -513,7 +540,14 @@ function unitCard(u) {
   else if (supTier(u.sv) === 'low') st.push('<span class="ac">скудное снабжение — запас не выше 2</span>');
   if (u.sp <= 0) st.push('<span class="bad">боеприпасы кончились — не атакует, тает</span>');
   if (usesFuel(T) && u.fu <= 0) st.push('<span class="bad">нет топлива — техника стоит</span>');
+  if (u.rem) st.push(`<span class="bad">остатки разбитой части — не воюют; пополните до ${REMNANT.reform} шагов или влейте в соседа своего типа</span>`);
+  if (T.depot) st.push(u.moved ? '<span class="ac">склад на марше — в этот ход не работает</span>'
+    : u.fed ? `<span class="good">склад работает: источник ${DEPOT.v[u.lvl || 1]} из ${SUPPLY.top}</span>`
+    : u.sp > 0 ? `<span class="ac">подвоза нет — работает на запасах, осталось ходов: ${u.sp}</span>`
+    : '<span class="bad">отрезан и пуст — снабжения не даёт</span>');
   if (u.hold) st.push('<span class="ac">стоять насмерть</span>');
+  if (u.rear) st.push('<span class="ac">заслон: при отходе −1 шаг, клетку противник не займёт</span>');
+  if (u.prep && !u.moved && !u.acted) st.push(`<span class="good">атака подготовлена — ×${String(PREP.att).replace('.', ',')}, пока не двигались</span>`);
   if (u.march) st.push('форсированный марш');
   if (u.exploit) st.push('<span class="good">прорыв — может действовать ещё</span>');
   if (u.mil) st.push('ополчение');
@@ -529,7 +563,8 @@ function unitCard(u) {
     ${st.length ? `<p class="ustate">${st.join(' · ')}</p>` : ''}
     ${bar('Сила', u.str, MAX_STR, strCls, strText(u, T))}
     ${bar('Мораль', u.org, 100, u.org < 30 ? 'var(--rd)' : '#8fb8ff')}
-    <div class="row"><span>Боеприпасы</span><b>${pips(u.sp)}</b></div>
+    <div class="row"><span>${T.depot ? 'Запас склада' : 'Боеприпасы'}</span><b>${pips(u.sp)}</b></div>
+    ${T.depot ? `<div class="row"><span>Уровень склада</span><b>${u.lvl || 1} из ${DEPOT.max}</b></div>` : ''}
     ${usesFuel(T) ? `<div class="row"><span>Топливо</span><b>${pips(u.fu)}</b></div>` : ''}
     ${G.phase === 'battle' ? bar('Снабжение клетки', u.sv || 0, SUPPLY.top, SUP_COL[supTier(u.sv)], `${u.sv || 0} из ${SUPPLY.top} · ${SUP_NAME[supTier(u.sv)]}`) : ''}
     ${G.phase === 'battle' ? bar('Очки хода', u.mp, T.mp, 'var(--bl)', `${u.mp} из ${T.mp}${u.acted ? ' · действие сделано' : ''}`) : ''}
@@ -679,7 +714,16 @@ function renderTip(sp) {
       <div class="row"><span>Наши потери</span><b class="bad">${o.lossA[0]}…${o.lossA[1]}</b></div>
       <div class="row"><span>Шанс отхода противника</span><b>${Math.round(o.retreat * 100)}%</b></div>
       <div class="bar sm"><div style="width:${Math.round(o.retreat * 100)}%;background:var(--ac)"></div></div>
-      <p class="hint">Мораль и опыт противника неизвестны — расчёт по типичным.</p>`;
+      <p class="hint">${e.intel ? 'Цель вскрыта разведкой боем — расчёт точный.' : 'Мораль и опыт противника неизвестны — расчёт по типичным.'}${e.rem ? ' Это остатки разбитой части: любая атака берёт их в плен.' : ''}${e.rear ? ' У цели заслон: отойдёт, но клетку с ходу не занять.' : ''}</p>`;
+  } else if (t.probe) {
+    const o = t.probe, a = selUnit(), e = G.units.find(x => x.id === t.id);
+    if (!a || !e) { tip.hidden = true; return }
+    h = `<b>Разведка боем: ${esc(unitName(a.side, a.k))} → ${esc(unitName(e.side, e.k))}</b>
+      <div class="lbl">Ожидаемо</div>
+      <div class="row"><span>Потери противника</span><b class="good">${o.loss[0]}…${o.loss[1]}</b></div>
+      <div class="row"><span>Наши потери</span><b class="bad">${o.lossA[0]}…${o.lossA[1]}</b></div>
+      <div class="row"><span>Окоп цели</span><b class="good">${e.ent ? e.ent + ' → ' + (e.ent - 1) : 'нет'}</b></div>
+      <p class="hint">Малой группой — вскрыть оборону: до конца следующего хода известны мораль, опыт, топливо, снабжение и засада цели, расчёт атаки по ней точный. Соседи цели выдают себя. Клетку часть не занимает${a.k === 'rec' ? '; разведрота после этого ещё ходит' : ''}.</p>`;
   } else if (t.fire) {
     const o = t.fire, a = selUnit(), e = G.units.find(x => x.id === t.id);
     if (!a || !e) { tip.hidden = true; return }
@@ -715,6 +759,9 @@ function showHelp() {
     <p><b>Движение.</b> Лес и высоты дороже, дорога — дешевле. Реку без моста колёсные не переходят, остальные — только с полным запасом хода. Рядом с противником — его <b>зона контроля</b>: вошёл — встал.</p>
     <p><b>Бой.</b> Наведите на цель — увидите соотношение сил и всё, что на него влияет: местность, окоп, охват, удар с двух сторон, реку, ночь, снабжение, штаб. Новое: <b>рельеф</b> (в гору ×0,88…0,8, с высоты ×1,1) и <b>взаимодействие родов войск</b> — цель, по которой в этот ход уже били танки, пехота атакует ×1,15 (и наоборот). Отход в клетку под огнём двух частей противника стоит шага силы.</p>
     <p><b>Артиллерия.</b> Огонь слабее в непогоду (дождь, туман, снег). Батарея, не стрелявшая в свой ход, прикрывает соседей и ведёт <b>контрбатарейный огонь</b> по артиллерии противника, открывшей огонь в её дальности.</p>
+    <p><b>Подготовка и разведка.</b> Часть, простоявшая ход рядом с противником, бьёт <b>подготовленной атакой</b> ×1,2 — пока не сдвинулась (значок ▲). <b>Разведка боем</b> (<kbd>E</kbd>) малой кровью вскрывает соседа: его мораль, опыт, запасы и засаду, а окоп сбивает на уровень.</p>
+    <p><b>Отход.</b> Разбитая часть на снабжении не гибнет: <b>остатки</b> (1 шаг) отходят — отведите их и пополните до 3 шагов или влейте в соседа своего типа. В котле остатков не бывает. Приказ <b>«Арьергард»</b>: выбитая часть отходит под заслоном — минус шаг, но её клетку с ходу не займут.</p>
+    <p><b>Склады.</b> <b>Полевой склад</b> — источник снабжения там, куда не дотянулись дороги; расширяется за очки, в ход переезда не работает, отрезанный живёт на запасах три хода. Чужой склад без охраны захватывается с трофеями.</p>
     <p><b>Обстрел.</b> Любая боевая часть может вместо штурма бить по соседу <b>огнём с места</b> (<kbd>R</kbd> или Shift+клик по цели): потерь меньше у обеих сторон, зато цель прижата, а часть остаётся в своих окопах и клетку не занимает. Через реку — без штрафа.</p>
     <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
     <p><b>Территория и фронт.</b> Каждая клетка чья-то. Часть, прошедшая через клетку, забирает её и соседние — если те не прикрыты противником (рядом нет его частей) и это не его город: город берут, только войдя в него. Пустой карман чужой земли, окружённый вашей, переходит к вам. Линия фронта — граница территорий.</p>
@@ -751,7 +798,7 @@ function showHelp() {
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
     развалить целое направление.</p>
     <div class="lbl">Управление</div>
-    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>R</kbd> — обстрел · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>R</kbd> — обстрел · <kbd>E</kbd> — разведка боем · <kbd>V</kbd> — сводка хода противника · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
@@ -1265,6 +1312,7 @@ function leaveToMenu() {
 function setSel(id) { G.sel = id; G.mode = null; G.spawn = null; hint(''); if (id) { G.tabR = 'unit'; syncTabs() } computeSel(); renderUI() }
 function clickHex(h, e) {
   if (!G.roomId || h < 0 || animBusy()) return;
+  RECAP.on = false;
   const u = selUnit(), there = G.units.find(x => x.hex === h);
   const m = G.mode;
   if (m && m.startsWith('buy:')) { act({ t: 'buy', k: m.slice(4), hex: h }); if (!e.shiftKey) { G.mode = null; G.spawn = null; hint('') } return }
@@ -1279,6 +1327,7 @@ function clickHex(h, e) {
   }
   if (there && (myUnit(there) || allyUnit(there) || G.spec)) return setSel(there.id === G.sel && !G.spec ? null : there.id);
   const tg = (G.targets || []).find(t => t.hex === h);
+  if (u && tg && tg.probe) { act({ t: 'probe', id: u.id, target: tg.id }); G.mode = null; hint(''); return }
   if (u && tg && !UT[u.k].bomb && (tg.fire || e.shiftKey)) { act({ t: 'fire', id: u.id, target: tg.id }); G.mode = null; hint(''); return }
   if (u && tg) { act(UT[u.k].bomb ? { t: 'bombard', id: u.id, hex: h } : { t: 'attack', id: u.id, target: tg.id }); return }
   if (u && G.reach && G.reach.has(h) && !G.reach.get(h).through) { act({ t: 'move', id: u.id, to: h }); return }
@@ -1288,9 +1337,17 @@ function clickHex(h, e) {
 /** «Обстрел»: переключить прицел выбранной части с атаки на огонь с места */
 function fireMode() {
   const u = selUnit(), T = u && UT[u.k];
-  if (!u || !myUnit(u) || !G.isMyTurn || u.acted || T.bomb || T.atk.soft < 2 || u.k === 'hq') return;
+  if (!u || !myUnit(u) || !G.isMyTurn || u.acted || u.rem || T.bomb || T.atk.soft < 2 || u.k === 'hq') return;
   G.mode = G.mode === 'fire' ? null : 'fire';
   hint(G.mode ? 'Обстрел: кликните по соседней части противника — огонь с места, без штурма. ПКМ — отмена.' : '');
+  computeSel(); renderUI();
+}
+/** «Разведка боем»: прицел выбранной части — вскрыть соседнюю цель малой силой */
+function probeMode() {
+  const u = selUnit(), T = u && UT[u.k];
+  if (!u || !myUnit(u) || !G.isMyTurn || u.acted || u.rem || T.bomb || !T.cap) return;
+  G.mode = G.mode === 'probe' ? null : 'probe';
+  hint(G.mode ? 'Разведка боем: кликните по соседней части противника — вскрыть её оборону и сбить уровень окопа. ПКМ — отмена.' : '');
   computeSel(); renderUI();
 }
 function orderClick(k) {
@@ -1423,6 +1480,9 @@ function bind() {
     else if (k === 'replace') act({ t: 'replace', id: u.id });
     else if (k === 'ambush') act({ t: 'ambush', id: u.id });
     else if (k === 'fire') fireMode();
+    else if (k === 'probe') probeMode();
+    else if (k.startsWith('merge:')) act({ t: 'merge', id: u.id, target: +k.slice(6) });
+    else if (k === 'depot') act({ t: 'depot', id: u.id });
     else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
   $('#menu').addEventListener('change', e => { if (e.target && e.target.id === 'saveFile') uploadSave(e.target.files && e.target.files[0]) });
@@ -1535,6 +1595,8 @@ function bind() {
     else if ((k === 'd' || k === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
     else if ((k === 'a' || k === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
     else if ((k === 'r' || k === 'к') && selUnit()) fireMode();
+    else if ((k === 'e' || k === 'у') && selUnit()) probeMode();
+    else if (k === 'v' || k === 'м') recapToggle();
     else if (k === 's' || k === 'ы') { G.showSupply = !G.showSupply; renderUI() }
     else if (k === 'h' || k === 'р') { G.showCmd = !G.showCmd; renderUI() }
     else if (k === 't' || k === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }

@@ -73,7 +73,8 @@
   /** клетки, где стоит наземная часть противника, и её зона контроля */
   function zocOf(ctx, side) {
     const z = new Set();
-    for (const [h, u] of ctx.occ) if (u.side !== side) for (const n of ctx.H.neighbors(h)) z.add(n);
+    /* остатки разбитой части и полевой склад зоны контроля не держат */
+    for (const [h, u] of ctx.occ) if (u.side !== side && !u.rem && !UT[u.k].depot) for (const n of ctx.H.neighbors(h)) z.add(n);
     return z;
   }
   /**
@@ -158,12 +159,14 @@
     let n = 0, opposite = false;
     for (let k = 0; k < 6; k++) {
       const h = ctx.H.nb(def.hex, k), o = h >= 0 && ctx.occ.get(h);
-      if (!o || o.side !== att.side || o.id === att.id || !UT[o.k].atk.soft) continue;
+      if (!o || o.side !== att.side || o.id === att.id || !UT[o.k].atk.soft || o.rem) continue;
       n++;
       if (ctx.H.nb(def.hex, (ctx.H.dirTo(def.hex, att.hex) + 3) % 6) === h) opposite = true;
     }
     if (n) am(`охват (${n})`, Math.min(1.36, 1 + .12 * n));
     if (ctx.counter && ctx.counter.has(def.hex)) am('контрудар', 1.3);
+    /* подготовленная атака: простояли прошлый ход рядом с противником и в этот не двигались */
+    if (!fire && att.prep && !att.moved) am('подготовленная атака', W.PREP.att);
     if (opposite) am('удар с двух сторон', 1.2);
     if (ctx.night && !TA.th) am('ночь', .75);
     /* рельеф: атаковать в гору тяжелее, с высоты — легче */
@@ -221,6 +224,18 @@
     return { A: o.A, D: o.D, r: o.r, mods: o.mods, kill, sup, back,
       loss: [Math.max(0, Math.round(kill * .5)), Math.min(def.str, Math.round(kill * 1.5))],
       supp: [Math.round(sup * .6), Math.round(sup * 1.4)],
+      lossA: [Math.max(0, Math.round(back * .5)), Math.min(att.str, Math.round(back * 1.5))] };
+  }
+
+  /**
+   * разведка боем: малой силой — вскрыть оборону. Потери обеих сторон — доли от обычной атаки
+   * (W.PROBE), разведрота теряет ещё меньше. Сведения и снятый уровень окопа — в движке.
+   */
+  function probeOdds(ctx, att, def) {
+    const F = W.PROBE, o = odds(ctx, att, def);
+    const dmg = o.expD * F.dmg, back = o.expA * F.back * (att.k === 'rec' ? F.rec : 1);
+    return { A: o.A, D: o.D, r: o.r, mods: o.mods, dmg, back,
+      loss: [0, Math.min(def.str, Math.round(dmg * 1.5))],
       lossA: [Math.max(0, Math.round(back * .5)), Math.min(att.str, Math.round(back * 1.5))] };
   }
 
@@ -299,7 +314,7 @@
     return Math.min(3, o.expD * .55 * 1.4);
   }
   const ARMBIT = { soft: 1, light: 2, hard: 4 };
-  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, fireOdds, bombardOdds, airCover, airOdds, aaZone, ambushHit, terrainDef, effStr, firePow, TDEF, TCOST, TNAME };
+  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, fireOdds, probeOdds, bombardOdds, airCover, airOdds, aaZone, ambushHit, terrainDef, effStr, firePow, TDEF, TCOST, TNAME };
   if (node) module.exports = api;
   else g.Rules = api;
 })(typeof window !== 'undefined' ? window : globalThis);

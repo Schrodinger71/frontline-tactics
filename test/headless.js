@@ -17,7 +17,8 @@ function checkView(g, side) {
   for (const u of v.units) if (u.side !== side) {
     const real = g.byId(u.id);
     assert(real && g.seen(side, real), 'в снимок попала невидимая чужая часть');
-    assert(u.org === undefined && u.mp === undefined, 'снимок раскрывает чужие подробности');
+    /* мораль чужой части известна только после разведки боем */
+    assert((u.org === undefined || g.hasIntel(side, real)) && u.mp === undefined && u.prep === undefined, 'снимок раскрывает чужие подробности');
   }
   return v;
 }
@@ -169,6 +170,163 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   const d = g.spawn('inf', en, H.neighbors(art.hex).find(n => !g.unitAt(n) && g.passable('inf', n))); g.updateVision(side);
   assert(!g.act(side, { t: 'fire', id: art.id, target: d.id }).ok, 'артиллерия обстрелом в упор не бьёт — у неё «Огонь»');
   console.log('обстрел: ok');
+}
+/* подготовленная атака, арьергард, разведка боем, остатки, полевой склад */
+{
+  const mk = seed => {
+    const g = new Game('both', N, seed, 'steppe');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    const side = g.active, en = side === N ? S : N, H = g.H;
+    g.updateSupply(side); g.updateSupply(en);
+    /* свободная клетка на хорошем снабжении, вокруг которой пусто и проходимо */
+    const open = h => !g.unitAt(h) && g.passable('tnk', h) && g.map.hexes[h].t === 'open';
+    const spot = sd => [...Array(H.NH).keys()].find(h => g.sv[sd][h] >= 7 && open(h) && H.neighbors(h).length === 6 && H.neighbors(h).every(n => open(n) && H.neighbors(n).every(x => !g.unitAt(x))));
+    return { g, side, en, H, spot, open };
+  };
+  /* --- подготовленная атака --- */
+  {
+    const { g, side, en, H, spot } = mk(21);
+    const h0 = spot(side), a = g.spawn('inf', side, h0), b = g.spawn('inf', en, H.neighbors(h0)[0]);
+    g.updateVision(side); g.updateVision(en);
+    const ctx = () => g.ctxFor(side, true), has = () => Rules.odds(ctx(), a, b).mods.some(m => m.t === 'подготовленная атака');
+    assert(!has(), 'только что подошли — атака с ходу');
+    g.endTurn(); g.drainEvents(); g.endTurn(); g.drainEvents();
+    assert.strictEqual(g.active, side);
+    assert(a.prep && has(), 'простояли ход рядом с противником — атака подготовлена');
+    assert(!Rules.fireOdds(ctx(), a, b).mods.some(m => m.t === 'подготовленная атака'), 'обстрелу подготовка не нужна');
+    a.moved = true;
+    assert(!has(), 'сдвинулись — подготовка пропала');
+    a.moved = false;
+    const s = g.snapshotFor(side).units.find(x => x.id === a.id), e = g.snapshotFor(en).units.find(x => x.id === a.id);
+    assert(s.prep === 1 && (!e || e.prep === undefined), 'готовность видна только своим');
+  }
+  /* --- арьергард --- */
+  {
+    const { g, side, en, H, spot } = mk(22);
+    const h0 = spot(side), a = g.spawn('tnk', side, h0), b = g.spawn('inf', en, H.neighbors(h0)[0]);
+    g.updateVision(side); g.updateVision(en);
+    g.active = en; g.cp[en] = 5; b.org = 10;
+    assert(g.act(en, { t: 'order', k: 'rear', id: b.id }).ok && b.rear, 'приказ «Арьергард»');
+    assert(!g.act(en, { t: 'order', k: 'rear', id: b.id }).ok, 'второй раз — нельзя');
+    g.active = side; a.acted = false; a.mp = 5;
+    const ha = a.hex, hb = b.hex, s0 = b.str;
+    const r = g.act(side, { t: 'attack', id: a.id, target: b.id });
+    assert(r.ok, 'атака по части с заслоном');
+    if (b.str > 0 && !b.rem && b.hex !== hb) {
+      assert.strictEqual(a.hex, ha, 'заслон не дал занять клетку');
+      assert(!a.exploit, 'и прорыва нет');
+      assert(b.str <= s0 - r.ld - 1 && !b.rear, 'заслон стоил шага, приказ израсходован');
+    }
+  }
+  /* --- разведка боем --- */
+  {
+    const { g, side, en, H, spot } = mk(23);
+    const h0 = spot(side), a = g.spawn('inf', side, h0), b = g.spawn('inf', en, H.neighbors(h0)[0]);
+    const rc = g.spawn('rec', side, H.neighbors(b.hex).find(n => n !== h0 && !g.unitAt(n)));
+    b.ent = 2; a.ent = 1; g.updateVision(side); g.updateVision(en);
+    assert(g.snapshotFor(side).units.find(x => x.id === b.id).org === undefined, 'до разведки мораль противника неизвестна');
+    const ctx = g.ctxFor(side, true), p = Rules.probeOdds(ctx, a, b), o = Rules.odds(ctx, a, b);
+    assert(p.back < o.expA * .5 && p.dmg < o.expD * .3, 'разведка боем — малой кровью');
+    assert(Rules.probeOdds(ctx, rc, b).back < Rules.probeOdds(ctx, { ...rc, k: 'mot' }, b).back, 'разведрота теряет меньше');
+    const ha = a.hex;
+    assert(g.act(side, { t: 'probe', id: a.id, target: b.id }).ok, 'разведка боем');
+    assert(a.hex === ha && a.ent === 1 && a.acted, 'разведчики вернулись на место');
+    if (b.str > 0 && !b.rem) {
+      assert.strictEqual(b.ent, 1, 'окоп цели — на уровень ниже');
+      const v = g.snapshotFor(side).units.find(x => x.id === b.id);
+      assert(v.intel === 1 && v.org !== undefined && v.xp !== undefined && v.mp === undefined, 'сведения о цели добыты');
+      rc.mp = 5;
+      assert(g.act(side, { t: 'probe', id: rc.id, target: b.id }).ok && rc.mp === 5, 'разведрота после разведки боем ещё ходит');
+      assert(b.str <= 0 || b.rem || b.ent === 1, 'второй дозор за ход окоп не сбивает');
+      /* сведения устаревают */
+      g.turn += W.PROBE.intel + 1;
+      assert(g.snapshotFor(side).units.find(x => x.id === b.id).intel === undefined, 'через ход сведения устарели');
+    }
+    const art = g.spawn('art', side, H.neighbors(ha).find(n => !g.unitAt(n)));
+    assert(!g.act(side, { t: 'probe', id: art.id, target: b.id }).ok, 'артиллерия разведку боем не ведёт');
+  }
+  /* --- остатки разбитой части --- */
+  {
+    const { g, side, en, H, spot } = mk(24);
+    const h0 = spot(side), a = g.spawn('tnk', side, h0), b = g.spawn('inf', en, H.neighbors(h0)[0]);
+    g.updateVision(side); g.updateVision(en);
+    b.str = 1; b.supplied = true; b.att = 'sap';
+    const hb = b.hex, lost0 = g.stats[en].lost.inf || 0;
+    assert(g.act(side, { t: 'attack', id: a.id, target: b.id }).ok, 'атака по последнему шагу');
+    assert(b.str === W.REMNANT.str && b.rem && b.hex !== hb, 'часть не уничтожена: остатки отошли');
+    assert.strictEqual(a.hex, hb, 'клетку заняли');
+    assert.strictEqual(g.stats[en].lost.inf || 0, lost0, 'потерей часть ещё не считается');
+    { const zoc = Rules.zocOf(g.ctxFor(side, true), side); assert(!H.neighbors(b.hex).some(n => zoc.has(n)), 'зоны контроля у остатков нет') }
+    g.active = en; b.acted = false;
+    for (const t of ['attack', 'fire', 'probe', 'ambush', 'dig']) assert(!g.act(en, { t, id: b.id, target: a.id }).ok, 'остатки не воюют: ' + t);
+    /* пополнение возвращает часть в строй, специалист уцелел */
+    assert(!g.act(en, { t: 'replace', id: b.id }).ok, 'под носом у противника не пополниться');
+    a.hex = h0; b.sv = 9; b.moved = false; g.budget[en] = 500;
+    assert(g.act(en, { t: 'replace', id: b.id }).ok, 'пополнение остатков');
+    assert(b.str >= W.REMNANT.reform && !b.rem && b.att === 'sap', 'часть снова в строю, специалист при ней');
+    /* влиться в соседнюю часть */
+    const c = g.spawn('inf', en, H.neighbors(b.hex).find(n => !g.unitAt(n))), d = g.spawn('inf', en, H.neighbors(c.hex).find(n => !g.unitAt(n)));
+    c.rem = true; c.str = 1; c.remBy = side; d.str = 6;
+    const k0 = g.stats[side].killed.inf || 0;
+    assert(!g.act(en, { t: 'merge', id: d.id, target: c.id }).ok, 'вливаются только остатки');
+    assert(g.act(en, { t: 'merge', id: c.id, target: d.id }).ok && d.str === 7 && c.str === 0, 'остатки влились в соседа');
+    assert.strictEqual(g.stats[side].killed.inf || 0, k0 + 1, 'разбитая часть — в счёт противнику');
+    /* остатки берут в плен любой атакой */
+    const e2 = g.spawn('inf', en, H.neighbors(a.hex).find(n => !g.unitAt(n)));
+    e2.rem = true; e2.str = 1; g.active = side; a.acted = false; g.updateVision(side);
+    const pr = g.stats[side].prisoners;
+    assert(g.act(side, { t: 'attack', id: a.id, target: e2.id }).ok && e2.str === 0, 'остатки взяты');
+    assert.strictEqual(g.stats[side].prisoners, pr + 1, 'пленные посчитаны');
+    /* в котле остатков не бывает */
+    const { g: g2, side: s2, en: e3, H: H2, spot: sp2 } = mk(25);
+    const q0 = sp2(s2), t2 = g2.spawn('tnk', s2, q0), f2 = g2.spawn('inf', e3, H2.neighbors(q0)[0]);
+    g2.updateVision(s2); f2.str = 1; f2.supplied = false;
+    assert(g2.act(s2, { t: 'attack', id: t2.id, target: f2.id }).ok && f2.str === 0, 'без снабжения часть гибнет целиком');
+  }
+  /* --- полевой склад --- */
+  {
+    const { g, side, en, H } = mk(26);
+    const sv = () => g.sv[side];
+    /* клетка в поле на скудном снабжении, вокруг — без подвоза */
+    const h0 = [...Array(H.NH).keys()].find(h => sv()[h] >= 1 && sv()[h] <= 3 && !g.svNet[side][h] && !g.unitAt(h) && g.passable('dep', h) && H.neighbors(h).some(n => g.terr[n] === g.terr[h] && sv()[n] === 0 && g.map.hexes[n].t === 'open'));
+    assert(h0 !== undefined, 'нашлась клетка для склада');
+    const far = H.neighbors(h0).find(n => g.terr[n] === g.terr[h0] && sv()[n] === 0 && g.map.hexes[n].t === 'open');
+    const dp = g.spawn('dep', side, h0);
+    assert.strictEqual(dp.lvl, 1);
+    g.updateSupply(side);
+    assert(dp.fed && sv()[h0] === W.DEPOT.v[1] && sv()[far] > 0, `склад кормит округу: ${sv()[h0]} на клетке, ${sv()[far]} рядом`);
+    assert(g.svSrc[side].some(x => x.k === 'depot' && x.hex === h0), 'склад — в списке источников');
+    g.budget[side] = W.DEPOT.up; g.active = side;
+    assert(g.act(side, { t: 'depot', id: dp.id }).ok && dp.lvl === 2 && g.budget[side] === 0, 'склад расширен за очки');
+    assert.strictEqual(sv()[h0], W.DEPOT.v[2], 'расширенный склад даёт больше');
+    assert(!g.act(side, { t: 'depot', id: dp.id }).ok, 'расширяют вместо действий — второй раз за ход нельзя');
+    assert(!g.act(side, { t: 'attack', id: dp.id, target: 1 }).ok, 'склад не воюет');
+    dp.moved = true; g.updateSupply(side);
+    assert(sv()[h0] < W.DEPOT.v[1], 'склад на марше не работает');
+    dp.moved = false;
+    /* отрезанный склад держится на запасах, потом пустеет */
+    const cutH = [...Array(H.NH).keys()].find(h => g.terr[h] === g.terr[h0] && sv()[h] === 0 && !g.unitAt(h) && g.passable('dep', h) && H.neighbors(h).every(n => sv()[n] === 0));
+    if (cutH !== undefined) {
+      dp.hex = cutH; g.updateSupply(side);
+      assert(!dp.fed && sv()[cutH] === W.DEPOT.v[2], 'без подвоза склад работает на запасах');
+      dp.sp = 0; g.updateSupply(side);
+      assert.strictEqual(sv()[cutH], 0, 'пустой отрезанный склад ничего не даёт');
+      dp.sp = 3; dp.hex = h0; g.updateSupply(side);
+    }
+    /* захват склада без охраны */
+    const eh = H.neighbors(h0).find(n => !g.unitAt(n) && g.passable('inf', n));
+    const e = g.spawn('inf', en, eh); e.sp = 1; g.updateVision(en);
+    g.active = en; const b0 = g.budget[en];
+    assert(g.act(en, { t: 'attack', id: e.id, target: dp.id }).ok && dp.str === 0, 'склад без охраны захвачен');
+    assert(g.budget[en] === b0 + W.DEPOT.loot * 2 && e.sp === W.SUPPLY.max, 'трофеи: очки и полные боеприпасы');
+    /* сохранение держит уровень склада и остатки */
+    const { Game: G2 } = require('../game/engine');
+    const d2 = g.spawn('dep', side, H.neighbors(e.hex).find(n => !g.unitAt(n) && g.passable('dep', n))); d2.lvl = 3;
+    const r2 = g.spawn('inf', side, H.neighbors(d2.hex).find(n => !g.unitAt(n) && g.passable('inf', n))); r2.rem = true; r2.str = 1; r2.remBy = en;
+    const back = G2.fromState(JSON.parse(JSON.stringify(g.saveState())));
+    assert(back.units.find(u => u.id === d2.id).lvl === 3 && back.units.find(u => u.id === r2.id).rem === true, 'сохранение: уровень склада и остатки на месте');
+  }
+  console.log('механики 3.4: ok');
 }
 /* механики 3.3: топливо, подавленные шаги, специалисты, погода в снабжении */
 {

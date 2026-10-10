@@ -39,8 +39,8 @@ const str = (v, max, def) => {
 const arr = (v, max) => (Array.isArray(v) ? v.slice(0, max) : []);
 
 /* ---------- запись ---------- */
-const UNIT_NUM = ['id', 'hex', 'str', 'org', 'xp', 'ent', 'mp', 'sp', 'fu', 'su', 'reload', 'mines', 'revealed', 'cut', 'sv', 'hb', 'startHex'];
-const UNIT_BOOL = ['acted', 'moved', 'sup', 'supplied', 'pre', 'militia', 'raid', 'hold', 'march', 'exploit', 'amb', 'ambUsed', 'support', 'fired', 'hitThisTurn', 'dry', 'dryF'];
+const UNIT_NUM = ['id', 'hex', 'str', 'org', 'xp', 'ent', 'mp', 'sp', 'fu', 'su', 'reload', 'mines', 'revealed', 'cut', 'sv', 'hb', 'startHex', 'lvl'];
+const UNIT_BOOL = ['acted', 'moved', 'sup', 'supplied', 'pre', 'militia', 'raid', 'hold', 'march', 'exploit', 'amb', 'ambUsed', 'support', 'fired', 'hitThisTurn', 'dry', 'dryF', 'rear', 'rem', 'prep', 'adj0', 'fed'];
 
 function saveState() {
   const g = this;
@@ -57,6 +57,7 @@ function saveState() {
       for (const f of UNIT_NUM) if (typeof u[f] === 'number') o[f] = u[f];
       for (const f of UNIT_BOOL) if (u[f]) o[f] = 1;
       if (u.sited === false) o.sited = 0;
+      if (u.remBy) o.remBy = u.remBy;
       return o;
     }),
     pts: g.pts.map(p => ({ id: p.id, owner: p.owner || null, home: p.home || null })),
@@ -145,6 +146,9 @@ function fromState(raw) {
     };
     for (const f of UNIT_BOOL) u[f] = bool(x[f]);
     if (T.fob) u.sited = x.sited === 0 || x.sited === false ? false : true;
+    if (T.depot) u.lvl = int(x.lvl, 1, W.DEPOT.max, 1);
+    else delete u.lvl;
+    if (x.remBy === 'n' || x.remBy === 's') u.remBy = x.remBy;
     if (u.su > u.str) u.su = u.str;
     units.push(u);
   }
@@ -241,7 +245,7 @@ function fromState(raw) {
 
   /* производное: фронт, обзор, источники снабжения */
   g.rebuildFront();
-  for (const sd of SIDES) g.svSrc[sd] = g.supplySources(sd);
+  for (const sd of SIDES) g.svSrc[sd] = g.supplySources(sd).concat(g.depotSources(sd));
   g.updateVision(N); g.updateVision(S);
   g.events = [];
   g.log('*', `Партия загружена: ход ${g.turn + 1}, ${W.turnClock(g.turn)}.`, 'hq');

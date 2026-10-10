@@ -1,14 +1,15 @@
 {
   "name": "frontline-tactics",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Frontline Tactics — пошаговая штабная игра о сухопутном фронте на гексах. Сервер с правилами, бот, дуэль по коду, наблюдение.",
   "private": true,
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node scripts/sync-version.js --check && node test/headless.js 3 3 && node test/e2e.js",
+    "test": "node scripts/sync-version.js --check && node scripts/check-specs.js && node test/headless.js 3 3 && node test/e2e.js",
     "test:headless": "node test/headless.js",
     "test:e2e": "node test/e2e.js",
+    "spec:check": "node scripts/check-specs.js",
     "version:sync": "node scripts/sync-version.js",
     "version": "node scripts/sync-version.js && git add shared/world.js README.md"
   },

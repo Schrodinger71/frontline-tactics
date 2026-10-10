@@ -143,6 +143,33 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(!g.act(N, { t: 'bombard', id: m.id, hex: e.hex }).ok, 'на следующий ход РСЗО ещё перезаряжается');
   console.log('механики 3.2: ok');
 }
+/* обстрел: огонь с места — клетку не занимаем, окоп не теряем, цель не отходит */
+{
+  const g = new Game('both', N, 11, 'steppe');
+  g.ready.n = g.ready.s = true; g.tryStart();
+  const side = g.active, en = side === N ? S : N, H = g.H;
+  g.updateSupply(side);
+  const h0 = [...Array(H.NH).keys()].find(h => g.sv[side][h] >= 7 && !g.unitAt(h) && g.passable('inf', h) && H.neighbors(h).some(n => !g.unitAt(n) && g.passable('inf', n)));
+  const a = g.spawn('inf', side, h0), b = g.spawn('inf', en, H.neighbors(h0).find(n => !g.unitAt(n) && g.passable('inf', n)));
+  a.ent = 2; g.updateVision(side);
+  const ctx = g.ctxFor(side, true), f = Rules.fireOdds(ctx, a, b), o = Rules.odds(ctx, a, b);
+  assert(f.sup > f.kill, 'обстрел больше прижимает, чем убивает');
+  assert(f.kill + f.sup / 2 < o.expD && f.back < o.expA, 'обстрел слабее штурма и дешевле для стреляющего');
+  const ha = a.hex, hb = b.hex;
+  assert(g.act(side, { t: 'fire', id: a.id, target: b.id }).ok, 'обстрел соседней цели');
+  assert(a.hex === ha && a.ent === 2 && a.acted, 'стреляющий на месте и в окопе');
+  assert(b.str <= 0 || b.hex === hb, 'цель под обстрелом не отходит');
+  assert(!g.act(side, { t: 'fire', id: a.id, target: b.id }).ok, 'второй раз за ход — нельзя');
+  /* уничтоженную огнём цель не преследуем */
+  const c = g.spawn('tnk', side, H.neighbors(hb).find(n => n !== ha && !g.unitAt(n) && g.passable('tnk', n)));
+  if (b.str > 0) { b.str = 1; b.su = 0; const hc = c.hex; g.updateVision(side);
+    for (let i = 0; i < 40 && b.str > 0; i++) { c.acted = false; g.act(side, { t: 'fire', id: c.id, target: b.id }) }
+    assert(c.hex === hc, 'после обстрела клетку не занимают'); }
+  const art = g.spawn('art', side, H.neighbors(ha).find(n => !g.unitAt(n) && g.passable('art', n)));
+  const d = g.spawn('inf', en, H.neighbors(art.hex).find(n => !g.unitAt(n) && g.passable('inf', n))); g.updateVision(side);
+  assert(!g.act(side, { t: 'fire', id: art.id, target: d.id }).ok, 'артиллерия обстрелом в упор не бьёт — у неё «Огонь»');
+  console.log('обстрел: ok');
+}
 /* механики 3.3: топливо, подавленные шаги, специалисты, погода в снабжении */
 {
   const Hex = require('../shared/hex'), W = require('../shared/world');
@@ -438,6 +465,120 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   const held = tryCapture(true);
   assert(held.ok && !held.captured, 'под охраной ставка не сдаётся — обычный бой');
   console.log('ставка командира: ok');
+}
+/* ---------- авиаудар и ПВО ----------
+   Удар по пехоте в поле без прикрытия снимает в среднем около двух шагов;
+   под зонтиком ПВО удар заметно слабее, часть налётов сбита, а сбитый
+   штурмовик — минус вылет в следующий ход. Расчёт клиента совпадает. */
+{
+  const Hex = require('../shared/hex').gridFor('steppe');
+  const { wxById } = require('../shared/weather');
+  const g = new Game('both', N, 77, 'steppe');
+  g.bots = { n: true, s: true }; g.tryStart();
+  g.weather = wxById('clear'); g.turn = 0; g.active = N;
+  const m = g.map, spot = [];
+  for (let h = 0; h < Hex.NH && spot.length < 1; h++) {
+    const hx = m.hexes[h];
+    if (hx.t !== 'open' || hx.x < 120 || hx.x > 200) continue;
+    if (Hex.within(h, 3).some(x => g.unitAt(x) || m.hexes[x].t === 'lake')) continue;
+    spot.push(h);
+  }
+  assert(spot.length, 'нет чистого поля для проверки авиации');
+  const tgt = spot[0], aaHex = Hex.neighbors(tgt).find(x => m.hexes[x].t !== 'lake' && !g.unitAt(x));
+  const trial = withAA => {
+    g.units = g.units.filter(u => u.hex !== tgt && u.hex !== aaHex);
+    const e = g.spawn('inf', S, tgt, { ent: 0 });
+    if (withAA) g.spawn('aa', S, aaHex, {});
+    e.revealed = g.turn; g.recon.n.add(tgt); g.updateVision(N);
+    g.air.n = { strike: 1, recon: 0 }; g.airLost.n = 0;
+    const r = g.act(N, { t: 'air', kind: 'strike', hex: tgt });
+    assert(r.ok, 'удар не прошёл: ' + r.error);
+    g.drainEvents();
+    return { loss: 10 - e.str, down: !!r.down };
+  };
+  const N0 = 160, open = [], cover = [];
+  for (let i = 0; i < N0; i++) open.push(trial(false));
+  for (let i = 0; i < N0; i++) cover.push(trial(true));
+  const avgL = a => a.reduce((s, x) => s + x.loss, 0) / a.length;
+  const downK = cover.filter(x => x.down).length / N0;
+  assert(avgL(open) >= 1.5, `авиаудар слабый: в среднем ${avgL(open).toFixed(2)} шага`);
+  assert(open.every(x => !x.down), 'без ПВО штурмовик не сбивают');
+  assert(downK > .15 && downK < .5, `доля сбитых под одним ПВО ${downK.toFixed(2)}`);
+  assert(avgL(cover) < avgL(open) * .5, `ПВО почти не мешает: ${avgL(cover).toFixed(2)} против ${avgL(open).toFixed(2)}`);
+  /* сбитый штурмовик — минус вылет в следующий ход */
+  g.airLost.n = 1; g.startSide(N);
+  assert.strictEqual(g.air.n.strike, W.AIR.strike[0] - 1, 'после потери вылетов меньше');
+  /* расчёт для клиента — тот же, что на сервере */
+  const ctx = g.ctxFor(N, true), e = g.unitAt(tgt), o = Rules.airOdds(ctx, e);
+  assert(o.cover > .9 && o.shot > .2 && o.cut < .6, 'расчёт прикрытия ПВО');
+  console.log(`авиация и ПВО: ok (без ПВО −${avgL(open).toFixed(2)}, под ПВО −${avgL(cover).toFixed(2)}, сбито ${Math.round(downK * 100)}%)`);
+}
+/* ---------- сохранение и загрузка ----------
+   Снимок → сжатие → разбор → партия; играется дальше без ошибок. Мусор и
+   подмена значений не роняют сервер: либо отказ, либо значения зажаты. */
+{
+  const Save = require('../game/save');
+  const g = new Game('both', N, 31, 'corridor');
+  g.bots = { n: true, s: true }; g.tryStart();
+  for (let i = 0; i < 8 && !g.over; i++) { g.botTurn(g.active); g.drainEvents() }
+  const st = g.saveState(), packed = Save.pack(st);
+  const g2 = Game.fromState(Save.unpack(packed));
+  assert.strictEqual(g2.turn, g.turn, 'ход после загрузки');
+  assert.strictEqual(g2.units.length, g.units.filter(u => u.str > 0).length, 'части после загрузки');
+  assert.strictEqual(String(g2.terr), String(g.terr), 'территория после загрузки');
+  for (const u of g.units.filter(x => x.str > 0)) {
+    const v = g2.units.find(x => x.id === u.id);
+    for (const f of ['hex', 'str', 'org', 'sp', 'fu', 'su', 'seat', 'cs']) assert.strictEqual(v[f], u[f], `часть ${u.id}: ${f}`);
+  }
+  g2.bots = { n: true, s: true };
+  for (let guard = 0; !g2.over && guard < 400; guard++) { g2.botTurn(g2.active); g2.drainEvents() }
+  assert(g2.over, 'загруженная партия доиграна');
+  for (const bad of [null, {}, { fmt: 1 }, { fmt: 1, mode: 'zzz' }, { fmt: 1, mode: 'both', map: 'valley', units: [] }, { fmt: 1, mode: 'both', map: 'valley', units: [{ k: 'tnk', side: 'n', id: 1, hex: 1e9 }] }])
+    assert.throws(() => Game.fromState(bad), 'мусор не загружается: ' + JSON.stringify(bad));
+  for (const bad of ['', '!!!', 'QUJD', 42, 'A'.repeat(500001)]) assert.throws(() => Save.unpack(bad), 'мусор не распаковывается');
+  const st2 = g.saveState();
+  st2.units[0].str = 1e9; st2.units[0].cs = '<script>'; st2.budget.n = -1e9; st2.score = 1e9; st2.commanders.n.name = '<b>x</b>';
+  const g3 = Game.fromState(st2);
+  assert(g3.units.find(u => u.id === st2.units[0].id).str === 10 && g3.budget.n === 0 && g3.score === 100, 'значения зажаты');
+  assert(!/[<>]/.test(JSON.stringify(g3.snapshotFor('spec'))), 'разметка не проходит');
+  console.log(`сохранение и загрузка: ok (снимок ${packed.length} байт)`);
+}
+/* ---------- состав по ходу партии ----------
+   Новый командир при расстановке и в бою: свой штаб, бюджет стороны
+   делится заново (сумма та же), больше MAX_SEATS — нельзя. */
+{
+  const g = new Game('both', N, 41, 'valley');
+  g.bots = { n: true, s: true };
+  let r = g.addSeat(N, true);
+  assert(r.ok && r.id === 'n2', 'место при расстановке');
+  assert(g.units.some(u => u.seat === 'n2' && u.k === 'hq') && g.units.some(u => u.seat === 'n2' && u.k === 'fob' && u.sited), 'штаб и пункт нового командира');
+  g.tryStart();
+  assert.strictEqual(g.phase, 'battle', 'бот нового места расставился');
+  for (let i = 0; i < 4; i++) { g.botTurn(g.active); g.drainEvents() }
+  const sum = () => g.seatsOf(S).reduce((a, x) => a + g.budget[x.id], 0), before = Math.floor(sum());
+  r = g.addSeat(S, false);
+  assert(r.ok && r.id === 's2', 'место в бою');
+  assert(Math.abs(sum() - before) < 1, 'очки стороны не появились из воздуха');
+  assert(g.units.some(u => u.seat === 's2' && u.k === 'hq'), 'штаб нового командира в бою');
+  assert(g.addSeat(S, true).ok && !g.addSeat(S, true).ok, `не больше ${W.MAX_SEATS} мест`);
+  for (const sd of [N, S]) for (const st of g.seatsOf(sd)) g.bots[st.id] = true;
+  for (let guard = 0; !g.over && guard < 400; guard++) { g.botTurn(g.active); for (const st of g.seatsOf(g.active)) if (!g.done[st.id] && !g.over) g.botTurn(st.id); g.drainEvents() }
+  assert(g.over, 'партия с добавленными местами доиграна');
+  console.log('состав по ходу партии: ok');
+}
+/* ---------- зимние карты: своя погода ---------- */
+{
+  const { MAPS, MAP_ORDER } = require('../shared/maps');
+  const { wxPool } = require('../shared/weather');
+  const winter = MAP_ORDER.filter(id => MAPS[id].winter);
+  assert(winter.length >= 4, 'зимних карт меньше четырёх');
+  for (const id of winter) {
+    const g = new Game('both', N, 5, id);
+    assert(['frost', 'cloud'].includes(g.weather.id), `${id}: погода в начале ${g.weather.id}`);
+    assert(!wxPool(MAPS[id]).some(x => x.w.id === 'rain' || x.w.id === 'storm'), `${id}: дождь зимой`);
+  }
+  assert(!wxPool(MAPS.valley).some(x => x.w.winter), 'метель летом');
+  console.log(`зимние карты: ok (${winter.join(', ')})`);
 }
 /* ============================================================
    ОТЧЁТ ПО БАЛАНСУ: сводка по всем сыгранным партиям.

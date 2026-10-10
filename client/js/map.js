@@ -39,23 +39,37 @@ function regionEdges(has, list) {
   }
 }
 
-/* ---------- туман войны: мягкий край ----------
-   Слой тумана живёт в координатах карты и перестраивается только при смене
-   обзора; при прокрутке и масштабе он просто рисуется с текущим
-   преобразованием. Маска всё равно размыта, поэтому печём её в 1,5 пикс.
-   на км (раньше 3): размытие на вчетверо меньшей площади и вдвое меньшим
-   радиусом — в разы дешевле, а после сглаживания на экране не отличить.
-   Граница обзора — готовый Path2D в координатах карты, а не обход всех
-   видимых клеток в каждом кадре. */
-let FOGW = null, fogKey = '', FOG_EDGE = null;
+/* ---------- территория и туман войны: один слой в координатах карты ----------
+   Подкраска своей и чужой земли и туман войны печатаются вместе в один холст
+   (1,5 пикс. на км) и перестраиваются только с новым снимком; в кадре — одно
+   копирование с текущим преобразованием. Раньше в каждом кадре заливались
+   два пути из всех клеток карты (территория) и отдельно копировался туман.
+   Маска тумана размыта, поэтому низкого разрешения хватает. Граница обзора —
+   готовый Path2D в координатах карты. */
+let OVL = null, ovlKey = '', FOG_EDGE = null;
 const FK = 1.5;
-function drawFog() {
-  if (!G.vis || G.spec || G.phase !== 'battle') return;
-  if (!FOGW) { FOGW = document.createElement('canvas'); FOGW.width = Math.ceil(H.WW * FK); FOGW.height = Math.ceil(H.WH * FK) }
-  const key = G.mapId + '|' + G.visV;
-  if (key !== fogKey) {
-    fogKey = key;
-    const t = document.createElement('canvas'); t.width = FOGW.width; t.height = FOGW.height;
+function overlayLayer() {
+  const fogOn = !!(G.vis && !G.spec && G.phase === 'battle');
+  const own = G.spec ? 1 : G.side === N ? 1 : 2;
+  const key = G.mapId + '|' + own + '|' + (fogOn ? G.visV : '-') + '|' + G.terrStr;
+  if (key === ovlKey && OVL) return OVL;
+  ovlKey = key;
+  const w = Math.ceil(H.WW * FK), h = Math.ceil(H.WH * FK);
+  if (!OVL || OVL.width !== w || OVL.height !== h) { OVL = document.createElement('canvas'); OVL.width = w; OVL.height = h }
+  const o = OVL.getContext('2d');
+  o.setTransform(1, 0, 0, 1, 0, 0); o.clearRect(0, 0, w, h);
+  /* земля сторон */
+  const F = buildFront();
+  OVL.empty = !F && !fogOn;
+  if (F) {
+    o.save(); o.scale(FK, FK);
+    o.fillStyle = 'rgba(108,195,255,.05)'; o.fill(F.fill[own]);
+    o.fillStyle = 'rgba(255,91,71,.07)'; o.fill(F.fill[3 - own]);
+    o.restore();
+  }
+  FOG_EDGE = null;
+  if (fogOn) {
+    const t = document.createElement('canvas'); t.width = w; t.height = h;
     const g = t.getContext('2d');
     g.scale(FK, FK); g.fillStyle = 'rgb(5,9,14)'; g.beginPath();
     for (let id = 0; id < H.NH; id++) {
@@ -64,34 +78,41 @@ function drawFog() {
       cs.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)); g.closePath();
     }
     g.fill();
-    const f = FOGW.getContext('2d');
-    f.clearRect(0, 0, FOGW.width, FOGW.height);
-    f.filter = `blur(${(Hex.R * FK * .22).toFixed(2)}px)`; f.drawImage(t, 0, 0); f.filter = 'none';
+    o.globalAlpha = .64;
+    o.filter = `blur(${(Hex.R * FK * .22).toFixed(2)}px)`; o.drawImage(t, 0, 0); o.filter = 'none';
+    o.globalAlpha = 1;
     /* граница обзора: рёбра видимых клеток, за которыми не видно */
     FOG_EDGE = typeof Path2D === 'function' ? new Path2D() : null;
-    if (FOG_EDGE) for (const h of G.vis) {
-      const cs = H.corners(h);
+    if (FOG_EDGE) for (const hx of G.vis) {
+      const cs = H.corners(hx);
       for (let d = 0; d < 6; d++) {
-        const n = H.nb(h, d);
+        const n = H.nb(hx, d);
         if (n >= 0 && G.vis.has(n)) continue;
         const [i, j] = EDGE_V[d];
         FOG_EDGE.moveTo(cs[i].x, cs[i].y); FOG_EDGE.lineTo(cs[j].x, cs[j].y);
       }
     }
   }
-  const s = G.view.s;
+  return OVL;
+}
+function drawFog() {
+  const L = overlayLayer();
+  if (!L || L.empty) return;
+  const s = G.view.s, fogOn = !!(G.vis && !G.spec && G.phase === 'battle');
   cx.save();
   cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
-  cx.globalAlpha = .64; cx.imageSmoothingEnabled = true;
-  cx.drawImage(FOGW, 0, 0, FOGW.width / FK, FOGW.height / FK);
-  cx.globalAlpha = 1;
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'low';
+  /* только видимый кусок слоя: меньше работы при растягивании */
+  const hw = CW / 2 / s + 2, hh = CH / 2 / s + 2;
+  const x0 = clamp(G.view.x - hw, 0, H.WW), x1 = clamp(G.view.x + hw, 0, H.WW), y0 = clamp(G.view.y - hh, 0, H.WH), y1 = clamp(G.view.y + hh, 0, H.WH);
+  if (x1 - x0 > .01 && y1 - y0 > .01) cx.drawImage(L, x0 * FK, y0 * FK, (x1 - x0) * FK, (y1 - y0) * FK, x0, y0, x1 - x0, y1 - y0);
   /* граница обзора — в координатах карты, толщина и штрих в пикселях экрана */
   if (FOG_EDGE) {
     cx.setLineDash([2 / s, 5 / s]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1 / s;
     cx.stroke(FOG_EDGE);
   }
   cx.restore();
-  if (!FOG_EDGE) { cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1; regionEdges(n => G.vis.has(n), G.vis); cx.stroke(); cx.restore() }
+  if (fogOn && !FOG_EDGE) { cx.save(); cx.setLineDash([2, 5]); cx.strokeStyle = 'rgba(190,210,220,.22)'; cx.lineWidth = 1; regionEdges(n => G.vis.has(n), G.vis); cx.stroke(); cx.restore() }
 }
 
 /* ---------- снабжение по дорогам, как в Unity of Command ----------
@@ -242,14 +263,13 @@ function buildFront() {
   }
   return (FRONT = { fill, line, segs });
 }
+/** линия фронта; подкраска земли — в общем слое с туманом (overlayLayer) */
 function drawFront() {
   const F = buildFront();
   if (!F) return;
-  const own = G.spec ? 1 : G.side === N ? 1 : 2, s = G.view.s;
+  const s = G.view.s;
   cx.save();
   cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
-  cx.fillStyle = 'rgba(108,195,255,.05)'; cx.fill(F.fill[own]);
-  cx.fillStyle = 'rgba(255,91,71,.07)'; cx.fill(F.fill[3 - own]);
   cx.lineJoin = 'round'; cx.lineCap = 'round';
   cx.strokeStyle = 'rgba(242,179,61,.16)'; cx.lineWidth = 9 / s; cx.stroke(F.line);
   cx.strokeStyle = 'rgba(20,14,4,.65)'; cx.lineWidth = 3.6 / s; cx.stroke(F.line);
@@ -402,7 +422,11 @@ function drawSelection() {
       cx.fillStyle = '#ffe6a0'; cx.fillText(txt, tq.x, ty + 12.5);
     }
   }
-  /* цели: перекрестие и плашка с соотношением сил */
+  drawTargets();
+}
+/** цели: перекрестие и плашка с соотношением сил (или расчётом огня, авиаудара) */
+function drawTargets() {
+  const s = G.view.s;
   for (const t of G.targets || []) {
     const q = w2s(H.center(t.hex)), R = Hex.R * s * .78, hot = t.hex === G.hover;
     cx.strokeStyle = t.col; cx.lineWidth = hot ? 2.6 : 1.8;
@@ -419,6 +443,26 @@ function drawSelection() {
   }
 }
 const fmtMp = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
+/** режим авиаудара: зонтики видимых ПВО противника и расчёт на каждой цели */
+function drawAirMode() {
+  if (G.mode !== 'air:strike') return;
+  for (const a of G.units) {
+    if (a.side === G.side || !UT[a.k] || !UT[a.k].aa) continue;
+    const set = new Set(H.within(a.hex, UT[a.k].aa));
+    cx.beginPath(); for (const h of set) { const q = w2s(H.center(h)); if (onScreen(q, 60)) addHex(h, 1) }
+    cx.fillStyle = 'rgba(120,200,255,.08)'; cx.fill();
+    regionEdges(n => set.has(n), set);
+    cx.strokeStyle = 'rgba(150,215,255,.75)'; cx.lineWidth = 1.6; cx.setLineDash([5, 4]); cx.stroke(); cx.setLineDash([]);
+    const q = w2s(H.center(a.hex));
+    if (onScreen(q, 60)) {
+      cx.font = '700 11px system-ui'; cx.textAlign = 'center';
+      const txt = 'ПВО', w = cx.measureText(txt).width + 10, y = q.y - Hex.R * G.view.s * 1.05;
+      cx.fillStyle = 'rgba(6,14,22,.9)'; rr(cx, q.x - w / 2, y - 14, w, 16, 4); cx.fill();
+      cx.fillStyle = '#9fd3f5'; cx.fillText(txt, q.x, y - 2);
+    }
+  }
+  if (!selUnit()) drawTargets();
+}
 
 /* ---------- фишки ---------- */
 function drawUnits() {
@@ -475,12 +519,13 @@ function startAnim(e) {
     const A = center(e.ah), D = center(e.dh), ka = unitKind(e.a), kd = unitKind(e.d);
     const heavyA = ka && (UT[ka].arm === 'hard' || ka === 'at'), heavyD = kd && (UT[kd].arm === 'hard' || kd === 'at');
     fxAdd({ k: 'tracer', a: A, b: D, t0: now, d: .9 * k, heavy: heavyA, seed: Math.random() * 99 });
-    if (!e.amb) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
+    if (!e.amb && !(e.fire && !e.la)) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
+    if (e.fire) { fxAdd({ k: 'tracer', a: A, b: D, t0: now + .35 * k, d: .8 * k, heavy: heavyA, seed: Math.random() * 99 }); floatText({ x: A.x, y: A.y - 4 }, 'обстрел', '#ffb070') }
     if (e.amb) floatText({ x: D.x, y: D.y - 4 }, 'засада!', '#ffd479', 1);
     const hits = 2 + Math.min(3, e.ld || 0);
     for (let i = 0; i < hits; i++) fxBoom(ringPt(D, 1.6, 4.2), heavyA ? .85 : .6, (.25 + i * .13) * k, { noMark: i > 2 });
     if (e.la) fxBoom(ringPt(A, 1.6, 4), heavyD ? .75 : .55, .5 * k, {});
-    ANIMS.cur = { end: now + 1.05 * k, done() { floatText(D, e.ld ? '−' + e.ld : 'без потерь', e.ld ? '#ff8f80' : '#cfe0ea', e.ld >= 3); if (e.la) floatText({ x: A.x, y: A.y - 2 }, '−' + e.la, '#ffb070'); upd(e.d, -e.ld); upd(e.a, -e.la) } };
+    ANIMS.cur = { end: now + 1.05 * k, done() { floatText(D, (e.ld ? '−' + e.ld : e.su ? '' : 'без потерь') + (e.su ? (e.ld ? ' ' : '') + '⚡' + e.su : ''), e.ld ? '#ff8f80' : e.su ? '#ffb070' : '#cfe0ea', e.ld >= 3); if (e.la) floatText({ x: A.x, y: A.y - 2 }, '−' + e.la, '#ffb070'); upd(e.d, -e.ld); upd(e.a, -e.la) } };
     Sound.gun({ ...D, kind: heavyA ? 'tank' : 'mg' }); setTimeout(() => Sound.boom({ ...D, w: 40 }, true), 300 * k);
   } else if (e.e === 'shell') {
     const D = center(e.hex), A = e.from !== null && e.from !== undefined ? center(e.from) : null;
@@ -516,11 +561,13 @@ function startAnim(e) {
     if (e.kind === 'recon') floatText(p, 'авиаразведка', '#9fd3f5');
     ANIMS.cur = { end: now + 1 * k };
   } else if (e.e === 'aa') {
+    /* ПВО работает по налёту: трассы и разрывы в воздухе; сбит — дымный след вниз */
     const A = center(e.hex), B = center(e.target);
-    for (let i = 0; i < 3; i++) fxAdd({ k: 'tracer', a: A, b: { x: B.x + (Math.random() - .5) * 6, y: B.y - 6 - Math.random() * 4 }, t0: now + i * .1, d: .7, col: '200,230,255', seed: Math.random() * 99 });
-    for (let i = 0; i < 5; i++) fxAdd({ k: 'flak', x: B.x + (Math.random() - .5) * 8, y: B.y - 5 - Math.random() * 5, t0: now + .2 + i * .08, d: 1.2, seed: Math.random() * 9 });
-    floatText(B, 'удар сорван', '#9fd3f5');
-    ANIMS.cur = { end: now + .5 * k };
+    for (let i = 0; i < (e.down ? 5 : 3); i++) fxAdd({ k: 'tracer', a: A, b: { x: B.x + (Math.random() - .5) * 6, y: B.y - 6 - Math.random() * 4 }, t0: now + i * .1, d: .7, col: '200,230,255', seed: Math.random() * 99 });
+    for (let i = 0; i < (e.down ? 8 : 5); i++) fxAdd({ k: 'flak', x: B.x + (Math.random() - .5) * 8, y: B.y - 5 - Math.random() * 5, t0: now + .2 + i * .08, d: 1.2, seed: Math.random() * 9 });
+    if (e.down) { fxAdd({ k: 'downed', p: { x: B.x, y: B.y - 7 }, t0: now + .35, d: 1.6 * k, dir: Math.random() < .5 ? -1 : 1 }); floatText(B, 'штурмовик сбит', '#9fd3f5', 1) }
+    else floatText({ x: B.x, y: B.y - 3 }, 'ПВО: удар слабее', '#9fd3f5');
+    ANIMS.cur = { end: now + (e.down ? .9 : .5) * k };
   } else if (e.e === 'turn') {
     const mine = !G.spec && e.side === G.side;
     showBanner(`Ход ${e.turn + 1} · ${e.clock}${e.night ? ' · ночь' : ''}`, G.spec ? 'Ходит ' + SIDE_GEN[e.side] : mine ? 'Ваш ход' : 'Ход противника', mine, e.side);
@@ -585,7 +632,7 @@ function drawSmokeScreens() {
     if (!onScreen(q, 100)) continue;
     for (let i = 0; i < 4; i++) {
       const a = T * .25 + i * 1.6 + h, R = Hex.R * s * (.62 + .1 * Math.sin(T * .6 + i));
-      SmokeTex.draw(cx, (h + i) % 6, q.x + Math.cos(a) * Hex.R * s * .3, q.y + Math.sin(a * 1.2) * Hex.R * s * .22, R, .42, [212, 214, 216], a * .3, 1.25);
+      SmokeTex.drawFast(cx, (h + i) % 6, q.x + Math.cos(a) * Hex.R * s * .3, q.y + Math.sin(a * 1.2) * Hex.R * s * .22, R, .42, [212, 214, 216], (h + i) & 3, 1.25);
     }
   }
 }
@@ -598,14 +645,17 @@ function draw(dt) {
   if (!TER || TER_ID !== G.mapId) {
     const el = document.getElementById('loading');
     if (el && el.hidden) { el.hidden = false; cx.fillStyle = '#04070a'; cx.fillRect(0, 0, CW, CH); return }
-    bakeTerrain(G.mapId); FOGW = null; fogKey = ''; FOG_EDGE = null;
+    bakeTerrain(G.mapId); OVL = null; ovlKey = ''; FOG_EDGE = null; MINIC = null; miniKey = '';
     if (el) el.hidden = true;
   }
   ANIM += dt;
   animTick();
   drawBase();
+  if (G.selRiv) drawRiverEdges(G.view.s);
   drawScorch();
   drawWrecks();
+  /* туман-погода стелется по земле — под фишками и подписями, а не фильтром на весь экран */
+  drawGroundWeather();
   drawCityLights();
   drawFog();
   drawSupplyOverlay();
@@ -621,11 +671,13 @@ function draw(dt) {
   }
   if (G.spawn) { cx.beginPath(); for (const h of G.spawn) addHex(h, .92); cx.fillStyle = 'rgba(111,209,141,.18)'; cx.fill(); cx.strokeStyle = 'rgba(111,209,141,.7)'; cx.lineWidth = 1.4; cx.stroke() }
   drawPoints();
+  drawAirMode();
   drawSelection();
   if (G.hover >= 0 && !animBusy()) { hexPath(G.hover, 1); cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 1.5; cx.stroke() }
   drawUnits();
-  drawPlumes();
-  drawSmokeScreens();
+  /* дыма много — в половинном разрешении (render/fx.js), иначе прямо на экран */
+  if (smokeBegin()) { try { drawPlumes(); drawSmokeScreens() } finally { smokeEnd() } }
+  else { drawPlumes(); drawSmokeScreens() }
   drawBurning();
   drawFxList();
   drawFloats();
@@ -644,25 +696,42 @@ function miniRect() {
   if (w > maxW) { w = maxW; h = w * H.WH / H.WW }
   return { x: a.l + 12, y: a.t + 10, w, h };
 }
+/* Мини-карта печётся в свой холст и перерисовывается, только когда что-то
+   на ней поменялось (снимок, переход части, размер); в кадре — копирование
+   и рамка видимой области. Раньше каждый кадр заново рисовались все клетки
+   тумана, территория, точки и части. */
+let MINIC = null, miniKey = '';
 function drawMini() {
   if (!MINI || !G.roomId) return;
   const m = miniRect(), k = m.w / H.WW;
+  let uh = 0;
+  for (const u of G.units) uh = (uh * 31 + u.hex * 7 + u.id + (u.side === S ? 3 : 0)) | 0;
+  const key = [G.mapId, Math.round(m.w), Math.round(m.h), DPR, G.visV, G.spec ? 1 : 0, G.side, G.phase, uh, G.terrStr.length].join('|');
+  if (key !== miniKey || !MINIC) {
+    miniKey = key;
+    const w = Math.max(1, Math.round(m.w * DPR)), h = Math.max(1, Math.round(m.h * DPR));
+    if (!MINIC || MINIC.width !== w || MINIC.height !== h) { MINIC = document.createElement('canvas'); MINIC.width = w; MINIC.height = h }
+    const g = MINIC.getContext('2d'), kk = w / H.WW;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+    g.globalAlpha = .92; g.imageSmoothingQuality = 'high'; g.drawImage(MINI, 0, 0, w, h); g.globalAlpha = 1;
+    if (G.vis && !G.spec && G.phase === 'battle') { g.fillStyle = 'rgba(4,8,12,.42)'; g.beginPath(); for (let hx = 0; hx < H.NH; hx++) if (!G.vis.has(hx)) { const c = H.center(hx); g.rect((c.x - Hex.HW / 2) * kk, (c.y - Hex.R) * kk, Hex.HW * kk + .6, Hex.VS * kk + .8) } g.fill() }
+    const F = buildFront();
+    if (F) {
+      const own = G.spec ? 1 : G.side === N ? 1 : 2;
+      g.save(); g.scale(kk, kk);
+      g.fillStyle = 'rgba(255,91,71,.16)'; g.fill(F.fill[3 - own]);
+      g.strokeStyle = '#f2b33d'; g.lineWidth = 1.6 * DPR / kk; g.stroke(F.line);
+      g.restore();
+    }
+    const d = DPR;
+    for (const p of G.pts) { const c = H.center(p.hex), z = (p.city ? 5 : 3.5) * d; g.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; g.strokeStyle = '#000'; g.lineWidth = d; g.fillRect(c.x * kk - z / 2, c.y * kk - z / 2, z, z); g.strokeRect(c.x * kk - z / 2, c.y * kk - z / 2, z, z) }
+    for (const u of G.units) { const c = H.center(u.hex); g.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; g.fillRect(c.x * kk - 1.5 * d, c.y * kk - 1.5 * d, 3 * d, 3 * d) }
+  }
   cx.save();
   cx.fillStyle = 'rgba(0,0,0,.5)'; rr(cx, m.x - 4, m.y - 4, m.w + 10, m.h + 10, 8); cx.fill();
   cx.fillStyle = 'rgba(8,13,18,.95)'; rr(cx, m.x - 5, m.y - 5, m.w + 10, m.h + 10, 8); cx.fill();
   cx.strokeStyle = 'rgba(120,150,170,.35)'; cx.lineWidth = 1; rr(cx, m.x - 4.5, m.y - 4.5, m.w + 9, m.h + 9, 8); cx.stroke();
-  cx.globalAlpha = .92; cx.drawImage(MINI, m.x, m.y, m.w, m.h); cx.globalAlpha = 1;
-  if (G.vis && !G.spec && G.phase === 'battle') { cx.fillStyle = 'rgba(4,8,12,.42)'; cx.beginPath(); for (let h = 0; h < H.NH; h++) if (!G.vis.has(h)) { const c = H.center(h); cx.rect(m.x + (c.x - Hex.HW / 2) * k, m.y + (c.y - Hex.R) * k, Hex.HW * k + .6, Hex.VS * k + .8) } cx.fill() }
-  const F = buildFront();
-  if (F) {
-    const own = G.spec ? 1 : G.side === N ? 1 : 2;
-    cx.save(); cx.translate(m.x, m.y); cx.scale(k, k);
-    cx.fillStyle = 'rgba(255,91,71,.16)'; cx.fill(F.fill[3 - own]);
-    cx.strokeStyle = '#f2b33d'; cx.lineWidth = 1.6 / k; cx.stroke(F.line);
-    cx.restore();
-  }
-  for (const p of G.pts) { const c = H.center(p.hex), z = p.city ? 5 : 3.5; cx.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; cx.strokeStyle = '#000'; cx.lineWidth = 1; cx.fillRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z); cx.strokeRect(m.x + c.x * k - z / 2, m.y + c.y * k - z / 2, z, z) }
-  for (const u of G.units) { const c = H.center(u.hex); cx.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; cx.fillRect(m.x + c.x * k - 1.5, m.y + c.y * k - 1.5, 3, 3) }
+  cx.drawImage(MINIC, m.x, m.y, m.w, m.h);
   const a = s2w({ x: 0, y: 0 }), b = s2w({ x: CW, y: CH });
   cx.beginPath(); cx.rect(m.x, m.y, m.w, m.h); cx.clip();
   cx.strokeStyle = 'rgba(255,255,255,.85)'; cx.lineWidth = 1.2; cx.strokeRect(m.x + a.x * k, m.y + a.y * k, (b.x - a.x) * k, (b.y - a.y) * k);

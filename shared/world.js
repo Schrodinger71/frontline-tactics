@@ -12,7 +12,7 @@
    Используется и сервером (require), и браузером (<script>).
    ============================================================ */
 (function (g) {
-  const GAME_VERSION = '3.2.0';
+  const GAME_VERSION = '3.3.0';
   const WW = 300, WH = 440;
   const N = 'n', S = 's';
   const COL = { n: '#6cc3ff', s: '#ff5b47' };
@@ -126,7 +126,7 @@
     tnk: 'Главная ударная сила. Плохо в лесу и городе против пехоты.',
     art: 'Бьёт на 3 клетки без ответа, подавляет перед атакой.',
     mlrs: 'Залп на 4 клетки по площади: цель и, слабее, её соседи. После залпа ход на перезарядку.',
-    aa: 'Сбивает авиаудары в радиусе 2 клеток.',
+    aa: 'Зонтик ПВО на 2 клетки: каждый налёт под ним вдвое слабее и с шансом 30% сбит (сбитый — минус вылет противнику в следующий ход), авиаразведка под зонтиком ничего не видит. Подавленные расчёты не стреляют.',
     eng: 'Понтон, подрыв моста, мины, укрепления, противотанковые заграждения.',
     at: 'Засада на танки: в обороне против брони втрое злее, бьёт технику вблизи.',
     hq: 'Подвижный штаб: даёт сектор управления, но в ход, когда шёл, сектора не держит.',
@@ -168,8 +168,12 @@
   const MAX_UNITS = 28;
   /** зоны расстановки: столбцы гексов от своего края */
   const DEPLOY_X = { n: [0, 118], s: [182, WW] };
-  /** авиация: вылетов за ход (днём / ночью) */
-  const AIR = { strike: [2, 1], recon: [1, 1], pow: 10 };
+  /** Авиация: вылетов за ход (днём / ночью), сила удара (pow; у артдивизиона около 8),
+      доля потерь в эффекте (kill; у огня артиллерии 0,4) и потолок эффекта (cap).
+      ПВО (см. Rules.airCover): урон под зонтиком ×1/(1 + cutK × прикрытие), шанс
+      сбить — shotK × прикрытие, не выше shotMax; приданный зенитный взвод —
+      aaaCover прикрытия. Сбитый штурмовик — минус вылет его командиру в следующий ход. */
+  const AIR = { strike: [2, 1], recon: [1, 1], pow: 26, kill: .55, cap: 6, shotK: .3, shotMax: .7, cutK: 1, aaaCover: .5 };
   /** Снабжение — как в Unity of Command: идёт ПО ДОРОГАМ.
       Источники — тыловые станции (дорожные клетки у своего края карты), свои
       города и работающий командный пункт. От них снабжение почти без потерь
@@ -215,7 +219,7 @@
            for: T => !T.fob },
     hvy: { n: 'Тяжёлая батарея', sh: 'ТБ', price: 50, d: 'Огонь ×1,25.',
            for: T => !!T.bomb },
-    aaa: { n: 'Зенитный взвод', sh: 'ЗВ', price: 30, d: 'Авиаудар по самой части срывается в 45% случаев.',
+    aaa: { n: 'Зенитный взвод', sh: 'ЗВ', price: 30, d: 'Своё прикрытие от авиации: удар по самой части на треть слабее и с шансом 15% сбит.',
            for: T => !T.aa && !T.fob }
   };
   const SPEC_ORDER = ['sap', 'atg', 'rcn', 'hvy', 'aaa'];
@@ -230,6 +234,9 @@
      дешёвое пополнение и командный ресурс. Всё это выключается, пока
      рядом с пунктом стоит противник (пункт блокирован). */
   const FOB = { replaceOff: .3, orderOff: 1 };
+  /* обстрел — огневой бой с места по соседней цели, без штурма: dmg — доля эффекта обычной атаки,
+     kill — сколько из него потерь (остальное — подавленные шаги), back — доля ответных потерь */
+  const FIREFIGHT = { dmg: .55, kill: .35, back: .35 };
   const ORDERS = {
     barrage: { n: 'Артподготовка', cp: 2, tgt: 'none', d: 'В этот ход вся артиллерия бьёт в полтора раза сильнее.' },
     march:   { n: 'Форсированный марш', cp: 1, tgt: 'unit', d: 'Части +3 очка хода, мораль −10.' },
@@ -272,7 +279,7 @@
   const api = {
     GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
     FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, MAX_SEATS, HQ_CAPTURE_CP, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
-    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, ORDERS, ORDER_LIST,
+    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, FIREFIGHT, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount
   };

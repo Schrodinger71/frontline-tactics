@@ -143,15 +143,17 @@
    * шансы атаки att по def (соседние клетки). Возвращает силы, множители с подписями,
    * ожидаемые потери [мин, макс] и шанс отхода.
    */
-  function odds(ctx, att, def) {
+  function odds(ctx, att, def, opt) {
     const TA = UT[att.k], TD = UT[def.k];
+    /* обстрел с места (opt.fire): на цель никто не идёт — река, заграждения, мины и заградительный огонь не при чём */
+    const fire = !!(opt && opt.fire);
     const hx = ctx.map.hexes[def.hex];
     let A = TA.atk[TD.arm] * strK(att) * orgK(att) * xpK(att), D = TD.def * strK(def) * orgK(def) * xpK(def);
     const mods = [];
     const am = (t, v) => { if (Math.abs(v - 1) > .001) { A *= v; mods.push({ t, v, who: 'a' }) } };
     const dm = (t, v) => { if (Math.abs(v - 1) > .001) { D *= v; mods.push({ t, v, who: 'd' }) } };
     const d = ctx.H.dirTo(att.hex, def.hex);
-    if (d >= 0 && !crossable(edgeOf(ctx, att.hex, d))) am('через реку', .5);
+    if (!fire && d >= 0 && !crossable(edgeOf(ctx, att.hex, d))) am('через реку', .5);
     /* охват: другие свои части рядом с целью; удар с двух сторон */
     let n = 0, opposite = false;
     for (let k = 0; k < 6; k++) {
@@ -188,15 +190,15 @@
     if (def.ent) dm(`окоп ${def.ent}`, 1 + .2 * def.ent);
     const fort = ctx.forts && ctx.forts.get(def.hex);
     if (fort) dm(`укрепления ${fort}`, 1 + .25 * fort);
-    if (ctx.obst && ctx.obst.has(def.hex) && TA.arm === 'hard') am('заграждения', .75);
+    if (!fire && ctx.obst && ctx.obst.has(def.hex) && TA.arm === 'hard') am('заграждения', .75);
     if (TD.atd && TA.arm !== 'soft') dm('противотанковая оборона', 1.8);
-    if (ctx.support && ctx.support[def.side] && ctx.support[def.side].has(def.hex)) dm('огонь поддержки', 1.25);
+    if (!fire && ctx.support && ctx.support[def.side] && ctx.support[def.side].has(def.hex)) dm('огонь поддержки', 1.25);
     if (def.amb) dm('из засады', 1.15);
     if (def.su) dm(`подавлено ${Math.min(def.su, def.str)} из ${def.str}`, effStr(def) / Math.max(1, def.str));
     if (def.att === 'atg' && TA.arm !== 'soft') dm('ПТ-взвод', 1.25);
     if (spD < 2) dm(`боеприпасы ${spD}/3`, SUPK.def[spD]);
     if (def.hold) dm('стоять насмерть', 1.3);
-    if (ctx.mines && ctx.mines.get(def.hex) && ctx.mines.get(def.hex).side === def.side) dm('мины', 1.2);
+    if (!fire && ctx.mines && ctx.mines.get(def.hex) && ctx.mines.get(def.hex).side === def.side) dm('мины', 1.2);
     const r = A / Math.max(.05, D);
     const Ld = Math.min(6, 2.2 * Math.pow(r, .75)), La = Math.min(5, 1.6 / Math.pow(r, .75));
     const retreat = def.hold ? 0 : r >= 3.5 ? 1 : clamp((r - .9) * .6 + (40 - def.org) / 100 - .1 * (def.ent || 0) - .2 * (fort || 0), 0, .95);
@@ -206,6 +208,20 @@
       lossA: [Math.max(0, Math.round(La * .6)), Math.min(att.str, Math.round(La * 1.4))],
       expD: Ld, expA: La
     };
+  }
+
+  /**
+   * обстрел: огневой бой с места по соседней цели. Силы и множители — как у атаки
+   * (без реки, заграждений, мин и огня поддержки), но эффект меньше, большая его часть —
+   * подавленные шаги, ответный огонь слабее; цель не отходит, стреляющий остаётся в окопах.
+   */
+  function fireOdds(ctx, att, def) {
+    const F = W.FIREFIGHT, o = odds(ctx, att, def, { fire: true });
+    const L = o.expD * F.dmg, kill = L * F.kill, sup = L * (1 - F.kill) * 2, back = o.expA * F.back;
+    return { A: o.A, D: o.D, r: o.r, mods: o.mods, kill, sup, back,
+      loss: [Math.max(0, Math.round(kill * .5)), Math.min(def.str, Math.round(kill * 1.5))],
+      supp: [Math.round(sup * .6), Math.round(sup * 1.4)],
+      lossA: [Math.max(0, Math.round(back * .5)), Math.min(att.str, Math.round(back * 1.5))] };
   }
 
   /* ---------- артиллерия и авиация ---------- */
@@ -227,11 +243,54 @@
     if (opt && opt.barrage) m('артподготовка', 1.5);
     if (opt && opt.sp !== undefined && opt.sp < 3) m(`боеприпасы ${opt.sp}/3`, SUPK.att[opt.sp]);
     if (ctx.smoke && ctx.smoke.has(def.hex)) m('цель в дыму', .7);
-    const L = Math.min(5, P * .14);
-    /* огонь больше прижимает, чем убивает: из ожидаемого эффекта треть — потери, остальное — подавление */
-    return { P, mods, exp: L, kill: L * FIRE_KILL, sup: L * (1 - FIRE_KILL) * 2,
-      loss: [Math.max(0, Math.round(L * FIRE_KILL * .5)), Math.min(def.str, Math.round(L * FIRE_KILL * 1.5))],
-      supp: [Math.round(L * (1 - FIRE_KILL) * 1.2), Math.round(L * (1 - FIRE_KILL) * 2.8)] };
+    if (opt && opt.aaCut && opt.aaCut < 1) m('ПВО над целью', opt.aaCut);
+    const L = Math.min((opt && opt.cap) || 5, P * .14);
+    /* огонь больше прижимает, чем убивает: из ожидаемого эффекта треть — потери, остальное — подавление.
+       У авиации доля потерь выше (opt.kill): бомбы и ракеты бьют прицельно */
+    const KF = (opt && opt.kill) || FIRE_KILL;
+    return { P, mods, exp: L, kill: L * KF, sup: L * (1 - KF) * 2,
+      loss: [Math.max(0, Math.round(L * KF * .5)), Math.min(def.str, Math.round(L * KF * 1.5))],
+      supp: [Math.round(L * (1 - KF) * 1.2), Math.round(L * (1 - KF) * 2.8)] };
+  }
+
+  /* ---------- авиаудар и ПВО ----------
+     Зонтик ПВО над клеткой: зенитные дивизионы противника цели в своём радиусе
+     (UT.aa клеток) — по действующим шагам (подавленные расчёты не стреляют) —
+     и приданный самой цели зенитный взвод (за полдивизиона). Каждый налёт под
+     зонтиком предсказуемо ослаблен: урон ×1/(1 + прикрытие), и с шансом
+     прикрытие × 30% (до 70%) штурмовик сбит — удара нет, а у того, кто его
+     послал, в следующий ход на вылет меньше. ctx.side — сторона, которая бьёт;
+     ctx.occ — известные ей части (клиент видит только видимых). */
+  function airCover(ctx, hex, def) {
+    const A = W.AIR;
+    let c = 0;
+    const by = [];
+    for (const [h, u] of ctx.occ) {
+      if (!u || u.side === ctx.side) continue;
+      const T = UT[u.k];
+      if (!T || !T.aa || ctx.H.hexDist(h, hex) > T.aa) continue;
+      const k = effStr(u) / MAX_STR;
+      if (k <= 0) continue;
+      c += k; by.push(u);
+    }
+    if (def && def.att === 'aaa') c += A.aaaCover;
+    by.sort((a, b) => effStr(b) - effStr(a));
+    return { c, by, shot: Math.min(A.shotMax, A.shotK * c), cut: 1 / (1 + A.cutK * c) };
+  }
+  /** расчёт авиаудара по части def: прикрытие ПВО, шанс сбить и ожидаемый эффект */
+  function airOdds(ctx, def) {
+    const A = W.AIR, cov = airCover(ctx, def.hex, def);
+    const b = bombardOdds(ctx, A.pow, def, { air: true, th: true, kill: A.kill, cap: A.cap, aaCut: cov.cut });
+    return Object.assign(b, { cover: cov.c, by: cov.by, shot: cov.shot, cut: cov.cut });
+  }
+  /** клетки под зонтиком ПВО стороны side (для авиаразведки и подсветки) */
+  function aaZone(ctx, side) {
+    const z = new Set();
+    for (const [h, u] of ctx.occ) {
+      if (!u || u.side !== side || !UT[u.k] || !UT[u.k].aa || effStr(u) <= 0) continue;
+      for (const x of ctx.H.within(h, UT[u.k].aa)) z.add(x);
+    }
+    return z;
   }
 
   /** засада: ответный огонь части amb по тому, кто вошёл рядом (ожидаемые потери вошедшего) */
@@ -240,7 +299,7 @@
     return Math.min(3, o.expD * .55 * 1.4);
   }
   const ARMBIT = { soft: 1, light: 2, hard: 4 };
-  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, bombardOdds, ambushHit, terrainDef, effStr, firePow, TDEF, TCOST, TNAME };
+  const api = { ARMBIT, edgeOf, crossable, stepCost, zocOf, reachable, pathTo, odds, fireOdds, bombardOdds, airCover, airOdds, aaZone, ambushHit, terrainDef, effStr, firePow, TDEF, TCOST, TNAME };
   if (node) module.exports = api;
   else g.Rules = api;
 })(typeof window !== 'undefined' ? window : globalThis);

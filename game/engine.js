@@ -39,7 +39,7 @@ const Hex = require('../shared/hex');
 const Rules = require('../shared/rules');
 const Terrain = require('../shared/terrain');
 const { MAPS } = require('../shared/maps');
-const { WEATHER, wxById } = require('../shared/weather');
+const { wxById, wxPool } = require('../shared/weather');
 const TCODE = { n: 1, s: 2 };
 const { N, S, UT, MAX_STR, POINT_DEF, SIDE_NAME, CS_N, CS_S, TRAITS, GEN_FIRST, GEN_LAST, PRICE_OF, AIR,
   clamp, mulberry, pick, isNight, turnClock } = Object.assign({ PRICE_OF: k => W.UT[k].price }, W);
@@ -84,7 +84,8 @@ class Game {
     this.vis = { n: new Set(), s: new Set() };
     this.mem = { n: new Map(), s: new Map() };
     this.recon = { n: new Set(), s: new Set() };
-    this.weather = wxById('clear'); this.wxLeft = 3 + Math.floor(this.rnd() * 4);
+    /* зимние карты начинают с мороза и берут погоду из своего набора (MAPS[id].wx) */
+    this.weather = wxById(this.mapDef.wx0 || 'clear'); this.wxLeft = 3 + Math.floor(this.rnd() * 4);
     this.commanders = { n: this.makeCommander(), s: this.makeCommander() };
     this.pts = this.mapDef.points.map(p => ({ ...p, hex: this.H.hexAt(p.x, p.y), home: p.owner }));
     for (const [side, x, y, lvl] of this.mapDef.forts || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.forts.set(h, lvl || 1) }
@@ -107,6 +108,7 @@ class Game {
     this.seatById = new Map(this.seats.map(st => [st.id, st]));
     this.bots = {}; this.ready = {}; this.done = {};
     this.budget = {}; this.income = {}; this.cp = {}; this.air = {};
+    this.airLost = {};                /* место → сколько его штурмовиков сбито: столько вылетов меньше в следующий ход */
     for (const side of [N, S]) {
       const mine = this.seatsOf(side);
       const start = Game.split(Math.round(W.START_BUDGET * (W.ROLE_BUDGET_MUL[this.role[side]] || 1)), mine.length);
@@ -318,6 +320,7 @@ class Game {
     if (t === 'move') return this.move(u, +a.to);
     if (t === 'attack') return this.attack(u, this.byId(+a.target));
     if (t === 'bombard') return this.bombard(u, +a.hex);
+    if (t === 'fire') return this.fire(u, this.byId(+a.target));
     if (t === 'replace') return this.replace(u);
     if (t === 'attach') return this.attachSpec(seat, u, a.k, false);
     if (t === 'eng') return this.engAct(u, a.task, +a.hex);
@@ -327,6 +330,55 @@ class Game {
   }
 
   /* ---------- места ---------- */
+  /** Новый командир на стороне прямо по ходу партии (до MAX_SEATS). Денег из
+      воздуха не берём: свободные очки стороны делятся между её местами заново.
+      Командиру — свой штаб: при расстановке со штабом и командным пунктом, как
+      у всех, в бою — штаб у своего города или пункта. Бот сразу расставляется. */
+  addSeat(side, bot) {
+    if (side !== N && side !== S) return { ok: false, error: 'нет такой стороны' };
+    if (this.over) return { ok: false, error: 'партия окончена' };
+    if (this.scen && this.scen.noDeploy && this.phase === 'deploy') return { ok: false, error: 'в этой операции состав задан' };
+    const mine = this.seatsOf(side);
+    if (mine.length >= W.MAX_SEATS) return { ok: false, error: `на стороне не больше ${W.MAX_SEATS} командиров` };
+    let n = mine.length + 1;
+    while (this.seatById.has(n === 1 ? side : side + n)) n++;
+    const id = n === 1 ? side : side + n, st = { id, side, bot: !!bot, n: mine.length + 1 };
+    this.seats.splice(this.seats.indexOf(mine[mine.length - 1]) + 1, 0, st);
+    this.seatById.set(id, st);
+    this.bots[id] = !!bot; this.done[id] = false; this.ready[id] = this.phase !== 'deploy';
+    this.income[id] = 0; this.cp[id] = W.CP.start; this.air[id] = { strike: 0, recon: 0 }; this.airLost[id] = 0;
+    const all = mine.concat([st]), total = Math.floor(mine.reduce((a, x) => a + (this.budget[x.id] || 0), 0));
+    Game.split(total, all.length).forEach((v, i) => { this.budget[all[i].id] = v });
+    /* штаб: подальше от штабов союзников, чтобы сторона делилась на направления */
+    const hqs = this.units.filter(u => u.side === side && u.str > 0 && UT[u.k].cmd);
+    const apart = h => Math.min(99, ...hqs.map(u => this.H.hexDist(u.hex, h)));
+    if (this.phase === 'deploy') {
+      const x = side === N ? 45 : this.WW - 45;
+      let best = -1, bs = -1;
+      for (let i = 1; i < 8; i++) { const h = this.freeHex(x, this.WH * i / 8, 'hq'); if (h >= 0 && apart(h) > bs && !this.unitAt(h)) { bs = apart(h); best = h } }
+      if (best >= 0) {
+        const hq = this.spawn('hq', side, best, { seat: id });
+        const c = this.map.hexes[best];
+        this.spawn('fob', side, this.freeHex(side === N ? c.x - 12 : c.x + 12, c.y, 'fob'), { seat: id, sited: false, ent: 2 });
+        if (!hq) return { ok: false, error: 'нет места для штаба' };
+      }
+      if (bot) this.botDeploy(id);
+    } else {
+      const cand = this.spawnHexes(side, 'hq').sort((a, b) => apart(b) - apart(a));
+      if (cand.length) this.spawn('hq', side, cand[0], { seat: id, mp: 0, acted: true, moved: true });
+      this.updateSupply(side); this.updateVision(side);
+    }
+    this.log(side, `К операции подключился командир ${st.n}${bot ? ' (бот)' : ''}: свой штаб и доля очков стороны.`, 'hq');
+    return { ok: true, id };
+  }
+  /** место отдаём боту или открываем для человека (меняется только «кто ведёт») */
+  setSeatBot(id, bot) {
+    if (!this.seatById.has(id)) return { ok: false, error: 'нет такого места' };
+    this.bots[id] = !!bot; this.seatById.get(id).bot = !!bot;
+    if (bot && this.phase === 'deploy' && !this.ready[id]) { this.botDeploy(id); this.tryStart() }
+    return { ok: true };
+  }
+
   /** делёж суммы между местами без потери остатка: лишнее достаётся первым */
   static split(total, n) {
     const base = Math.floor(total / n), rest = total - base * n;
@@ -523,7 +575,11 @@ class Game {
     const recons = Game.split(AIR.recon[night ? 1 : 0] * fly, share);
     mySeats.forEach((st, i) => {
       this.done[st.id] = false;
-      this.air[st.id] = { strike: strikes[i], recon: recons[i] };
+      /* сбитые в прошлый ход штурмовики — минус вылеты */
+      const lost = Math.min(strikes[i], this.airLost[st.id] || 0);
+      if (lost) this.log(side, `Потери авиации: ${lost === 1 ? 'один штурмовик сбит' : 'сбиты штурмовики'} — ударных вылетов в этот ход меньше.`, 'w');
+      this.airLost[st.id] = 0;
+      this.air[st.id] = { strike: strikes[i] - lost, recon: recons[i] };
     });
     this.updateSupply(side);
     const hqAlive = this.units.some(v => v.side === side && v.k === 'hq' && v.str > 0);
@@ -634,9 +690,9 @@ class Game {
     this.history.push({ turn: this.turn, s: +this.score.toFixed(1), n: this.forceValue(N), e: this.forceValue(S) });
     this.turn++;
     if (--this.wxLeft <= 0) {
-      const pool = WEATHER.filter(w => w.id !== this.weather.id);
-      let r = this.rnd() * pool.reduce((a, w) => a + w.w, 0);
-      for (const w of pool) { r -= w.w; if (r <= 0) { this.weather = w; break } }
+      const pool = wxPool(this.mapDef).filter(x => x.w.id !== this.weather.id);
+      let r = this.rnd() * pool.reduce((a, x) => a + x.k, 0);
+      for (const x of pool) { r -= x.k; if (r <= 0) { this.weather = x.w; break } }
       this.wxLeft = 2 + Math.floor(this.rnd() * 4);
       this.log('*', `Метео: ${this.weather.n.toLowerCase()}. ${this.weather.d}`, 'm');
     }
@@ -819,6 +875,40 @@ class Game {
     this.updateVision(u.side); this.updateVision(oppOf(u.side));
     return { ok: true, la, ld };
   }
+  /** обстрел: огневой бой с места по соседней цели — прижать, не штурмуя. Клетку не занимаем,
+      окоп не теряем, цель не отходит; ответный огонь слабее, чем в атаке (W.FIREFIGHT) */
+  fire(u, e) {
+    const T = UT[u.k];
+    if (!e || e.side === u.side) return { ok: false, error: 'нет цели' };
+    if (u.acted) return { ok: false, error: 'часть уже действовала' };
+    if (T.bomb) return { ok: false, error: 'артиллерия бьёт огнём — «Огонь»' };
+    if (this.H.hexDist(u.hex, e.hex) !== 1) return { ok: false, error: 'цель не рядом' };
+    if (!this.seen(u.side, e)) return { ok: false, error: 'цель не видна' };
+    if (!(T.atk[UT[e.k].arm] > 0)) return { ok: false, error: 'по этой цели бить нечем' };
+    if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
+    if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
+    if (Rules.effStr(u) <= 0) return { ok: false, error: 'все шаги подавлены — ждите своего хода' };
+    const o = Rules.fireOdds(this.ctxFor(u.side, true), u, e);
+    const ld = Math.min(e.str, Math.round(o.kill * this.R(.5, 1.5)));
+    const la = Math.min(u.str, Math.round(o.back * this.R(.5, 1.5)));
+    const sp = Math.round(o.sup * this.R(.6, 1.4));
+    u.acted = true; u.mp = 0; u.revealed = this.turn;
+    e.revealed = this.turn; e.hitThisTurn = true; e.hb = (e.hb || 0) | Rules.ARMBIT[T.arm];
+    this.ev({ e: 'fight', to: '*', a: u.id, d: e.id, ah: u.hex, dh: e.hex, la, ld, r: +o.r.toFixed(2), fire: 1, su: sp });
+    this.say(u, 'firefight', { lb: W.lc(W.unitName(e.side, e.k)) });
+    this.loss(e, ld, u);
+    this.loss(u, la, e);
+    if (e.str > 0) {
+      if (sp) { e.su = Math.min(e.str, (e.su || 0) + sp); e.sup = true }
+      e.org = Math.max(0, e.org - 4 - ld * 3 - sp); this.gainXp(e, .02);
+      this.say(e, 'pinned', {}, 'w');
+    }
+    if (u.str > 0) { u.org = Math.max(0, u.org - la * 4); this.gainXp(u, .03) }
+    /* уничтоженную огнём цель не преследуем: клетка остаётся пустой */
+    this.lastVacated = null;
+    this.updateVision(u.side); this.updateVision(oppOf(u.side));
+    return { ok: true, la, ld, su: sp };
+  }
   /** занять освободившуюся клетку после боя (отход, гибель или захват ставки) */
   advanceAfterFight(u, T, fresh) {
     const vac = this.lastVacated;
@@ -962,11 +1052,14 @@ class Game {
     if (kind === 'recon') {
       if (this.air[seat].recon < 1) return { ok: false, error: 'разведчиков в этот ход больше нет' };
       this.air[seat].recon--;
-      for (const h of this.H.within(hex, 3)) this.recon[side].add(h);
+      /* под зонтиком ПВО противника разведчик не проходит — эти клетки остаются тёмными */
+      const zone = Rules.aaZone(this.ctxFor(side, true), oppOf(side));
+      let shut = 0;
+      for (const h of this.H.within(hex, 3)) { if (zone.has(h)) shut++; else this.recon[side].add(h) }
       this.updateVision(side);
       this.ev({ e: 'air', to: side, hex, kind });
-      this.log(side, 'Авиаразведка прошла над районом — данные на карте.', 'q');
-      return { ok: true };
+      this.log(side, shut ? 'Авиаразведка прошла над районом, но часть его прикрыта ПВО — там ничего не видно.' : 'Авиаразведка прошла над районом — данные на карте.', 'q');
+      return { ok: true, shut };
     }
     if (kind !== 'strike') return { ok: false, error: 'неизвестный вылет' };
     if (this.air[seat].strike < 1) return { ok: false, error: 'ударных вылетов в этот ход больше нет' };
@@ -974,25 +1067,24 @@ class Game {
     if (!e || e.side === side || !this.seen(side, e)) return { ok: false, error: 'цели не видно' };
     this.air[seat].strike--;
     this.ev({ e: 'air', to: '*', hex, kind, side });
-    /* приданный зенитный взвод прикрывает саму часть */
-    if (e.att === 'aaa' && this.chance(.45)) {
-      this.ev({ e: 'aa', to: '*', hex: e.hex, target: hex });
-      this.log(side, 'Удар сорван: над целью работал зенитный взвод.', 'w');
-      this.log(e.side, `«${e.cs}»: зенитный взвод отбил налёт!`, 'g');
-      return { ok: true, intercepted: true };
-    }
-    /* ПВО противника рядом может сорвать удар */
-    for (const a of this.units) {
-      if (a.side === side || a.str <= 0 || !UT[a.k].aa || this.H.hexDist(a.hex, hex) > UT[a.k].aa) continue;
-      if (this.chance(.35 + .03 * a.str)) {
-        this.ev({ e: 'aa', to: '*', hex: a.hex, target: hex });
-        this.log(side, 'Удар сорван: ПВО противника отогнала штурмовики.', 'w');
-        this.log(a.side, `«${a.cs}»: отбили авианалёт!`, 'g');
-        return { ok: true, intercepted: true };
+    /* ПВО над целью (зенитные дивизионы рядом и приданный взвод): удар слабее,
+       а с шансом штурмовик сбит — тогда удара нет, и у командира в следующий
+       ход на вылет меньше. Всё это видно в расчёте до клика. */
+    const ctx = this.ctxFor(side, true), o = Rules.airOdds(ctx, e);
+    if (o.cover > 0) {
+      const a = o.by[0] || e;
+      if (this.chance(o.shot)) {
+        this.airLost[seat] = (this.airLost[seat] || 0) + 1;
+        this.ev({ e: 'aa', to: '*', hex: a.hex, target: hex, down: 1 });
+        if (a !== e || e.att === 'aaa') { a.revealed = this.turn; this.gainXp(a, .04) }
+        this.log(side, 'Штурмовик сбит ПВО над целью: удара нет, в следующий ход вылетов на один меньше.', 'w');
+        this.log(e.side, a === e ? `«${e.cs}»: зенитный взвод сбил штурмовик!` : `«${a.cs}»: сбит штурмовик противника!`, 'g');
+        return { ok: true, intercepted: true, down: true };
       }
+      this.ev({ e: 'aa', to: '*', hex: a.hex, target: hex });
     }
-    this.hitByFire(this.ctxFor(side, true), AIR.pow, e, { side, xp: 0 }, { air: true, th: true });
-    this.log(side, 'Авиаудар нанесён.', 'g');
+    this.hitByFire(ctx, AIR.pow, e, { side, xp: 0 }, { air: true, th: true, kill: AIR.kill, cap: AIR.cap, aaCut: o.cut });
+    this.log(side, o.cover > 0 ? `Авиаудар нанесён сквозь ПВО — эффект ×${o.cut.toFixed(2).replace('.', ',')}.` : 'Авиаудар нанесён.', 'g');
     return { ok: true };
   }
 
@@ -1309,4 +1401,7 @@ class Game {
 }
 
 for (const m of ['./scenarios', './ai', './views']) Object.assign(Game.prototype, require(m));
+/* сохранение партии и загрузка из снимка (с проверкой всего, что пришло) — game/save.js */
+Game.prototype.saveState = require('./save').saveState;
+Game.fromState = st => require('./save').fromState(st);
 module.exports = { Game, oppOf, AGGR };

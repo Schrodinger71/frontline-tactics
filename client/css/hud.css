@@ -367,3 +367,19 @@ p.mhint{margin:0 0 .75em}
   .rfree{display:flex;align-items:baseline;gap:.4em;margin:0 auto 0 0;text-align:left}
   .rfree b{display:inline;font-size:1.25em}
 }
+
+/* ---------- сохранения ---------- */
+.saves{display:flex;flex-direction:column;gap:.6em;margin-top:1em}
+.save{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:.9em;align-items:center;padding:.7em .9em;
+  border:1px solid var(--bd);border-radius:12px;background:linear-gradient(180deg,rgba(17,27,36,.94),rgba(10,16,22,.94))}
+.save.auto{border-color:rgba(242,179,61,.35)}
+.save canvas{width:56px;height:56px;border-radius:7px;display:block;background:#0a1117;box-shadow:0 0 0 1px #2a3c4a}
+.save .sbody{display:flex;flex-direction:column;gap:.2em;min-width:0}
+.save .sbody b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.save .sbody span{font-size:.88em}
+.save .sact{display:flex;gap:.4em;align-items:center}
+.macts input[type=file]{display:none}
+@media (max-width:640px){.save{grid-template-columns:44px minmax(0,1fr)}.save canvas{width:44px;height:44px}.save .sact{grid-column:1 / -1}}
+/* состав по ходу партии (хозяин) */
+.ladd{display:flex;align-items:center;gap:.4em;margin-top:.45em;font-size:.92em}
+.ltab td .btn.tiny{margin-left:.5em}

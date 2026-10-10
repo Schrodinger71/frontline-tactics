@@ -117,5 +117,26 @@ const SmokeTex = (() => {
     cx.globalAlpha = pa;
   }
 
-  return { draw, N };
+  /**
+   * то же без поворота: вместо угла — отражения (fl: 0–3), растяжение sx — по
+   * горизонтали. Копирование без поворота в разы дешевле (на слабых устройствах
+   * и при программной отрисовке — втрое), а у мягкого клуба поворот почти не
+   * заметен. Для массового дыма: шлейфы, пожары, завесы.
+   */
+  function drawFast(cx, v, x, y, r, a, rgb, fl, sx) {
+    if (a <= .005 || r < .5) return;
+    const t = get(v, rgb[0], rgb[1], rgb[2]);
+    if (!t) return draw(cx, v, x, y, r, a, rgb, 0, sx);
+    const pa = cx.globalAlpha, w = r * (sx || 1);
+    cx.globalAlpha = pa * Math.min(1, a);
+    if (!(fl & 3)) cx.drawImage(t, x - w, y - r, w * 2, r * 2);
+    else {
+      cx.save(); cx.translate(x, y); cx.scale(fl & 1 ? -1 : 1, fl & 2 ? -1 : 1);
+      cx.drawImage(t, -w, -r, w * 2, r * 2);
+      cx.restore();
+    }
+    cx.globalAlpha = pa;
+  }
+
+  return { draw, drawFast, N };
 })();

@@ -32,7 +32,8 @@ const s2w = p => ({ x: (p.x - CW / 2) / G.view.s + G.view.x, y: (p.y - CH / 2) /
 const onScreen = (q, m) => q.x > -m && q.x < CW + m && q.y > -m && q.y < CH + m;
 
 function resize() {
-  DPR = Math.min(2, window.devicePixelRatio || 1);
+  /* экономная графика — холст в 1 пикс. на точку: на телефонах вчетверо меньше работы */
+  DPR = Math.min(typeof LOWFX === 'function' && LOWFX() ? 1 : 2, window.devicePixelRatio || 1);
   CW = cv.clientWidth; CH = cv.clientHeight;
   const w = Math.round(CW * DPR), h = Math.round(CH * DPR);
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h }

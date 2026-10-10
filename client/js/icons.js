@@ -26,9 +26,14 @@ function iconPaths(key) {
 
 const ICON_CACHE = new Map();
 
+/** Размер в кэше — ступенями ~9 % вверх от нужного: во время жеста зума ширина
+    фишки меняется каждый кадр, и раньше на каждый кадр пеклись новые картинки
+    всех иконок на экране. Рисуем с небольшим уменьшением — чётко и без ступенек. */
+const ICON_STEP = Math.log(1.09);
+const iconPx = w => Math.max(12, Math.round(Math.exp(Math.ceil(Math.log(Math.max(12, w)) / ICON_STEP - 1e-9) * ICON_STEP)));
 /** готовая картинка иконки шириной px (с тёмной обводкой силуэта для читаемости) */
 function iconImage(key, theme, px, flip) {
-  px = Math.max(12, Math.round(px / 2) * 2);
+  px = iconPx(px);
   const id = key + '|' + theme + '|' + px + '|' + (flip ? 1 : 0) + '|' + DPR;
   let c = ICON_CACHE.get(id);
   if (c) return c;
@@ -65,8 +70,8 @@ function iconImage(key, theme, px, flip) {
 
 /** иконка по центру точки (x,y) шириной w */
 function drawIcon(g, key, x, y, w, theme, flip, alpha) {
-  const img = iconImage(key, theme, w, flip);
-  const iw = img.width / DPR, ih = img.height / DPR;
+  const img = iconImage(key, theme, w, flip), k = Math.max(12, w) / iconPx(w);
+  const iw = img.width / DPR * k, ih = img.height / DPR * k;
   if (alpha != null) g.globalAlpha = alpha;
   g.drawImage(img, x - iw / 2, y - ih / 2 - 2, iw, ih);
   if (alpha != null) g.globalAlpha = 1;

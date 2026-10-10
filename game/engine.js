@@ -985,7 +985,8 @@ class Game {
     let retreat = this.chance(o.retreat);
     this.lastVacated = null;
     /* огонь поддержки: своя артиллерия защитника бьёт по атакующим */
-    if (o.mods.some(m => m.t === 'огонь поддержки')) {
+    /* учебная операция: огня поддержки и контрбатареи нет — урок не должен ломаться от ответа бота */
+    if (o.mods.some(m => m.t === 'огонь поддержки') && !(this.scen && this.scen.tutorial)) {
       const art = this.units.find(a => a.side === e.side && a.support && a.str > 0 && this.H.hexDist(a.hex, e.hex) <= UT[a.k].bomb.rng);
       if (art) {
         art.support = false; art.revealed = this.turn;
@@ -1269,6 +1270,7 @@ class Game {
   }
   /** контрбатарейная борьба: артиллерия противника, не стрелявшая в свой ход, отвечает по засечённой батарее */
   counterBattery(u) {
+    if (this.scen && this.scen.tutorial) return;
     if (u.str <= 0) return;
     const art = this.units.filter(a => a.side !== u.side && a.str > 0 && a.support && UT[a.k].bomb && this.H.hexDist(a.hex, u.hex) <= UT[a.k].bomb.rng)
       .sort((a, b) => UT[b.k].bomb.pow * b.str - UT[a.k].bomb.pow * a.str)[0];

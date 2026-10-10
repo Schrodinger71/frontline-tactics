@@ -1018,7 +1018,9 @@ function draw(dt) {
   drawAirMode();
   drawSelection();
   if (G.hover >= 0 && !animBusy()) { hexPath(G.hover, 1); cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 1.5; cx.stroke() }
+  coachTick();
   drawUnits();
+  drawCoachRing();
   drawPlan();
   drawMarks();
   drawRecap();

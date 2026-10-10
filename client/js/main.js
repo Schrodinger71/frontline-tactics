@@ -216,9 +216,7 @@ function applySnapshot(v) {
     commanders: v.commanders, role: v.role, over: v.over, limit: v.limit, mode0: v.mode, ready: v.ready
   });
   G.lastSnap = v;
-  /* обучение: подсказка нового хода */
-  const tip = v.scen && v.scen.tip;
-  if (tip && G._tipN !== tip.n) { G._tipN = tip.n; showTip(tip) } else if (!tip && !$('#tutor').hidden && (!v.scen || v.over)) $('#tutor').hidden = true;
+  /* обучение ведёт свои шаги на клиенте — см. tutor.js (coachTick) */
   ANIMS.hidden.clear(); ANIMS.pos.clear();
   G.visV++;
   G.isMyTurn = !G.spec && G.phase === 'battle' && G.active === G.side && !G.over;
@@ -704,6 +702,8 @@ function renderUI(force) {
   /* подсказка с расчётом — под курсором: сменили прицел клавишей (обстрел, разведка боем),
      выбрали другую часть или пришёл снимок — она пересчитывается сразу, без движения мыши */
   if (G.mouse && G.mouse.inside) renderTip(G.mouse);
+  /* учебный шаг: подсветка пересчитывается при каждом обновлении, а не только в кадре */
+  coachTick();
   /* режим метки могли снять правой кнопкой или Esc — кнопка во вкладке связи гаснет вместе с ним */
   syncMarkBtns();
 }
@@ -832,7 +832,7 @@ function showBrief() {
   $('#modal').hidden = false;
 }
 function showEnd() {
-  if (G.scen && !G.spec && G.over.w === G.side) { try { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } catch (e) { /* приватный режим */ } }
+  if (G.scen && !G.spec && G.over.w === G.side) { try { if (G.scen.tutorial) localStorage.setItem('turn.learn', '1'); else { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } } catch (e) { /* приватный режим */ } }
   const carry = campCarrySave();
   const title = G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
   const st = G.stats || {}, en = G.enemyStats || {};
@@ -875,7 +875,6 @@ function maybeSitePrompt() {
 
 /* ---------- меню ---------- */
 const SCEN_TXT = {
-  tutor: { n: 'Учебная операция', d: 'Восемь ходов и шесть уроков: разведка боем, обстрел, окружение, склад, подготовленная атака, штурм.' },
   bridge: { n: 'Мост через Тихую', d: 'Взять переправу у Моста за 8 ходов, пока к Союзу не подошли резервы.' },
   breakthrough: { n: 'Прорыв к Красногору', d: 'За 30 ходов взять Красногор через мины и волны резервов.' },
   night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Союза под Заречьем.' }
@@ -988,6 +987,7 @@ const MI = d => `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke=
 const MICON = {
   play: MI('<path d="M12 2.6l8.1 4.7v9.4L12 21.4l-8.1-4.7V7.3z"/><path d="M10 16.2V7.8l5.2 2.1-5.2 2.1"/>'),
   net: MI('<circle cx="12" cy="12" r="1.9"/><path d="M8.6 15.4a4.8 4.8 0 010-6.8M15.4 8.6a4.8 4.8 0 010 6.8M5.7 18.3a8.9 8.9 0 010-12.6M18.3 5.7a8.9 8.9 0 010 12.6"/>'),
+  learn: MI('<path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5z"/><path d="M12 6v13.5"/>'),
   camp: MI('<path d="M3 6.2l6-2.2 6 2.2 6-2.2v13.6l-6 2.2-6-2.2-6 2.2z"/><path d="M9 4v13.6M15 6.2v13.6"/>'),
   set: MI('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
   news: MI('<path d="M5 4.5h10.5v15H6.2A1.2 1.2 0 015 18.3z"/><path d="M15.5 8.5H19v10.3a1.2 1.2 0 01-1.2 1.2h-2.3M8 8.5h4.5M8 12h4.5M8 15.5h2.5"/>'),
@@ -1080,6 +1080,7 @@ function menuHTML() {
   if (M.view === 'saves') return savesHTML();
   if (M.view === 'play') return playHTML();
   if (M.view === 'camp') return campHTML();
+  if (M.view === 'learn') return learnHTML();
   if (M.view === 'set') return setHTML();
   if (M.view === 'news') return newsHTML();
   if (M.view === 'net') return netHTML();
@@ -1089,7 +1090,7 @@ function menuHTML() {
 function rootHTML() {
   const strip = ['tnk', 'mot', 'inf', 'art', 'mlrs', 'eng', 'hq'].map(k => iconHTML(unitIcon(k, M.side || N), 'ic big')).join('');
   let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
-  const camp = Object.keys(SCEN_TXT).filter(k => done[k]).length, open = (M.rooms || []).filter(r => r.free > 0).length;
+  const camp = CAMP_ORDER.filter(k => done[k]).length, open = (M.rooms || []).filter(r => r.free > 0).length;
   const tile = (nav, ic, h, d, cls, extra) => `<button class="mtile ${cls || ''}" data-nav="${nav}"><span class="mt-ic">${MICON[ic]}</span>
     <span class="mt-tx"><b>${h}</b>${d ? `<span>${d}</span>` : ''}</span>${extra || ''}<span class="mt-go">${MICON.go}</span></button>`;
   return `<div class="mbox root"><header class="brand">
@@ -1100,7 +1101,8 @@ function rootHTML() {
       <nav class="rmain">
         ${tile('play', 'play', 'Играть', 'Свободная операция: карта, режим и состав команд', 'hero')}
         ${tile('net', 'net', 'Сетевая игра', 'Партии, которые ждут игроков', '', `<em class="live" id="netCount"${open ? '' : ' hidden'}><i></i>${open} ${open === 1 ? 'открыта' : 'открыто'}</em>`)}
-        ${tile('camp', 'camp', 'Кампания', `Красногорская операция · пройдено ${camp} из ${Object.keys(SCEN_TXT).length}`)}
+        ${tile('learn', 'learn', 'Обучение', 'Шесть уроков с подсказками: куда нажимать и что делать')}
+        ${tile('camp', 'camp', 'Кампания', `Красногорская операция · pройдено ${camp} из ${CAMP_ORDER.length}`)}
         ${tile('saves', 'save', 'Сохранения', (() => { const n = savesList().length; return n ? `Продолжить партию · ${n} ${plural(n, 'сохранение', 'сохранения', 'сохранений')}` : 'Продолжить сохранённую партию' })())}
         <div class="mtiles2">
           ${tile('set', 'set', 'Настройки', '', 'sm')}
@@ -1193,11 +1195,7 @@ function campHTML() {
     <div class="mnote">${TEAMS[M.team].a > 1
       ? 'Операцию ведут ' + TEAMS[M.team].a + ' командира на одной стороне: бюджет и вылеты делятся, ход стороны закрывается, когда закончили все.'
       : 'Операцию ведёте вы один.'}</div>
-    <div class="mgrid"><div class="mcard ${done.tutor ? 'done' : ''}">
-      <div class="mkick">Обучение${done.tutor ? ' · ✓ пройдено' : ''}</div>
-      <h2>${SCEN_TXT.tutor.n}</h2><p>${SCEN_TXT.tutor.d} Играете за Альянс, один.</p>
-      <div class="acts"><button class="btn pri sm" data-a="tutor">Начать</button></div></div>
-    ${CAMP_ORDER.map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
+    <div class="mgrid">${CAMP_ORDER.map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
       <div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div>
       <h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
       ${campCarryFor(id) ? `<p class="lnote">Из прошлой операции: ветеранов — ${campCarryFor(id).vets.length}, очков — +${campCarryFor(id).bonus}.${campCarryOk(id) ? '' : ' Перейдут, если играть той же стороной и без живых союзников.'}</p>` : ''}
@@ -1805,7 +1803,7 @@ const MARK_ICON = { atk: '⚔', def: '⛨', look: '◎' };
 function roomReset() {
   G.chat = []; G.marks = []; G.chatNew = 0; G.replayFrames = null; G.lastSnap = null; G._tipN = 0;
   if (G.rp) { clearInterval(G.rp.timer); G.rp = null }
-  const t = $('#tutor'); if (t) t.hidden = true;
+  coachReset();
   const rb = $('#replayBar'); if (rb) rb.hidden = true;
   const ch = $('#chat'); if (ch) ch.classList.remove('open');
   chatRender();
@@ -1862,13 +1860,6 @@ function chatInit() {
   chatRender();
 }
 
-/* ---------- обучение: подсказка хода ---------- */
-function showTip(e) {
-  const el = $('#tutor');
-  el.innerHTML = `<div class="tk">Обучение · урок ${e.n} из ${e.of}</div><div>${esc(e.text)}</div><p class="acts"><button class="btn sm pri" id="tutorOk">Понятно</button></p>`;
-  el.hidden = false;
-  $('#tutorOk').onclick = () => { el.hidden = true };
-}
 
 /* ---------- повтор партии ----------
    Сервер после конца партии присылает кадры по ходам (части без тумана, территория,

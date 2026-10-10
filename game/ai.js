@@ -107,6 +107,8 @@ module.exports = {
 
   /* ---------- ход ---------- */
   botTurn(seat) {
+    /* учебная операция: бот только сходит и окапывается, но не бьёт — ученику нечего терять */
+    const peace = !!(this.scen && this.scen.tutorial);
     const side = this.sideOf(seat) || seat;
     if (this.over || this.active !== side || this.done[seat]) return;
     const en = side === N ? S : N, dir = side === N ? 1 : -1, com = this.commanders[side];
@@ -128,7 +130,7 @@ module.exports = {
     /* 2. разведка, артиллерия, авиация */
     if (objective && this.air[seat].recon > 0) this.act(seat, { t: 'air', kind: 'recon', hex: objective.hex });
     const targets = () => foes().map(e => ({ e, adj: this.H.neighbors(e.hex).filter(h => { const o = this.unitAt(h); return o && o.side === side }).length }));
-    for (const a of mine().filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0)) {
+    for (const a of peace ? [] : mine().filter(u => UT[u.k].bomb && !u.acted && u.reload <= 0)) {
       let best = null, bs = 0;
       for (const { e, adj } of targets()) {
         if (this.H.hexDist(a.hex, e.hex) > UT[a.k].bomb.rng) continue;
@@ -139,7 +141,7 @@ module.exports = {
     }
     /* авиаудары: по расчёту, как у игрока — ПВО над целью режет урон и может сбить
        штурмовик, поэтому под зонтик бот лезет только ради очень ценной цели */
-    for (let guard = 0; this.air[seat].strike > 0 && guard < 6; guard++) {
+    for (let guard = 0; !peace && this.air[seat].strike > 0 && guard < 6; guard++) {
       const ctx = this.ctxFor(side, false), risk = com.trait === 'решительный' ? .2 : .35;
       let best = null, bs = 0;
       for (const { e, adj } of targets()) {
@@ -155,7 +157,7 @@ module.exports = {
     /* обороняющийся контратакует охотнее, если противник уже в его точке */
     const lost = this.pts.some(p => p.home === side && p.owner !== side);
     const thr = com.aggr.ratio * (this.role[side] === 'defender' ? (lost ? .95 : 1.05) : 1) * (this.scen && this.role[side] === 'attacker' ? .85 : 1);
-    for (let guard = 0; guard < 14; guard++) if (!this.botAttack(seat, thr, objective)) break;
+    for (let guard = 0; !peace && guard < 14; guard++) if (!this.botAttack(seat, thr, objective)) break;
 
     /* 4. манёвр */
     for (const u of mine().sort((a, b) => (UT[a.k].bomb ? 1 : 0) - (UT[b.k].bomb ? 1 : 0))) {
@@ -167,9 +169,9 @@ module.exports = {
     for (const u of mine()) {
       if (u.str <= 0 || u.acted) continue;
       if (UT[u.k].eng && this.botEngineer(u, objective)) continue;
-      if (this.botProbe(u)) continue;
+      if (!peace && this.botProbe(u)) continue;
       const t = this.map.hexes[u.hex].t, cover = t === 'forest' || t === 'city' || this.forts.get(u.hex);
-      if ((cover || u.k === 'at') && near(u, 2) && !UT[u.k].bomb && u.k !== 'hq' && UT[u.k].atk.soft >= 2) { this.act(seat, { t: 'ambush', id: u.id }); continue }
+      if (!peace && (cover || u.k === 'at') && near(u, 2) && !UT[u.k].bomb && u.k !== 'hq' && UT[u.k].atk.soft >= 2) { this.act(seat, { t: 'ambush', id: u.id }); continue }
       if (!u.moved && near(u, 1)) this.act(seat, { t: 'dig', id: u.id });
     }
     this.botOrders(seat, 'late');

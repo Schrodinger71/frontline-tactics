@@ -231,7 +231,8 @@ function applySnapshot(v) {
   computeSel();
   renderUI(true);
   renderLobby();
-  if (G.over && !G._overShown) { G._overShown = true; setTimeout(showEnd, 700) }
+  /* пройденное отмечаем сразу, а не на экране итога: его показывают с задержкой, и партию могут покинуть раньше */
+  if (G.over && !G._overShown) { G._overShown = true; progressSave(); setTimeout(showEnd, 700) }
   /* автосохранение — в начале каждого своего хода: закрыли вкладку или пропала
      связь — партию можно продолжить из «Сохранений» */
   if (G.isMyTurn && !G._wasMyTurn && G.mySeat && !G.over) netSend({ t: 'save', auto: 1 });
@@ -259,8 +260,8 @@ function spawnHexes(k) {
   if (G.phase !== 'battle' || G.spec) return null;
   const hx = H.build(G.mapId).hexes, occ = new Map(G.units.map(u => [u.hex, u])), out = new Set();
   const enemyAt = h => { const o = occ.get(h); return o && o.side !== G.side };
-  /* высадка — у своих точек и у своего работающего командного пункта */
-  const f = myFobLive(), seeds = G.pts.filter(p => p.owner === G.side).map(p => p.hex);
+  /* высадка — у своих исходных точек и у своего работающего командного пункта (захваченные резервов не принимают) */
+  const f = myFobLive(), seeds = G.pts.filter(p => p.owner === G.side && p.home === G.side).map(p => p.hex);
   if (f) seeds.push(f.hex);
   for (const c of seeds) {
     for (const h of H.within(c, 1)) {
@@ -632,7 +633,7 @@ function renderUnit() {
 function renderBuy() {
   const deploy = G.phase === 'deploy';
   $('#rc').innerHTML = `<div class="card"><h3>Закупка <span class="mu">· ${G.spec ? '' : G.budget} очк.</span></h3>
-    <p class="hint">${deploy ? 'Выберите тип и кликните по клетке в зоне расстановки.' : 'Подкрепления — в своём городе или узле либо на соседней с ним клетке (подсвечены), без противника рядом. Прибывают без хода.'}</p>
+    <p class="hint">${deploy ? 'Выберите тип и кликните по клетке в зоне расстановки.' : 'Подкрепления — только в своих исходных точках и у командного пункта, на клетке или рядом (подсвечены), без противника рядом. Захваченные точки резервов не принимают. Прибывают без хода.'}</p>
     <div class="shop">${unitsFor(G.spec ? N : G.side).map(k => { const T = utFor(G.spec ? N : G.side)[k], off = G.budget < T.price;
       return `<div class="shopItem ${off ? 'off' : ''} ${G.mode === 'buy:' + k ? 'on' : ''}" data-buy="${k}"><div class="shead">${iconHTML(unitIcon(k, G.side), 'ic')}<div class="snm"><b>${esc(T.n)}</b><span>${esc(ROLE_TXT[k])}</span></div><div class="sprice">${T.price}</div></div>${statsHTML(T, true)}</div>` }).join('')}</div>
     <div class="lbl">Приданные специалисты</div>
@@ -653,7 +654,7 @@ function renderHQ() {
     ${G.vsBot && !G.spec ? '' : `<div class="row"><span>Код партии</span><b class="ac">${esc(G.roomId)}</b></div>`}</div>`;
 }
 function renderPts() {
-  $('#lc_pts').innerHTML = G.pts.map(p => `<div class="ptn" data-go="${p.hex}"><div class="pn"><b>${esc(p.n)}</b><span class="mu">${p.city ? 'город' : 'узел'} · вес ${p.w}</span></div><b class="${p.owner === N ? 'sdn' : 'sds'}">${SIDE_NAME[p.owner]}</b></div>`).join('');
+  $('#lc_pts').innerHTML = G.pts.map(p => `<div class="ptn" data-go="${p.hex}"><div class="pn"><b>${esc(p.n)}</b><span class="mu">${p.city ? 'город' : 'узел'} · вес ${p.w}${p.hold > 0 ? ' · <i class="ac">закрепление: ещё ' + p.hold + ' х.</i>' : ''}</span></div><b class="${p.owner === N ? 'sdn' : 'sds'}">${SIDE_NAME[p.owner]}</b></div>`).join('');
 }
 function statRows(a, b, la, lb) {
   const ks = UT_ORDER.filter(k => (a && a[k]) || (b && b[k]));
@@ -785,6 +786,7 @@ function showHelp() {
     <p><b>Подготовка и разведка.</b> Часть, простоявшая ход рядом с противником, бьёт <b>подготовленной атакой</b> ×1,2 — пока не сдвинулась (значок ▲). <b>Разведка боем</b> (<kbd>E</kbd>) малой кровью вскрывает соседа: его мораль, опыт, запасы и засаду, а окоп сбивает на уровень.</p>
     <p><b>Отход.</b> Разбитая часть на снабжении не гибнет: <b>остатки</b> (1 шаг) отходят — отведите их и пополните до 3 шагов или влейте в соседа своего типа. В котле остатков не бывает. Приказ <b>«Арьергард»</b>: выбитая часть отходит под заслоном — минус шаг, но её клетку с ходу не займут.</p>
     <p><b>Склады.</b> <b>Полевой склад</b> — источник снабжения там, куда не дотянулись дороги; расширяется за очки, в ход переезда не работает, отрезанный живёт на запасах три хода. Чужой склад без охраны захватывается с трофеями.</p>
+    <p><b>Точки и резервы.</b> Взятая точка <b>закрепляется три хода</b> (счётчик ⏳ на табличке) и только потом даёт перевес и доход; своя исходная, отбитая назад, — сразу. <b>Подкрепления</b> приходят только в исходные точки и к командному пункту: захваченный город резервов не принимает.</p>
     <p><b>Удобства.</b> <kbd>Z</kbd> или кнопка «Отменить» возвращает последний ход части, если он был без боя и не открыл ничего нового. Справа снизу — <b>слои карты</b>: снабжение, секторы, типы клеток и <b>угроза</b> (<kbd>G</kbd>) — куда противник дотянется за свой ход. Вкладка <b>«Связь»</b> справа: общий и командный чат, метки на карте для союзников (Alt+клик — «атакую», Alt+Shift+клик — «держать»). После партии — <b>повтор</b> по ходам. В «Наступлении» и «Обороне» время работает на обороняющегося: каждый ход перевес сдвигается к нему.</p>
     <p><b>Обстрел.</b> Любая боевая часть может вместо штурма бить по соседу <b>огнём с места</b> (<kbd>R</kbd> или Shift+клик по цели): потерь меньше у обеих сторон, зато цель прижата, а часть остаётся в своих окопах и клетку не занимает. Через реку — без штрафа.</p>
     <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
@@ -831,17 +833,28 @@ function showBrief() {
   $('#mbox').innerHTML = `<h2>${esc(G.scen.n)}</h2><p>${esc(G.scen.brief)}</p><p class="mu">Вы — ${SIDE_NAME[G.side]} (${ROLE_LABEL[G.role[G.side]] || ''}). На задачу — ${G.scen.left} ход(ов).</p><p class="acts"><button class="btn pri" id="btnClose">К делу</button></p>`;
   $('#modal').hidden = false;
 }
+/** победа в операции кампании или учебной сцене — запомнить в браузере */
+function progressSave() {
+  if (!G.scen || G.spec || !G.over || G.over.w !== G.side) return;
+  try {
+    if (G.scen.tutorial || G.scen.exam) learnMark(G.scen.id);
+    else { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) }
+  } catch (e) { /* приватный режим */ }
+}
 function showEnd() {
-  if (G.scen && !G.spec && G.over.w === G.side) { try { if (G.scen.tutorial) learnMark(G.scen.id); else { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } } catch (e) { /* приватный режим */ } }
+  /* итог показывается с задержкой: за это время партию могли покинуть или начать другую */
+  if (!G.over || !G.roomId) return;
   const carry = campCarrySave();
-  const title = G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
+  /* учебная сцена: не «победа», а «пройдена», и сразу кнопка следующей */
+  const lab = !G.spec && G.scen && (G.scen.tutorial || G.scen.exam) ? G.scen : null, nextLab = lab ? labNext(lab.id) : null;
+  const title = lab && lab.tutorial ? 'Сцена пройдена' : G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
   const st = G.stats || {}, en = G.enemyStats || {};
   $('#mbox').innerHTML = `<h2>${title}</h2><p>${esc(G.over.t)}</p><p class="mu">Операция длилась ${G.turn} ход(ов).</p>
     ${histSVG(G.history)}
     <div class="cols"><div><div class="lbl">${G.spec ? SIDE_NAME.n : 'Мы'}</div><div class="row"><span>Потеряно</span><b class="bad">${st.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${st.caps || 0}</b></div></div>
     <div><div class="lbl">${G.spec ? SIDE_NAME.s : 'Противник'}</div><div class="row"><span>Потеряно</span><b class="bad">${en.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${en.caps || 0}</b></div></div></div>
     ${carry ? `<p class="lnote">В следующую операцию кампании перейдут ветераны (${carry.vets.length}) — с опытом, специалистами и позывными — и ${carry.bonus} очков за досрочную победу.</p>` : ''}
-    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}<button class="btn pri" id="btnNew">В меню</button></p>`;
+    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames && !lab ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}${lab ? `<button class="btn" id="btnLabs">К списку сцен</button>${lab.exam && G.over.w !== G.side ? '<button class="btn pri" id="btnLabAgain">Ещё раз</button>' : nextLab ? `<button class="btn pri" id="btnNextLab">Дальше: ${esc(nextLab.n)}</button>` : ''}` : '<button class="btn pri" id="btnNew">В меню</button>'}</p>`;
   $('#modal').hidden = false;
 }
 function hideModal() { $('#modal').hidden = true; maybeSitePrompt() }
@@ -1418,7 +1431,7 @@ function orderClick(k) {
   if (G.cp < Math.max(1, O.cp - FOB.orderOff)) return toast(`Нужно ${O.cp} командных очка`);
   G.mode = G.mode === 'ord:' + k ? null : 'ord:' + k;
   G.spawn = G.mode === 'ord:reserve' ? spawnHexes('mot') : null;
-  hint(G.mode ? (k === 'smoke' ? 'Дымовая завеса: кликните по клетке (до 3 клеток от своих частей) — дым ляжет на неё и соседние.' : 'Резерв ставки: кликните по подсвеченной клетке у своего города или узла.') + ' ПКМ — отмена.' : '');
+  hint(G.mode ? (k === 'smoke' ? 'Дымовая завеса: кликните по клетке (до 3 клеток от своих частей) — дым ляжет на неё и соседние.' : 'Резерв ставки: кликните по подсвеченной клетке у своей исходной точки или командного пункта.') + ' ПКМ — отмена.' : '');
   renderUI();
 }
 function nextUnit() {
@@ -1499,6 +1512,9 @@ function bind() {
     if (e.target.id === 'btnSiteGo') { $('#modal').hidden = true; focusFob(); return }
     if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal();
     if (e.target.id === 'btnNew') leaveToMenu();
+    if (e.target.id === 'btnLabs') { leaveToMenu(); M.view = 'learn'; showMenu() }
+    if (e.target.id === 'btnNextLab' && G.scen && labNext(G.scen.id)) { hideModal(); labStart(labNext(G.scen.id).id) }
+    if (e.target.id === 'btnLabAgain' && G.scen) { hideModal(); labStart(G.scen.id) }
     if (e.target.id === 'btnReplay') { hideModal(); replayStart() }
   });
   $('#lobby').addEventListener('click', e => {
@@ -1521,7 +1537,7 @@ function bind() {
   $('#lc_pts').addEventListener('click', e => { const r = e.target.closest('[data-go]'); if (r) camTo(H.center(+r.dataset.go), Math.max(G.view.s, S_WORK())) });
   $('#rc').addEventListener('click', e => {
     const b = e.target.closest('[data-buy]');
-    if (b) { if (b.classList.contains('off')) return toast('Не хватает очков'); G.mode = 'buy:' + b.dataset.buy; G.sel = null; G.spawn = spawnHexes(b.dataset.buy); hint(G.phase === 'deploy' ? 'Кликните по клетке в зоне расстановки (Shift — несколько).' : 'Кликните по подсвеченной клетке у своего города или узла (Shift — несколько).'); renderUI(); return }
+    if (b) { if (b.classList.contains('off')) return toast('Не хватает очков'); G.mode = 'buy:' + b.dataset.buy; G.sel = null; G.spawn = spawnHexes(b.dataset.buy); hint(G.phase === 'deploy' ? 'Кликните по клетке в зоне расстановки (Shift — несколько).' : 'Кликните по подсвеченной клетке у своей исходной точки или командного пункта (Shift — несколько).'); renderUI(); return }
     const o = e.target.closest('[data-ord]');
     if (o) { orderClick(o.dataset.ord); return }
     const a = e.target.closest('[data-a]');
@@ -1589,7 +1605,7 @@ function bind() {
       else netSend({ t: 'create', mode: M.mode, side: M.me.side, map: G.mapPick, seats: plan, name: myName });
     }
     else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName, carry: campCarryOk(el.dataset.id) ? campCarryFor(el.dataset.id) : undefined });
-    else if (a === 'lab') netSend({ t: 'create', mode: el.dataset.id, side: N, vsBot: true, seats: { [N]: ['me'], [S]: ['bot'] }, name: myName });
+    else if (a === 'lab') labStart(el.dataset.id);
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'netRefresh') netPoll();
     else if (a === 'ldSave' || a === 'dlSave' || a === 'rmSave') {

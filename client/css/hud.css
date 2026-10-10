@@ -450,3 +450,8 @@ body:has(#chat.open) .zbox{right:calc(min(320px,88vw) + 12px)}
 #tutor .cdots i.now{background:var(--ac)}
 #tutor kbd{border:1px solid var(--ac);border-radius:4px;padding:0 .3em;color:var(--ac);font:600 .9em ui-monospace,Consolas,monospace}
 .mlessons{list-style:none;margin:.3em 0 .9em;line-height:1.7}
+
+/* боковая панель открыта — карточка обучения встаёт по центру оставшейся карты, а не поверх панели */
+@media (min-width:900px){
+  body:has(#dock:not(.col)) #tutor{left:calc(var(--drawer) + (100vw - var(--drawer)) / 2);width:min(560px,calc(100vw - var(--drawer) - 150px))}
+}

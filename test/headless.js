@@ -391,8 +391,46 @@ for (const map of require('../shared/maps').MAP_ORDER) {
     assert.strictEqual(Game.cleanCarry({ vets: 'x', bonus: 'много' }, N), null, 'мусор вместо переноса — ничего');
     assert.strictEqual(new Game('both', N, 36, 'valley', { carry }).units.filter(u => u.vet).length, 0, 'вне сценария перенос не действует');
   }
+  /* --- закрепление точек и высадка только в исходных точках --- */
+  {
+    const g = new Game('both', N, 51, 'tundra');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    const H = g.H, mid = g.pts.find(p => !p.home), foeHome = g.pts.find(p => p.home === N && p.city), own = g.pts.find(p => p.home === S && p.city);
+    assert(mid && foeHome && own, 'на карте есть ничейная точка и исходные точки сторон');
+    /* по боевой части каждой стороне: иначе партия кончится «некому воевать» */
+    g.spawn('inf', N, g.freeHex(40, 100, 'inf')); g.spawn('inf', S, g.freeHex(g.WW - 40, 100, 'inf'));
+    g.active = S; g.updateSupply(S);
+    const w0 = g.heldWeight(S);
+    /* берём ничейный центр */
+    const u = g.spawn('mot', S, H.neighbors(mid.hex).find(h => !g.unitAt(h) && g.passable('mot', h)));
+    u.hex = mid.hex; g.capture(u);
+    assert(mid.owner === S && g.ptHold(mid) === W.POINT_HOLD, 'взятая точка закрепляется ' + W.POINT_HOLD + ' хода');
+    assert.strictEqual(g.heldWeight(S), w0, 'пока не закреплена — веса не даёт');
+    assert.strictEqual(g.snapshotFor(N).pts.find(p => p.id === mid.id).hold, W.POINT_HOLD, 'срок закрепления виден обеим сторонам');
+    /* резервы в захваченную точку не приходят, в исходную — приходят */
+    g.updateSupply(S); g.budget.s = 5000;
+    const nearMid = H.neighbors(mid.hex).find(h => !g.unitAt(h) && g.passable('inf', h));
+    assert(!g.act(S, { t: 'buy', k: 'inf', hex: nearMid }).ok, 'у захваченной точки подкрепления не высадить');
+    assert(!g.spawnHexes(S, 'inf').some(h => H.hexDist(h, mid.hex) <= 1), 'захваченная точка — не ворота для резервов');
+    const nearOwn = H.neighbors(own.hex).find(h => !g.unitAt(h) && g.passable('inf', h) && g.sv.s[h] > 0);
+    assert(g.act(S, { t: 'buy', k: 'inf', hex: nearOwn }).ok, 'у своей исходной точки — можно');
+    /* через POINT_HOLD ходов точка начинает работать */
+    g.turn += W.POINT_HOLD - 1;
+    assert(g.ptHold(mid) === 1 && g.heldWeight(S) === w0, 'за ход до срока — ещё нет');
+    g.turn += 1;
+    assert(g.ptHold(mid) === 0 && Math.abs(g.heldWeight(S) - w0 - mid.w) < 1e-9, 'закрепилась — вес засчитан');
+    /* противник отбил — счётчик заново, но уже у него; своя исходная, отбитая назад, работает сразу */
+    const v = g.spawn('mot', N, H.neighbors(foeHome.hex).find(h => !g.unitAt(h) && g.passable('mot', h)));
+    foeHome.owner = S; foeHome.since = g.turn - 9;
+    v.hex = foeHome.hex; g.capture(v);
+    assert(foeHome.owner === N && g.ptHold(foeHome) === 0, 'исходная точка, отбитая назад, работает сразу');
+    const back = Game.fromState(JSON.parse(JSON.stringify(g.saveState())));
+    assert.strictEqual(back.ptHold(back.pts.find(p => p.id === mid.id)), 0, 'сохранение помнит, когда точку взяли');
+    mid.since = g.turn - 1;
+    assert.strictEqual(Game.fromState(JSON.parse(JSON.stringify(g.saveState()))).ptHold(g.pts.find(p => p.id === mid.id)), W.POINT_HOLD - 1, 'и сколько ей осталось до закрепления');
+  }
   /* --- учебные сцены: каждая начинается без расстановки, никого не бьёт бот и доигрывается --- */
-  for (const id of ['lab_recon', 'lab_fire', 'lab_attack', 'lab_flank', 'lab_remnant', 'lab_supply', 'lab_air', 'lab_order', 'lab_ui']) {
+  for (const id of Object.keys(require('../game/scenarios').SCEN).filter(k => k.startsWith('lab_') && k !== 'lab_exam')) {
     const g = new Game(id, N, 37);
     g.bots = { s: true }; g.tryStart();
     assert.strictEqual(g.phase, 'battle', id + ': сцена начинается без расстановки');
@@ -409,8 +447,9 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   }
   /* --- кадры повтора --- */
   {
-    const g = new Game('lab_attack', N, 38);
+    const g = new Game('lab_exam', N, 38);
     g.bots = { n: true, s: true }; g.tryStart();
+    assert.strictEqual(g.phase, 'battle', 'учебный бой начинается без расстановки');
     let guard = 0;
     while (!g.over && guard++ < 100) { for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) g.botTurn(st.id); g.drainEvents() }
     assert(g.frames.length >= 2 && g.frames[0].u.length && g.frames[0].terr.length === g.H.NH && g.frames[g.frames.length - 1].p.length === g.pts.length, 'кадры повтора записаны');

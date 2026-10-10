@@ -64,7 +64,8 @@ module.exports = {
       commanders: { n: { name: this.commanders.n.name, trait: this.commanders.n.trait }, s: { name: this.commanders.s.name, trait: this.commanders.s.trait } },
       budget: spec ? { n: Math.floor(this.budget.n), s: Math.floor(this.budget.s) } : Math.floor(this.budget[seat]),
       income: spec ? this.income : this.income[seat], air: spec ? this.air : this.air[seat],
-      pts: this.pts.map(p => ({ id: p.id, n: p.n, city: p.city, hex: p.hex, w: p.w, owner: p.owner, home: p.home })),
+      /* hold — сколько ходов точке до закрепления: пока больше нуля, перевеса и дохода она не даёт */
+      pts: this.pts.map(p => ({ id: p.id, n: p.n, city: p.city, hex: p.hex, w: p.w, owner: p.owner, home: p.home, hold: this.ptHold(p) })),
       units, ghosts, mines, br: [...this.br.entries()],
       vis: spec ? null : [...this.vis[side]],
       /* территория (видна обеим сторонам, как в Order of Battle) и своё поле снабжения:
@@ -78,7 +79,7 @@ module.exports = {
       undo: !spec && this.undoRec && this.undoRec.seat === seat && this.undoRec.turn === this.turn ? this.undoRec.id : null,
       hold: this.holdBias ? this.holdBias() * W.SCORE_RATE : 0,
       frontY: this.frontY, pockets: this.phase === 'battle' ? this.pockets(side) : [],
-      scen: this.scen ? { id: this.scenId, tutorial: this.scen.tutorial ? 1 : 0, tip: this.tipFor(side), n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
+      scen: this.scen ? { id: this.scenId, tutorial: this.scen.tutorial ? 1 : 0, exam: this.scen.exam ? 1 : 0, tip: this.tipFor(side), n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
       stats: spec ? sv(N) : sv(side), enemyStats: spec || this.over ? sv(spec ? S : side === N ? S : N) : null,
       history: this.history
     };

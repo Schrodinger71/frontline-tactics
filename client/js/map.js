@@ -555,6 +555,13 @@ function drawPoints() {
     cx.strokeStyle = 'rgba(255,255,255,.1)'; cx.lineWidth = 1; rr(cx, q.x - pw / 2 + .5, ty + .5, pw - 1, ph - 1, 4); cx.stroke();
     cx.fillStyle = !p.owner ? '#e8e8da' : p.owner === N ? '#dcecf6' : '#ffc9b8';
     cx.fillText(p.n, q.x + 2, ty + ph - 5.5);
+    /* закрепление: взятая точка пока не приносит перевеса и дохода — счётчик ходов на табличке */
+    if (p.hold > 0) {
+      const t = '⏳ ' + p.hold, w = cx.measureText(t).width + 8;
+      cx.fillStyle = 'rgba(8,13,18,.92)'; rr(cx, q.x + pw / 2 + 3, ty, w, ph, 4); cx.fill();
+      cx.strokeStyle = 'rgba(242,179,61,.7)'; cx.lineWidth = 1; rr(cx, q.x + pw / 2 + 3.5, ty + .5, w - 1, ph - 1, 4); cx.stroke();
+      cx.fillStyle = '#ffd479'; cx.textAlign = 'left'; cx.fillText(t, q.x + pw / 2 + 7, ty + ph - 5.5); cx.textAlign = 'center';
+    }
     /* вес — точки под табличкой */
     const n = Math.round(p.w * 2) / 2, dots = Math.ceil(n);
     for (let i = 0; i < dots; i++) {

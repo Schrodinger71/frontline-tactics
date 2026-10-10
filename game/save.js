@@ -60,7 +60,7 @@ function saveState() {
       if (u.remBy) o.remBy = u.remBy;
       return o;
     }),
-    pts: g.pts.map(p => ({ id: p.id, owner: p.owner || null, home: p.home || null })),
+    pts: g.pts.map(p => ({ id: p.id, owner: p.owner || null, home: p.home || null, since: Number.isInteger(p.since) ? p.since : null })),
     br: [...g.br.entries()], forts: [...g.forts.entries()], obst: [...g.obst.entries()], smoke: [...g.smoke.entries()],
     mines: [...g.mines.entries()].map(([h, m]) => [h, m.side, m.str, m.known && m.known.n ? 1 : 0, m.known && m.known.s ? 1 : 0]),
     militiaUsed: [...g.militiaUsed], looted: [...g.looted],
@@ -164,6 +164,7 @@ function fromState(raw) {
     if (!q) continue;
     p.owner = SIDES.includes(q.owner) ? q.owner : null;
     p.home = SIDES.includes(q.home) ? q.home : null;
+    p.since = Number.isInteger(q.since) && q.since >= 0 && q.since < 1000 && p.owner ? q.since : undefined;
   }
 
   /* мосты, укрепления, заграждения, дым, мины */

@@ -107,8 +107,9 @@ module.exports = {
 
   /* ---------- ход ---------- */
   botTurn(seat) {
-    /* учебная операция: бот только сходит и окапывается, но не бьёт — ученику нечего терять */
+    /* учебная сцена: противник стоит на месте и не воюет — шаги подсказок рассчитаны на его расстановку */
     const peace = !!(this.scen && this.scen.tutorial);
+    if (peace) { if (!this.over && this.active === (this.sideOf(seat) || seat) && !this.done[seat]) this.act(seat, { t: 'end' }); return }
     const side = this.sideOf(seat) || seat;
     if (this.over || this.active !== side || this.done[seat]) return;
     const en = side === N ? S : N, dir = side === N ? 1 : -1, com = this.commanders[side];

@@ -456,11 +456,14 @@ class Game {
     this.ev({ e: 'spawn', to: side, id: u.id, hex });
     return { ok: true, id: u.id };
   }
-  /** точка, у которой можно высадить подкрепления: свой город или узел, свой
-      работающий командный пункт — сама клетка или соседняя с ней */
+  /** точка, у которой можно высадить подкрепления: своя ИСХОДНАЯ точка (город или узел,
+      который был нашим с начала партии) либо свой работающий командный пункт — сама клетка
+      или соседняя с ней. Захваченная точка воротами для резервов не становится: иначе
+      взявший центр высаживал технику прямо у противника, а тот вёз свою через всю карту. */
   spawnPt(side, hex, seat) {
-    const p = this.pts.find(q => q.owner === side && q.hex === hex) ||
-      this.pts.find(q => q.owner === side && this.H.hexDist(q.hex, hex) === 1 && !(this.unitAt(q.hex) && this.unitAt(q.hex).side !== side));
+    const mine = q => q.owner === side && q.home === side;
+    const p = this.pts.find(q => mine(q) && q.hex === hex) ||
+      this.pts.find(q => mine(q) && this.H.hexDist(q.hex, hex) === 1 && !(this.unitAt(q.hex) && this.unitAt(q.hex).side !== side));
     if (p) return p;
     const f = seat ? this.fobLive(seat) : (this.fobsLive(side).find(x => this.H.hexDist(x.hex, hex) <= 1) || null);
     if (f && this.H.hexDist(f.hex, hex) <= 1) return { id: 'fob' + f.id, n: 'командный пункт', hex: f.hex };
@@ -470,14 +473,14 @@ class Game {
     if (!(hex >= 0 && hex < this.H.NH)) return 'нет клетки';
     if (this.unitAt(hex)) return 'клетка занята';
     if (!this.passable(k, hex)) return 'сюда эта часть не встанет';
-    if (!this.spawnPt(side, hex, seat)) return 'подкрепления — у своего города, узла или командного пункта (на клетке или рядом)';
+    if (!this.spawnPt(side, hex, seat)) return 'подкрепления — только у своей исходной точки или командного пункта (на клетке или рядом); захваченные точки резервов не принимают';
     if (this.H.neighbors(hex).some(h => { const e = this.unitAt(h); return e && e.side !== side })) return 'рядом противник — высадка невозможна';
     if (this.phase === 'battle' && !this.sv[side][hex]) return 'сюда не доходит снабжение — высадка невозможна';
     return null;
   }
   /** клетки, где сторона может высадить подкрепления такого типа */
   spawnHexes(side, k, seat) {
-    const out = [], seeds = this.pts.filter(p => p.owner === side).map(p => p.hex);
+    const out = [], seeds = this.pts.filter(p => p.owner === side && p.home === side).map(p => p.hex);
     for (const f of (seat ? [this.fobLive(seat)].filter(Boolean) : this.fobsLive(side))) seeds.push(f.hex);
     for (const c of seeds) for (const h of this.H.within(c, 1)) if (!out.includes(h) && !this.spawnErr(side, h, k, seat)) out.push(h);
     return out;
@@ -854,8 +857,10 @@ class Game {
     if (!p || p.owner === u.side || !UT[u.k].cap || u.rem) return;
     const was = p.owner;
     p.owner = u.side;
+    /* закрепление: чужая или ничейная точка заработает через W.POINT_HOLD ходов; своя исходная — сразу */
+    p.since = p.home === u.side ? undefined : this.turn;
     this.stats[u.side].caps++;
-    this.log(u.side, `${p.n} — наши!`, 'g');
+    this.log(u.side, p.since === undefined ? `${p.n} — снова наши!` : `${p.n} — наши! Перевес и доход точка даст через ${W.POINT_HOLD} хода удержания.`, 'g');
     if (was && p.city && !this.looted.has(p.id)) {
       this.looted.add(p.id);
       const t = Math.round(20 + 15 * p.w);
@@ -1653,7 +1658,10 @@ class Game {
   }
 
   /* ---------- точки, фронт, исход ---------- */
-  heldWeight(side, cityMul) { return this.pts.reduce((s, p) => s + (p.owner === side ? p.w * (cityMul && p.city ? 1.5 : 1) : 0), 0) }
+  /** сколько ходов точке осталось до закрепления (0 — уже приносит перевес и доход) */
+  ptHold(p) { return p.owner && p.since !== undefined ? Math.max(0, W.POINT_HOLD - (this.turn - p.since)) : 0 }
+  /** вес удержанных точек — только закреплённых (см. W.POINT_HOLD) */
+  heldWeight(side, cityMul) { return this.pts.reduce((s, p) => s + (p.owner === side && !this.ptHold(p) ? p.w * (cityMul && p.city ? 1.5 : 1) : 0), 0) }
   forceValue(side) { return Math.round(this.units.filter(u => u.side === side && u.str > 0).reduce((s, u) => s + UT[u.k].price * u.str / MAX_STR, 0)) }
   frontXAt(y) { const f = this.frontY, i = clamp(Math.round(y / 6), 0, f.length - 1); return f[i] ? f[i].x : this.WW / 2 }
   checkEnd() {

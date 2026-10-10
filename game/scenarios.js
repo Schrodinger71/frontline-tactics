@@ -12,114 +12,141 @@ const Hex = require('../shared/hex');
 const { N, S, UT } = W;
 
 const SCEN = {
-  /* Обучение: короткие сцены, по одной на механику. Ход и подсказки ведёт клиент (tutor.js). */
-  lab_recon: {
-    n: 'Разведка боем',
-    brief: 'Разведрота подходит к заставе, вскрывает её и сбивает окоп. Артиллерия прижимает оборону.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+  /* Обучение: короткие сцены, по одной на тему (tutorial: противник стоит и не воюет),
+     и учебный бой в конце (exam: противник воюет). В сценах с grid части расставлены по
+     клеткам — [тип, колонка, ряд]: шагам подсказок (client/js/tutor.js) нужна точная геометрия. */
+  lab_move: {
+    n: 'Первые шаги',
+    brief: 'Как выбрать часть, куда она может пойти и как закончить ход.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['rec', 146, 150], ['art', 122, 160]],
-      s: [['inf', 156, 160, { ent: 2 }]]
+      n: [['hq', 9, 27], ['inf', 11, 26], ['mot', 10, 28]],
+      s: [['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
-    win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
-  },
-  lab_fire: {
-    n: 'Огонь с места',
-    brief: 'Пехота бьёт по соседу из окопа: цель прижата, клетка остаётся вашей.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
-    forces: {
-      n: [['hq', 118, 168], ['inf', 142, 162]],
-      s: [['inf', 156, 160, { ent: 2 }]]
-    },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
   lab_attack: {
-    n: 'Штурм и готовая позиция',
-    brief: 'Часть, простоявшая ход рядом с врагом, бьёт сильнее. Потом — штурм пехотой.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+    n: 'Атака',
+    brief: 'Подойти к противнику, прочитать расчёт боя и ударить.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['tnk', 164, 162, { adj0: 1 }], ['inf', 146, 176]],
-      s: [['inf', 156, 160, { ent: 1 }]]
+      n: [['hq', 9, 27], ['tnk', 11, 26]],
+      s: [['inf', 14, 26, {str: 6}], ['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
+    win() { return null },
+    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+  },
+  lab_points: {
+    n: 'Точки и победа',
+    brief: 'За что идёт бой: города и узлы дают перевес и доход. Взятая точка закрепляется три хода.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true, owner: { pyl: S },
+    forces: {
+      n: [['hq', 13, 27], ['mot', 12, 26]],
+      s: [['inf', 17, 22, {ent: 1}]]
+    },
+    win() { return null },
+    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+  },
+  lab_fire: {
+    n: 'Обстрел и охват',
+    brief: 'Прижать противника огнём с места и ударить другой частью с фланга.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
+    forces: {
+      n: [['hq', 9, 27], ['inf', 13, 26, {ent: 2}], ['tnk', 12, 28]],
+      s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
+    },
+    win() { return null },
+    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+  },
+  lab_recon: {
+    n: 'Разведка боем и артиллерия',
+    brief: 'Вскрыть оборону малой кровью и накрыть её огнём с закрытых позиций.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
+    forces: {
+      n: [['hq', 9, 27], ['rec', 11, 25], ['art', 11, 27]],
+      s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
+    },
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
   lab_flank: {
-    n: 'Обход',
-    brief: 'Зона контроля останавливает на подходе. Мотопехота заходит врагу за спину.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+    n: 'Зона контроля и остатки',
+    brief: 'Рядом с противником часть останавливается. Разбитая часть уходит остатками — их берут в плен.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['mot', 130, 172]],
-      s: [['inf', 156, 160, { ent: 2 }], ['inf', 164, 146, { ent: 1 }]]
+      n: [['hq', 9, 27], ['tnk', 12, 26], ['mot', 12, 28]],
+      s: [['inf', 14, 26, {str: 3}], ['dep', 16, 25], ['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
-    win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
-  },
-  lab_remnant: {
-    n: 'Остатки и арьергард',
-    brief: 'Разбитая часть не исчезает сразу: её остатки уходят. Арьергард прикрывает отход.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
-    forces: {
-      n: [['hq', 118, 168], ['tnk', 150, 160], ['inf', 146, 176]],
-      s: [['inf', 156, 160, { ent: 1, str: 2 }]]
-    },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
   lab_supply: {
     n: 'Снабжение и склад',
-    brief: 'Подвоз идёт по дорогам. Полевой склад кормит округу там, где дорог нет.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+    brief: 'Подвоз идёт по дорогам и недалеко от них. Полевой склад кормит части там, куда дороги не дотянулись.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['inf', 146, 176], ['dep', 124, 178]],
-      s: [['inf', 250, 250, { ent: 1 }]]
+      n: [['hq', 9, 27], ['inf', 17, 27], ['dep', 13, 27]],
+      s: [['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
+    win() { return null },
+    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+  },
+  lab_buy: {
+    n: 'Подкрепления и пополнение',
+    brief: 'Потрёпанную часть пополняют, новые покупают — только в своих исходных точках и у командного пункта.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 200, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
+    forces: {
+      n: [['hq', 9, 27], ['inf', 11, 27, {str: 5}]],
+      s: [['inf', 17, 22, {ent: 1}]]
+    },
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
   lab_air: {
-    n: 'Авиаудар и ПВО',
-    brief: 'Штурмовик бьёт по видимой части. Зенитки прикрывают свою землю и сбивают самолёт.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+    n: 'Авиация и приказы штаба',
+    brief: 'Авиаудар по видимой части и приказ «Стоять насмерть» за командные очки.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['tnk', 150, 160]],
-      s: [['inf', 156, 160, { ent: 2 }]]
+      n: [['hq', 9, 27], ['tnk', 12, 26], ['inf', 12, 27]],
+      s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
-  lab_order: {
-    n: 'Приказы штаба',
-    brief: 'Командные очки покупают приказы. «Стоять насмерть» держит позицию до вашего хода.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+  lab_defense: {
+    n: 'Оборона',
+    brief: 'Окоп, засада и арьергард: как держать рубеж и отходить без разгрома.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['inf', 146, 156]],
-      s: [['inf', 170, 160, { ent: 1 }]]
+      n: [['hq', 9, 27], ['inf', 13, 25], ['inf', 13, 27]],
+      s: [['tnk', 15, 26], ['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
   },
   lab_ui: {
     n: 'Инструменты',
-    brief: 'Отмена хода, слой угрозы и чат с меткой для союзников.',
-    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pesch', noDeploy: true, tutorial: true, scene: true,
+    brief: 'Отмена хода, слой угрозы и связь с союзниками.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
-      n: [['hq', 118, 168], ['mot', 130, 172]],
-      s: [['inf', 170, 160, { ent: 1 }]]
+      n: [['hq', 9, 27], ['mot', 12, 26]],
+      s: [['inf', 14, 26, {ent: 1}], ['inf', 17, 22, {ent: 1}]]
     },
-    /* сцены учебные: они не обрываются ни взятием точки, ни потерями — конец по сроку, итог «пройдено» */
     win() { return null },
     timeout() { return { w: N, t: 'Сцена пройдена.' } }
+  },
+  /* учебный бой: противник воюет по-настоящему — проверка всего пройденного */
+  lab_exam: {
+    n: 'Учебный бой',
+    brief: 'Настоящий бой с живым противником: за восемь ходов взять Песчаный. Разведка, огонь, охват, склад — всё пригодится. Песчаный за рекой: по мосту идут свободно, вброд — только с места и на весь ход.',
+    map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 8, weather: 'clear', budget: { n: 120, s: 0 }, target: 'pesch', noDeploy: true, exam: true,
+    forces: {
+      n: [['hq', 118, 168], ['rec', 146, 150], ['inf', 142, 162], ['inf', 140, 176], ['tnk', 134, 156], ['tnk', 130, 148], ['mot', 132, 172], ['art', 122, 160], ['dep', 124, 178]],
+      s: [['inf', 172, 150, { ent: 2 }], ['inf', 156, 160, { ent: 2 }], ['inf', 164, 146, { ent: 1 }]]
+    },
+    win(g) { return g.pts.find(p => p.id === 'pesch').owner === N ? { w: N, t: 'Песчаный взят — учебный бой выигран.' } : null },
+    timeout() { return { w: S, t: 'Срок вышел, Песчаный не взят. Попробуйте ещё раз: сначала разведать и прижать огнём, потом бить с двух сторон.' } }
   },
   bridge: {
     n: 'Мост через Тихую',
@@ -191,12 +218,16 @@ module.exports = {
     this.budget = { n: sc.budget.n, s: sc.budget.s };
     this.units = []; this._cs = { n: 0, s: 0 };
     for (const [pid, side] of Object.entries(sc.owner || {})) { const p = this.pts.find(q => q.id === pid); if (p) p.owner = p.home = side }
-    for (const side of [N, S]) for (const [k, x, y, o] of sc.forces[side]) this.placeAt(side, k, x, y, o);
+    for (const side of [N, S]) for (const [k, x, y, o] of sc.forces[side]) {
+      /* grid: x, y — колонка и ряд клетки, а не километры */
+      const c = sc.grid ? this.H.center(y * this.H.COLS + x) : { x, y };
+      this.placeAt(side, k, c.x, c.y, o);
+    }
     for (const [side, x, y] of sc.mines || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
     this.raidV = this.units.filter(u => u.raid).reduce((s, u) => s + UT[u.k].price, 0);
     if (this.carry) this.applyCarry();
     /* в учебной операции расставлять нечего: бой начинается сразу, без кнопки «Готов» */
-    if (sc.tutorial) for (const st of this.seats) this.ready[st.id] = true;
+    if (sc.tutorial || sc.exam) for (const st of this.seats) this.ready[st.id] = true;
     this.events = [];
     this.log('*', `${sc.n}. ${sc.brief}`, 'hq');
     if (this.carryNote) this.log(this.carry.side, this.carryNote, 'g');

@@ -367,7 +367,7 @@ function drawDowned(f, k) {
   }
   if (k < .92) {
     cx.save(); cx.translate(x, y); cx.rotate(dir * (.4 + k * 1.1)); if (dir < 0) cx.scale(-1, 1);
-    drawIcon(cx, 'jet', 0, 0, W * .8, 'enemy', false, 1 - k * .3);
+    drawIcon(cx, 'jet', 0, 0, W * .8, f.theme || 'enemy', false, 1 - k * .3);
     cx.restore();
     cx.save(); cx.globalCompositeOperation = 'lighter';
     const g = cx.createRadialGradient(x, y, 0, x, y, 9); g.addColorStop(0, 'rgba(255,200,110,.9)'); g.addColorStop(1, 'rgba(255,90,30,0)');

@@ -63,8 +63,9 @@ function overlayLayer() {
   OVL.empty = !F && !fogOn;
   if (F) {
     o.save(); o.scale(FK, FK);
-    o.fillStyle = 'rgba(108,195,255,.05)'; o.fill(F.fill[own]);
-    o.fillStyle = 'rgba(255,91,71,.07)'; o.fill(F.fill[3 - own]);
+    /* земля Альянса — синим, Союза — красным, за кого бы ни играл зритель */
+    o.fillStyle = 'rgba(108,195,255,.05)'; o.fill(F.fill[1]);
+    o.fillStyle = 'rgba(255,91,71,.07)'; o.fill(F.fill[2]);
     o.restore();
   }
   FOG_EDGE = null;
@@ -288,8 +289,8 @@ function drawCmdSectors() {
 
 /* ---------- территория и линия фронта ----------
    Земля каждой стороны чуть подкрашена (общий слой с туманом, overlayLayer).
-   Линия фронта — двухцветная лента по границе территорий: со своей стороны
-   синяя, со стороны противника красная. Углы клеток сглажены, чтобы лента
+   Линия фронта — двухцветная лента по границе территорий: со стороны Альянса
+   синяя, со стороны Союза красная. Углы клеток сглажены, чтобы лента
    шла плавно, а не пилой. Там, где у линии стоят части, лента толще; где
    части сторон стоят друг против друга — самая толстая и пульсирует.
    Котлы (острова земли без источников снабжения) обведены бегущим пунктиром. */
@@ -360,7 +361,7 @@ function buildRibbon() {
 function drawFront() {
   const F = buildRibbon();
   if (F) {
-    const s = G.view.s, own = G.spec ? 1 : G.side === N ? 1 : 2;
+    const s = G.view.s;
     cx.save();
     cx.translate(CW / 2, CH / 2); cx.scale(s, s); cx.translate(-G.view.x, -G.view.y);
     cx.lineJoin = 'round'; cx.lineCap = 'round';
@@ -369,7 +370,7 @@ function drawFront() {
     const pulse = .78 + .22 * Math.sin(ANIM * 4);
     for (const t of [1, 2]) for (let hq = 0; hq < 3; hq++) {
       const a = hq === 2 ? pulse : hq === 1 ? .9 : .72;
-      cx.strokeStyle = t === own ? `rgba(108,195,255,${a})` : `rgba(255,107,85,${a})`;
+      cx.strokeStyle = t === 1 ? `rgba(108,195,255,${a})` : `rgba(255,107,85,${a})`;
       cx.lineWidth = Math.max(RIB_OFF[hq] * 2, 2 / s); cx.stroke(F.band[t][hq]);
     }
     cx.restore();
@@ -472,7 +473,7 @@ function drawWorks() {
 
 /* ---------- точки: контур клетки, табличка с названием и весом ---------- */
 function drawPoints() {
-  const s = G.view.s, own0 = G.spec ? N : G.side;
+  const s = G.view.s;
   for (const p of G.pts) {
     const q = w2s(H.center(p.hex));
     if (!onScreen(q, 80)) continue;
@@ -490,7 +491,7 @@ function drawPoints() {
     cx.fillStyle = 'rgba(8,13,18,.9)'; rr(cx, q.x - pw / 2, ty, pw, ph, 4); cx.fill();
     cx.fillStyle = col; cx.save(); rr(cx, q.x - pw / 2, ty, pw, ph, 4); cx.clip(); cx.fillRect(q.x - pw / 2, ty, 4, ph); cx.restore();
     cx.strokeStyle = 'rgba(255,255,255,.1)'; cx.lineWidth = 1; rr(cx, q.x - pw / 2 + .5, ty + .5, pw - 1, ph - 1, 4); cx.stroke();
-    cx.fillStyle = !p.owner ? '#e8e8da' : p.owner === own0 ? '#dcecf6' : '#ffc9b8';
+    cx.fillStyle = !p.owner ? '#e8e8da' : p.owner === N ? '#dcecf6' : '#ffc9b8';
     cx.fillText(p.n, q.x + 2, ty + ph - 5.5);
     /* вес — точки под табличкой */
     const n = Math.round(p.w * 2) / 2, dots = Math.ceil(n);
@@ -710,7 +711,7 @@ function drawRecap() {
   };
   cx.save(); cx.globalAlpha = al;
   for (const x of RECAP.items) {
-    if (x.k === 'atk') { arrowLine(c(x.a), c(x.b), '#ff6b55', clamp(s * 1.2, 4, 8), { from: R * .45, to: R * .6 }); if (x.ld) tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, '−' + x.ld, '#ff8f80') }
+    if (x.k === 'atk') { arrowLine(c(x.a), c(x.b), G.side === N ? '#ff6b55' : '#6cc3ff', clamp(s * 1.2, 4, 8), { from: R * .45, to: R * .6 }); if (x.ld) tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, '−' + x.ld, '#ff8f80') }
     else if (x.k === 'fire' || x.k === 'probe') { arrowLine(c(x.a), c(x.b), '#ffb070', clamp(s * .8, 3, 5), { from: R * .45, to: R * .6, dash: [6, 5] }); if (x.ld || x.su) tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, (x.ld ? '−' + x.ld + ' ' : '') + (x.su ? '⚡' + x.su : ''), '#ffb070') }
     else if (x.k === 'amb') { arrowLine(c(x.a), c(x.b), '#9fe0a8', clamp(s * .8, 3, 5), { from: R * .45, to: R * .6 }); tag({ x: c(x.b).x, y: c(x.b).y - R * .95 }, 'засада −' + x.ld, '#9fe0a8') }
     else if (x.k === 'shell') arrowLine(c(x.a), c(x.b), x.mine ? '#9fd3f5' : '#ffb070', 2.2, { from: R * .4, to: R * .5, dash: [2, 6], alpha: .85 });
@@ -831,7 +832,7 @@ function startAnim(e) {
   } else if (e.e === 'air') {
     const p = center(e.hex), mine = G.spec ? e.side !== S : e.side === undefined || e.side === G.side;
     const dir = (e.side || G.side) === S ? -1 : 1;
-    fxAdd({ k: 'plane', p, t0: now, d: 1.4 * k, dir, icon: e.kind === 'drop' ? 'jet' : 'jet', theme: mine ? 'own' : 'enemy' });
+    fxAdd({ k: 'plane', p, t0: now, d: 1.4 * k, dir, icon: e.kind === 'drop' ? 'jet' : 'jet', theme: (e.side || G.side) === S ? 'enemy' : 'own' });
     if (e.kind === 'drop') { fxAdd({ k: 'drop', p, t0: now, d: 1.8 * k }); floatText(p, 'груз сброшен', '#9fe0a8') }
     if (e.kind === 'recon') floatText(p, 'авиаразведка', '#9fd3f5');
     ANIMS.cur = { end: now + 1 * k };
@@ -840,7 +841,9 @@ function startAnim(e) {
     const A = center(e.hex), B = center(e.target);
     for (let i = 0; i < (e.down ? 5 : 3); i++) fxAdd({ k: 'tracer', a: A, b: { x: B.x + (Math.random() - .5) * 6, y: B.y - 6 - Math.random() * 4 }, t0: now + i * .1, d: .7, col: '200,230,255', seed: Math.random() * 99 });
     for (let i = 0; i < (e.down ? 8 : 5); i++) fxAdd({ k: 'flak', x: B.x + (Math.random() - .5) * 8, y: B.y - 5 - Math.random() * 5, t0: now + .2 + i * .08, d: 1.2, seed: Math.random() * 9 });
-    if (e.down) { fxAdd({ k: 'downed', p: { x: B.x, y: B.y - 7 }, t0: now + .35, d: 1.6 * k, dir: Math.random() < .5 ? -1 : 1 }); floatText(B, 'штурмовик сбит', '#9fd3f5', 1) }
+    /* сбитый штурмовик — стороны, противной зенитчикам */
+    const aaU = G.units.find(x => x.hex === e.hex);
+    if (e.down) { fxAdd({ k: 'downed', p: { x: B.x, y: B.y - 7 }, t0: now + .35, d: 1.6 * k, dir: Math.random() < .5 ? -1 : 1, theme: aaU && aaU.side === S ? 'own' : 'enemy' }); floatText(B, 'штурмовик сбит', '#9fd3f5', 1) }
     else floatText({ x: B.x, y: B.y - 3 }, 'ПВО: удар слабее', '#9fd3f5');
     ANIMS.cur = { end: now + (e.down ? .9 : .5) * k };
   } else if (e.e === 'turn') {
@@ -994,15 +997,15 @@ function drawMini() {
     if (G.vis && !G.spec && G.phase === 'battle') { g.fillStyle = 'rgba(4,8,12,.42)'; g.beginPath(); for (let hx = 0; hx < H.NH; hx++) if (!G.vis.has(hx)) { const c = H.center(hx); g.rect((c.x - Hex.HW / 2) * kk, (c.y - Hex.R) * kk, Hex.HW * kk + .6, Hex.VS * kk + .8) } g.fill() }
     const F = buildFront();
     if (F) {
-      const own = G.spec ? 1 : G.side === N ? 1 : 2;
       g.save(); g.scale(kk, kk);
-      g.fillStyle = 'rgba(255,91,71,.16)'; g.fill(F.fill[3 - own]);
+      g.fillStyle = 'rgba(108,195,255,.08)'; g.fill(F.fill[1]);
+      g.fillStyle = 'rgba(255,91,71,.16)'; g.fill(F.fill[2]);
       g.strokeStyle = '#f2b33d'; g.lineWidth = 1.6 * DPR / kk; g.stroke(F.line);
       g.restore();
     }
     const d = DPR;
     for (const p of G.pts) { const c = H.center(p.hex), z = (p.city ? 5 : 3.5) * d; g.fillStyle = !p.owner ? '#ccc' : p.owner === N ? '#6cc3ff' : '#ff8a72'; g.strokeStyle = '#000'; g.lineWidth = d; g.fillRect(c.x * kk - z / 2, c.y * kk - z / 2, z, z); g.strokeRect(c.x * kk - z / 2, c.y * kk - z / 2, z, z) }
-    for (const u of G.units) { const c = H.center(u.hex); g.fillStyle = (G.spec ? u.side === S : u.side !== G.side) ? '#ff5b47' : '#bfe6ff'; g.fillRect(c.x * kk - 1.5 * d, c.y * kk - 1.5 * d, 3 * d, 3 * d) }
+    for (const u of G.units) { const c = H.center(u.hex); g.fillStyle = u.side === S ? '#ff5b47' : !G.spec && u.side === G.side && G.mySeat && u.seat && u.seat !== G.mySeat ? '#7ee0a0' : '#bfe6ff'; g.fillRect(c.x * kk - 1.5 * d, c.y * kk - 1.5 * d, 3 * d, 3 * d) }
   }
   cx.save();
   cx.fillStyle = 'rgba(0,0,0,.5)'; rr(cx, m.x - 4, m.y - 4, m.w + 10, m.h + 10, 8); cx.fill();

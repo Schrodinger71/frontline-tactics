@@ -479,7 +479,7 @@ function specHTML(u, T, canAttach) {
 }
 function unitCard(u) {
   const T = utFor(u.side)[u.k], own = myUnit(u) || allyUnit(u) || G.spec, hx = H.build(G.mapId).hexes[u.hex], fort = new Map(G.forts || []).get(u.hex);
-  const head = `<div class="uhead">${iconHTML(unitIcon(u.k, u.side), 'ic big', own && !(G.spec && u.side === S) ? 'own' : 'enemy')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
+  const head = `<div class="uhead">${iconHTML(unitIcon(u.k, u.side), 'ic big', u.side === S ? 'enemy' : 'own')}<div><h3>${u.cs ? '«' + esc(u.cs) + '»' : esc(T.sh)}</h3><div class="sub">${esc(T.n)}${
   allyUnit(u) ? ` <i class="allytag">союзник${seatName(u.seat) ? ' · ' + esc(seatName(u.seat)) : ''}</i>` : ''}</div>
     ${G.spec ? `<div class="sub ${u.side === N ? 'sdn' : 'sds'}">${SIDE_NAME[u.side]}</div>` : ''}</div></div>`;
   const strCls = u.str <= 3 ? 'var(--rd)' : u.str <= 6 ? 'var(--ac)' : 'var(--gn)';
@@ -704,8 +704,10 @@ function renderTip(sp) {
     const o = t.odds, a = selUnit(), e = G.units.find(x => x.id === t.id);
     if (!a || !e) { tip.hidden = true; return }
     const ka = o.A / (o.A + o.D);
+    /* полоса соотношения — в цветах сторон: Альянс синий, Союз красный */
+    const BL = 'linear-gradient(90deg,#3f8fc4,#6cc3ff)', RD = 'linear-gradient(90deg,#ff6b55,#b8392a)', ga = a.side === S ? RD : BL, gd = a.side === S ? BL : RD;
     h = `<b>Атака: ${esc(unitName(a.side, a.k))} → ${esc(unitName(e.side, e.k))}</b>
-      <div class="ob" title="Соотношение сил"><i style="width:${(ka * 100).toFixed(1)}%;background:linear-gradient(90deg,#3f8fc4,#6cc3ff)"></i><i style="width:${((1 - ka) * 100).toFixed(1)}%;background:linear-gradient(90deg,#ff6b55,#b8392a)"></i></div>
+      <div class="ob" title="Соотношение сил"><i style="width:${(ka * 100).toFixed(1)}%;background:${ga}"></i><i style="width:${((1 - ka) * 100).toFixed(1)}%;background:${gd}"></i></div>
       <div class="row"><span>Сила атаки</span><b>${o.A.toFixed(1)}</b></div><div class="row"><span>Оборона</span><b>${o.D.toFixed(1)}</b></div>
       <div class="row big"><span>Соотношение</span><b style="color:${t.col}">${o.r.toFixed(2).replace('.', ',')} : 1</b></div>
       ${o.mods.map(m => `<div class="row mod ${(m.who === 'a') === (m.v > 1) ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>${m.who === 'a' ? 'атака' : 'оборона'} ×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}

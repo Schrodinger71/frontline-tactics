@@ -14,11 +14,13 @@
    Под фишкой — тень, у выбранной — золотое свечение.
    ============================================================ */
 
+/* Цвет — по стороне, а не «свой/чужой»: Альянс всегда синий, Союз всегда красный,
+   за кого бы ни играл зритель. Союзник (своя сторона, другой командир) — зелёный. */
 const SIDE_TONE = {
-  own: { top: '#5fb6f0', g0: 'rgba(30,48,62,.96)', g1: 'rgba(10,18,26,.96)', bd: '#6cc3ff', txt: '#e6f3fb', box: '#16354a', gl: '#d6efff' },
+  n: { top: '#5fb6f0', g0: 'rgba(30,48,62,.96)', g1: 'rgba(10,18,26,.96)', bd: '#6cc3ff', txt: '#e6f3fb', box: '#16354a', gl: '#d6efff' },
   /* союзник: та же сторона, но другой командир — зелёным, чтобы не путать со своими */
   ally: { top: '#6fd18d', g0: 'rgba(26,52,36,.96)', g1: 'rgba(10,22,15,.96)', bd: '#7ee0a0', txt: '#e2f7e8', box: '#1b4430', gl: '#d9f7e2' },
-  enemy: { top: '#ff6b55', g0: 'rgba(64,30,24,.96)', g1: 'rgba(26,12,10,.96)', bd: '#ff8a72', txt: '#fde6dc', box: '#5a2219', gl: '#ffe0d6' },
+  s: { top: '#ff6b55', g0: 'rgba(64,30,24,.96)', g1: 'rgba(26,12,10,.96)', bd: '#ff8a72', txt: '#fde6dc', box: '#5a2219', gl: '#ffe0d6' },
   /* призрак — где противника видели в последний раз: серый, без цвета стороны */
   ghost: { top: '#8a8f94', g0: 'rgba(52,56,60,.6)', g1: 'rgba(26,28,31,.6)', bd: '#a4aab0', txt: '#d8dde2', box: 'rgba(52,56,60,.6)', gl: '#c4cad0' }
 };
@@ -55,7 +57,7 @@ function counter(u, q, alpha, scale) {
   const enemy = G.spec ? u.side === S : u.side !== G.side, T = utFor(u.side)[u.k] || UT.inf, ghost = u.ghost;
   /* союзная часть — своей стороны, но под другим командиром */
   const ally = !enemy && !ghost && !G.spec && G.mySeat && u.seat && u.seat !== G.mySeat;
-  const tone = SIDE_TONE[ghost ? 'ghost' : enemy ? 'enemy' : ally ? 'ally' : 'own'];
+  const tone = SIDE_TONE[ghost ? 'ghost' : ally ? 'ally' : u.side === S ? 's' : 'n'];
   const sel = u.id === G.sel && !ghost;
   cx.save();
   if (alpha !== undefined) cx.globalAlpha = alpha;
@@ -106,7 +108,7 @@ function counter(u, q, alpha, scale) {
   cx.beginPath(); cx.moveTo(x0 + R, y0 + band + 1.5); cx.lineTo(x0 + W - R, y0 + band + 1.5); cx.stroke();
   const bodyY = y0 + band, bodyH = H - band;
   /* род войск: вблизи — силуэт техники, на среднем масштабе — условный знак справа от цифры */
-  const ik = unitIcon(u.k, u.side), theme = ghost ? 'ghost' : enemy ? 'enemy' : 'own';
+  const ik = unitIcon(u.k, u.side), theme = ghost ? 'ghost' : u.side === S ? 'enemy' : 'own';
   if (big) drawIcon(cx, ik, q.x, bodyY + bodyH * .4, W * .7, theme, u.side === S);
   else typeGlyph(u.k, x0 + W * .7, bodyY + bodyH * .46, W * .36, bodyH * .5, tone.gl);
   if (ghost) {

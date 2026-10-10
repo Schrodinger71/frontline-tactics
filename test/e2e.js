@@ -220,6 +220,43 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
     console.log('сохранение и состав: ok');
   }
 
+  /* чат и метки: общий — всем, командный и метки — только своей стороне; текст чистится */
+  {
+    const host = client(port); await host.open;
+    host.send({ t: 'create', mode: 'both', side: 'n', map: 'valley', seats: { n: ['me', 'open'], s: ['open'] }, name: 'Первый' });
+    const hj = await host.wait(m => m.t === 'joined');
+    const mate = client(port), foe = client(port), view = client(port);
+    await Promise.all([mate.open, foe.open, view.open]);
+    mate.send({ t: 'join', room: hj.room, side: 'n', name: 'Второй' }); await mate.wait(m => m.t === 'joined');
+    foe.send({ t: 'join', room: hj.room, side: 's', name: 'Враг' }); await foe.wait(m => m.t === 'joined');
+    view.send({ t: 'join', room: hj.room, spec: true }); await view.wait(m => m.t === 'joined');
+    host.send({ t: 'chat', to: 'all', text: '  привет\u200b <b>всем</b>\n' + 'я'.repeat(400) });
+    const all = await foe.wait(m => m.t === 'chat');
+    assert(all.to === 'all' && all.name === 'Первый' && all.side === 'n' && all.text.startsWith('привет <b>всем</b> я') && all.text.length === 200, 'общий чат: текст вычищен и обрезан');
+    await view.wait(m => m.t === 'chat');
+    host.send({ t: 'chat', to: 'team', text: 'атакую мост' });
+    const tm = await mate.wait(m => m.t === 'chat' && m.to === 'team');
+    assert.strictEqual(tm.text, 'атакую мост');
+    host.send({ t: 'mark', hex: 100, k: 'atk' }); host.send({ t: 'mark', hex: -5, k: 'atk' }); host.send({ t: 'mark', hex: 101, k: 'zzz' });
+    const mk = await mate.wait(m => m.t === 'mark');
+    assert(mk.hex === 100 && mk.k === 'atk' && mk.name === 'Первый', 'метка дошла союзнику');
+    await mate.wait(m => m.t === 'mark' && m.hex === 101 && m.k === 'look');
+    view.send({ t: 'mark', hex: 5, k: 'atk' }); host.send({ t: 'chat', text: '   ' }); host.send({ t: 'chat', text: 12345 });
+    await sleep(200);
+    assert(!foe.msgs.some(m => m.t === 'mark') && !view.msgs.some(m => m.t === 'mark'), 'метки противнику и зрителю не уходят');
+    assert(!foe.msgs.some(m => m.t === 'chat' && m.to === 'team') && !view.msgs.some(m => m.t === 'chat' && m.to === 'team'), 'командный чат — только своим');
+    assert.strictEqual(mate.msgs.filter(m => m.t === 'mark').length, 2, 'мусорная метка и метка зрителя отброшены');
+    assert.strictEqual(foe.msgs.filter(m => m.t === 'chat').length, 1, 'пустые и нестроковые сообщения отброшены');
+    /* вошедший позже видит общий чат, но не чужой командный */
+    const late = client(port); await late.open;
+    late.send({ t: 'join', room: hj.room, spec: true }); await late.wait(m => m.t === 'joined');
+    await late.wait(m => m.t === 'chat');
+    await sleep(100);
+    assert(!late.msgs.some(m => m.t === 'chat' && m.to === 'team'), 'история командного чата зрителю не уходит');
+    for (const c of [host, mate, foe, view, late]) c.ws.close();
+    console.log('чат и метки: ok');
+  }
+
   for (const c of [a, p1, p2, sp, w]) c.ws.close();
   server.close();
   for (const r of rooms.values()) r.close();

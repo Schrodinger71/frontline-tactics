@@ -15,11 +15,16 @@
      { t:'load', data, seat?, side? }            новая партия из сохранения (data — сжатый снимок)
      { t:'seat', op:'add', side, who }           хозяин: новое место на стороне — 'bot' | 'open'
      { t:'seat', op:'who', id, who }             хозяин: свободное место — боту или открыть для игрока
+     { t:'chat', to:'all'|'team', text }         сообщение в общий чат или своей команде
+     { t:'mark', hex, k:'atk'|'def'|'look' }     метка на карте для своей команды
+     create может нести carry — перенос из прошлой операции кампании (только против ботов)
    сервер → клиент:
      { t:'joined', room, mode, side, vsBot, watch, bots, host }
      { t:'snap', v }                             снимок стороны (game/views.js)
      { t:'ev', list }                            события хода — клиент проигрывает по очереди
      { t:'res', id, res }   { t:'seats', seats, note }   { t:'error', msg }
+     { t:'chat', to, side, name, text }   { t:'mark', hex, k, name }
+     { t:'replay', frames }                      после конца партии: кадры по ходам для перемотки
    ============================================================ */
 const http = require('http');
 const fs = require('fs');
@@ -107,7 +112,7 @@ function createServer() {
         leave();
         const side = m.side === S ? S : N;
         const map = typeof m.map === 'string' && Object.prototype.hasOwnProperty.call(MAPS, m.map) ? m.map : 'valley';
-        const room = new Room(newCode(), m.mode, side, !!m.vsBot, !!m.watch, map, m.seats);
+        const room = new Room(newCode(), m.mode, side, !!m.vsBot, !!m.watch, map, m.seats, m.carry && SCEN[m.mode] ? { carry: m.carry } : null);
         rooms.set(room.id, room);
         client.name = cleanName(m.name);
         room.join(client, m.watch ? 'spec' : side);
@@ -130,6 +135,8 @@ function createServer() {
         client.room.act(client, m.id, m.a);
       } else if (m.t === 'pace') { if (client.room) client.room.setPace(client, m.value) }
       else if (m.t === 'seat') { if (client.room) client.room.seatOp(client, m) }
+      else if (m.t === 'chat') { if (client.room && !tooOften(client, '_chat', 6, 5000)) client.room.chat(client, m) }
+      else if (m.t === 'mark') { if (client.room && !tooOften(client, '_mark', 8, 5000)) client.room.mark(client, m) }
       else if (m.t === 'save') {
         const room = client.room;
         if (!room || !room.engine || !client.seat || room.watch) return client.send({ t: 'error', msg: 'Сохранять может только игрок за столом' });

@@ -128,6 +128,9 @@ class Game {
     this.stats = { n: this.newStats(), s: this.newStats() };
     this.history = [];
     this.limit = W.TURN_LIMIT;
+    this.frames = [];                 /* кадры для повтора партии: по одному на ход (replayFrame) */
+    this.undoRec = null;              /* последнее «тихое» движение, которое ещё можно отменить */
+    this.carry = Game.cleanCarry(opts && opts.carry, creatorSide);
     /* штаб каждой стороне — бесплатно, в глубине */
     /* штаб каждому командиру, разнесены по фронту: так сторона с несколькими
        командирами сразу делится на направления */
@@ -145,6 +148,20 @@ class Game {
     this.log('*', 'Расстановка: купите части во вкладке «Закупка» и поставьте их в своей зоне. Потом — «Готов».', 'hq');
     if (require('./scenarios').SCEN[mode]) this.applyScenario(mode);
     this.initTerritory();
+  }
+  /** Перенос из прошлой операции приходит от клиента — не верим ни одному полю:
+      очки зажаты, типы и специалисты сверены с таблицами, позывной — по белому списку. */
+  static cleanCarry(raw, side) {
+    if (!raw || typeof raw !== 'object') return null;
+    const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+    const vets = [];
+    for (const v of Array.isArray(raw.vets) ? raw.vets.slice(0, 24) : []) {
+      if (!v || typeof v !== 'object' || !own(UT, v.k) || UT[v.k].cmd) continue;
+      const xp = Number(v.xp), cs = typeof v.cs === 'string' ? v.cs.replace(/[^A-Za-z\u0410-\u044F\u0401\u04510-9 -]/g, '').slice(0, 24) : '';
+      vets.push({ k: v.k, xp: Number.isFinite(xp) ? clamp(xp, 0, 1) : 0, att: own(W.SPECS, v.att) && W.SPECS[v.att].for(UT[v.k]) ? v.att : null, cs: cs || null });
+    }
+    const bonus = Number.isFinite(+raw.bonus) ? clamp(Math.round(+raw.bonus), 0, 300) : 0;
+    return vets.length || bonus ? { side, bonus, vets } : null;
   }
   newStats() { return { spent: 0, lost: {}, killed: {}, lostV: 0, killedV: 0, caps: 0, routs: 0, prisoners: 0 } }
   makeCommander() { const trait = pick(this.rnd, TRAITS); return { trait, name: pick(this.rnd, GEN_FIRST) + ' ' + pick(this.rnd, GEN_LAST), aggr: AGGR[trait] } }
@@ -313,10 +330,13 @@ class Game {
     }
     if (side !== this.active) return { ok: false, error: 'сейчас ход противника' };
     if (this.done[seat]) return { ok: false, error: 'вы уже закончили ход' };
-    if (t === 'end') return this.seatEnd(seat);
-    if (t === 'buy') return this.buy(seat, a.k, +a.hex, false);
-    if (t === 'air') return this.airAct(seat, a.kind, +a.hex);
-    if (t === 'order') return this.order(seat, a.k, a);
+    if (t === 'end') { this.undoRec = null; return this.seatEnd(seat) }
+    if (t === 'buy') { this.undoRec = null; return this.buy(seat, a.k, +a.hex, false) }
+    if (t === 'air') { this.undoRec = null; return this.airAct(seat, a.kind, +a.hex) }
+    if (t === 'order') { this.undoRec = null; return this.order(seat, a.k, a) }
+    /* отменить можно только самое последнее действие: любое другое стирает запись */
+    const undo = this.undoRec; this.undoRec = null;
+    if (t === 'undo') return this.undoMove(seat, undo);
     const u = this.byId(+a.id);
     if (!u || u.side !== side) return { ok: false, error: 'нет такой части' };
     if (u.seat && u.seat !== seat) return { ok: false, error: 'часть другого командира' };
@@ -575,7 +595,19 @@ class Game {
     /* фронт — по тому, как встали: зоны расстановки, точки и части */
     this.initTerritory();
     this.updateSupply(N); this.updateSupply(S);
+    this.replayFrame();
     this.startSide(this.active);
+  }
+  /** кадр для повтора партии: части, территория, владельцы точек, перевес — без тумана,
+      показывается только после конца партии */
+  replayFrame() {
+    if (this.frames.length > 400) return;
+    this.frames.push({
+      t: this.turn, s: +this.score.toFixed(1),
+      u: this.units.filter(u => u.str > 0).map(u => [u.id, u.k, u.side, u.hex, u.str, u.rem ? 1 : 0]),
+      terr: String.fromCharCode(...this.terr.map(v => 48 + v)),
+      p: this.pts.map(p => p.owner || '')
+    });
   }
 
   /* ---------- ход стороны ---------- */
@@ -642,6 +674,11 @@ class Game {
     mySeats.forEach((st, i) => { this.income[st.id] = parts[i]; this.budget[st.id] += parts[i] });
     this.updateVision(side); this.updateVision(oppOf(side));
     this.ev({ e: 'turn', to: '*', side, turn: this.turn, clock: turnClock(this.turn), night });
+    /* учебная операция: подсказка на этот ход — в журнал ученику (панель клиент берёт из снимка, scen.tip) */
+    if (this.scen && this.scen.tips && side === N) {
+      const i = this.turn - this.scen.start, tip = this.scen.tips[i];
+      if (tip) this.log(N, tip, 'hq');
+    }
   }
 
   endTurn() {
@@ -716,7 +753,7 @@ class Game {
     return { ok: true };
   }
   endRound() {
-    const d = this.heldWeight(N) - this.heldWeight(S);
+    const d = this.heldWeight(N) - this.heldWeight(S) + this.holdBias();
     this.score = clamp(this.score + d * W.SCORE_RATE, -100, 100);
     this.history.push({ turn: this.turn, s: +this.score.toFixed(1), n: this.forceValue(N), e: this.forceValue(S) });
     this.turn++;
@@ -729,7 +766,13 @@ class Game {
     }
     this.scenarioRound();
     this.rebuildFront();
+    this.replayFrame();
     this.checkEnd();
+  }
+  /** время работает на обороняющегося: добавка к разнице весов за ход (со знаком стороны N) */
+  holdBias() {
+    if (this.scen) return 0;
+    return this.role.n === 'defender' ? W.DEFENDER_HOLD : this.role.s === 'defender' ? -W.DEFENDER_HOLD : 0;
   }
 
   /* ---------- движение ---------- */
@@ -741,6 +784,8 @@ class Game {
     const wasRem = !!u.rem;
     if (!r || to === u.hex) return { ok: false, error: 'туда не дойти' };
     if (r.through) return { ok: false, error: 'клетка занята своей частью' };
+    const before = { id: u.id, seat: u.seat || u.side, turn: this.turn, hex: u.hex, mp: u.mp, moved: u.moved, ent: u.ent,
+      terr: Uint8Array.from(this.terr), owners: this.pts.map(p => p.owner), count: this.units.length, seen: this.seenIds(u.side) };
     const path = Rules.pathTo(reach, to);
     /* идём по клеткам: невидимый противник останавливает, мины рвутся */
     const done = [u.hex];
@@ -779,7 +824,28 @@ class Game {
     this.capture(u);
     if (u.str > 0) this.militia(u);
     this.updateVision(u.side); this.updateVision(oppOf(u.side));
+    /* «тихий» ход — без боя, остановок, захватов и новых сведений о противнике — можно вернуть */
+    const quiet = !stopped && u.str > 0 && this.units.length === before.count && this.pts.every((p, i) => p.owner === before.owners[i]) &&
+      this.seenIds(u.side).every(id => before.seen.includes(id));
+    this.undoRec = quiet ? before : null;
     return { ok: true, stopped };
+  }
+  /** номера видимых стороне частей противника */
+  seenIds(side) { return this.units.filter(e => e.side !== side && e.str > 0 && this.seen(side, e)).map(e => e.id) }
+  /** Отмена последнего движения. Только своё, только в этот же ход и только если после
+      него ничего не делали (Game.act стирает запись). Возвращаются клетка, очки хода,
+      окоп и территория — как было до хода. */
+  undoMove(seat, rec) {
+    const u = rec && this.byId(rec.id);
+    if (!rec || !u || rec.seat !== seat || rec.turn !== this.turn) return { ok: false, error: 'отменять нечего: вернуть можно только последний ход без боя и новых сведений' };
+    if (this.unitAt(rec.hex) && this.unitAt(rec.hex) !== u) return { ok: false, error: 'прежняя клетка занята' };
+    const from = u.hex;
+    u.hex = rec.hex; u.mp = rec.mp; u.moved = rec.moved; u.ent = rec.ent;
+    this.terr.set(rec.terr);
+    this.rebuildFront();
+    this.ev({ e: 'move', to: '*', id: u.id, side: u.side, path: [from, rec.hex], k: u.k, undo: 1 });
+    this.updateVision(u.side); this.updateVision(oppOf(u.side));
+    return { ok: true };
   }
   capture(u) {
     const p = this.ptAt(u.hex);
@@ -1599,6 +1665,7 @@ class Game {
     }
     if (!over) return;
     this.over = over;
+    this.replayFrame();
     this.history.push({ turn: this.turn, s: +this.score.toFixed(1), n: this.forceValue(N), e: this.forceValue(S) });
     this.log('*', over.t, 'crit');
     this.ev({ e: 'over', to: '*', w: over.w, t: over.t });

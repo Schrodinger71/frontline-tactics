@@ -171,6 +171,10 @@
   /** перевес за ход: разница весов точек × SCORE_RATE; ±100 — победа */
   const SCORE_RATE = 1.8;
   const TURN_LIMIT = 30;            /* 5 суток */
+  /** Наступление и оборона: время работает на обороняющегося. Каждый ход перевес сдвигается
+      к нему так, будто он держит на DEFENDER_HOLD веса точек больше: наступающему мало
+      «не проиграть» — он должен забрать землю, иначе к сроку победит оборона. */
+  const DEFENDER_HOLD = 2.5;
   const MAX_UNITS = 28;
   /** зоны расстановки: столбцы гексов от своего края */
   const DEPLOY_X = { n: [0, 118], s: [182, WW] };
@@ -296,7 +300,7 @@
   const api = {
     GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
     FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, MAX_SEATS, HQ_CAPTURE_CP, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
-    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, FIREFIGHT, PREP, PROBE, REMNANT, DEPOT, ORDERS, ORDER_LIST,
+    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, DEFENDER_HOLD, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, FIREFIGHT, PREP, PROBE, REMNANT, DEPOT, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount
   };

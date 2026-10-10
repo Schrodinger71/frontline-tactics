@@ -80,7 +80,7 @@ function netSend(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
 function act(a) { netSend({ t: 'act', id: ++seq, a }) }
 
 function onMsg(m) {
-  if (m.t === 'joined') return onJoined(m);
+  if (m.t === 'joined') { roomReset(); return onJoined(m) }
   if (m.t === 'rooms') {
     M.rooms = Array.isArray(m.list) ? m.list : [];
     /* перерисовываем, только если список изменился: иначе кнопки под курсором мигали бы раз в 3 секунды */
@@ -92,7 +92,12 @@ function onMsg(m) {
     if (nc) { const open = M.rooms.filter(r => r.free > 0).length; nc.hidden = !open; nc.innerHTML = `<i></i>${open} ${open === 1 ? 'открыта' : 'открыто'}` }
     return;
   }
+  if (m.t === 'chat') { chatAdd(m); return }
+  if (m.t === 'mark') { markAdd(m); return }
+  if (m.t === 'replay') { G.replayFrames = Array.isArray(m.frames) && m.frames.length > 1 ? m.frames : null; if (G.replayFrames && G.over && !$('#modal').hidden && !G.rp) showEnd(); return }
   if (m.t === 'snap') {
+    /* идёт повтор партии — живой снимок подождёт до его закрытия */
+    if (G.rp) { G.rp.snap = m.v; return }
     /* вкладка скрыта — анимации не идут: показываем итог сразу */
     if (document.hidden || G.first) { skipAnims(); applySnapshot(m.v) }
     else if (animBusy()) { G.pendingSnap = m.v; G.pendingAt = G.pendingAt || performance.now() }
@@ -204,11 +209,15 @@ function applySnapshot(v) {
     /* снабжение: '0'–'9','a' — поле, 'A'–'K' — клетка на линии снабжения (дорога) */
     sv: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? c.charCodeAt(0) - 65 : c === 'a' ? 10 : c.charCodeAt(0) - 48) : null,
     svNet: v.sv ? Uint8Array.from(v.sv, c => c >= 'A' && c <= 'K' ? 1 : 0) : null, svStr: v.sv || '',
-    svSrc: v.svSrc || [], pockets: v.pockets || [],
+    svSrc: v.svSrc || [], pockets: v.pockets || [], undo: v.undo || null, hold: v.hold || 0,
     br: v.br, mines: v.mines, frontY: v.frontY, turn: v.turn, active: v.active, clock: v.clock, day: v.day, night: v.night, weather: v.weather,
     budget: v.budget, income: v.income, air: v.air, score: v.score, scen: v.scen, stats: v.stats, enemyStats: v.enemyStats, history: v.history,
     commanders: v.commanders, role: v.role, over: v.over, limit: v.limit, mode0: v.mode, ready: v.ready
   });
+  G.lastSnap = v;
+  /* обучение: подсказка нового хода */
+  const tip = v.scen && v.scen.tip;
+  if (tip && G._tipN !== tip.n) { G._tipN = tip.n; showTip(tip) } else if (!tip && !$('#tutor').hidden && (!v.scen || v.over)) $('#tutor').hidden = true;
   ANIMS.hidden.clear(); ANIMS.pos.clear();
   G.visV++;
   G.isMyTurn = !G.spec && G.phase === 'battle' && G.active === G.side && !G.over;
@@ -380,7 +389,9 @@ function renderTop() {
     const h = G.history || [];
     const raw = h.length >= 2 ? h[h.length - 1].s - h[h.length - 2].s : 0;
     const per = (G.spec || G.side === N) ? raw : -raw;
-    $('#hdScoreLbl').textContent = 'Перевес';
+    /* наступление и оборона: время работает на обороняющегося — сдвиг виден в подписи */
+    const hold = (G.spec || G.side === N ? 1 : -1) * (G.hold || 0);
+    $('#hdScoreLbl').textContent = hold ? `Перевес · оборона ${hold > 0 ? '+' : '−'}${String(Math.abs(hold)).replace('.', ',')}/ход` : 'Перевес';
     $('#hdScore').textContent = (mine > 0 ? '+' : '') + Math.round(mine) + ' из 100'
       + (Math.abs(per) >= .5 ? `  (${per > 0 ? '+' : ''}${Math.round(per)}/ход)` : '');
     $('#hdScore').className = mine > 3 ? 'good' : mine < -3 ? 'bad' : '';
@@ -401,6 +412,8 @@ function renderTop() {
   const who = G.phase === 'deploy' ? 'Расстановка' : G.over ? 'Итог' : G.spec ? 'Ходит ' + SIDE_GEN[G.active] : G.isMyTurn ? 'Ваш ход' : 'Ход противника…';
   $('#hdActive').textContent = who;
   $('#hdActive').className = G.isMyTurn || G.phase === 'deploy' ? 'ac' : 'mu';
+  $('#btnUndo').hidden = !(G.isMyTurn && G.undo && !G.rp);
+  syncLayers();
   const btn = $('#btnEnd');
   btn.hidden = G.spec || !!G.over;
   if (G.phase === 'deploy') {
@@ -764,6 +777,7 @@ function showHelp() {
     <p><b>Подготовка и разведка.</b> Часть, простоявшая ход рядом с противником, бьёт <b>подготовленной атакой</b> ×1,2 — пока не сдвинулась (значок ▲). <b>Разведка боем</b> (<kbd>E</kbd>) малой кровью вскрывает соседа: его мораль, опыт, запасы и засаду, а окоп сбивает на уровень.</p>
     <p><b>Отход.</b> Разбитая часть на снабжении не гибнет: <b>остатки</b> (1 шаг) отходят — отведите их и пополните до 3 шагов или влейте в соседа своего типа. В котле остатков не бывает. Приказ <b>«Арьергард»</b>: выбитая часть отходит под заслоном — минус шаг, но её клетку с ходу не займут.</p>
     <p><b>Склады.</b> <b>Полевой склад</b> — источник снабжения там, куда не дотянулись дороги; расширяется за очки, в ход переезда не работает, отрезанный живёт на запасах три хода. Чужой склад без охраны захватывается с трофеями.</p>
+    <p><b>Удобства.</b> <kbd>Z</kbd> или кнопка «Отменить» возвращает последний ход части, если он был без боя и не открыл ничего нового. Справа снизу — <b>слои карты</b>: снабжение, секторы, типы клеток и <b>угроза</b> (<kbd>G</kbd>) — куда противник дотянется за свой ход. Вкладка <b>«Чат»</b> справа: общий и командный чат, метки на карте для союзников (Alt+клик — «атакую», Alt+Shift+клик — «держать»). После партии — <b>повтор</b> по ходам. В «Наступлении» и «Обороне» время работает на обороняющегося: каждый ход перевес сдвигается к нему.</p>
     <p><b>Обстрел.</b> Любая боевая часть может вместо штурма бить по соседу <b>огнём с места</b> (<kbd>R</kbd> или Shift+клик по цели): потерь меньше у обеих сторон, зато цель прижата, а часть остаётся в своих окопах и клетку не занимает. Через реку — без штрафа.</p>
     <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
     <p><b>Территория и фронт.</b> Каждая клетка чья-то. Часть, прошедшая через клетку, забирает её и соседние — если те не прикрыты противником (рядом нет его частей) и это не его город: город берут, только войдя в него. Пустой карман чужой земли, окружённый вашей, переходит к вам. Линия фронта — граница территорий.</p>
@@ -800,7 +814,7 @@ function showHelp() {
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
     развалить целое направление.</p>
     <div class="lbl">Управление</div>
-    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>R</kbd> — обстрел · <kbd>E</kbd> — разведка боем · <kbd>V</kbd> — сводка хода противника · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>R</kbd> — обстрел · <kbd>E</kbd> — разведка боем · <kbd>V</kbd> — сводка хода противника · <kbd>Z</kbd> — отменить ход · <kbd>G</kbd> — слой угрозы · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
@@ -811,13 +825,15 @@ function showBrief() {
 }
 function showEnd() {
   if (G.scen && !G.spec && G.over.w === G.side) { try { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } catch (e) { /* приватный режим */ } }
+  const carry = campCarrySave();
   const title = G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
   const st = G.stats || {}, en = G.enemyStats || {};
   $('#mbox').innerHTML = `<h2>${title}</h2><p>${esc(G.over.t)}</p><p class="mu">Операция длилась ${G.turn} ход(ов).</p>
     ${histSVG(G.history)}
     <div class="cols"><div><div class="lbl">${G.spec ? SIDE_NAME.n : 'Мы'}</div><div class="row"><span>Потеряно</span><b class="bad">${st.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${st.caps || 0}</b></div></div>
     <div><div class="lbl">${G.spec ? SIDE_NAME.s : 'Противник'}</div><div class="row"><span>Потеряно</span><b class="bad">${en.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${en.caps || 0}</b></div></div></div>
-    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button><button class="btn pri" id="btnNew">В меню</button></p>`;
+    ${carry ? `<p class="lnote">В следующую операцию кампании перейдут ветераны (${carry.vets.length}) — с опытом, специалистами и позывными — и ${carry.bonus} очков за досрочную победу.</p>` : ''}
+    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}<button class="btn pri" id="btnNew">В меню</button></p>`;
   $('#modal').hidden = false;
 }
 function hideModal() { $('#modal').hidden = true; maybeSitePrompt() }
@@ -851,6 +867,7 @@ function maybeSitePrompt() {
 
 /* ---------- меню ---------- */
 const SCEN_TXT = {
+  tutor: { n: 'Учебная операция', d: 'Восемь ходов и шесть уроков: разведка боем, обстрел, окружение, склад, подготовленная атака, штурм.' },
   bridge: { n: 'Мост через Тихую', d: 'Взять переправу у Моста за 8 ходов, пока к Союзу не подошли резервы.' },
   breakthrough: { n: 'Прорыв к Красногору', d: 'За 30 ходов взять Красногор через мины и волны резервов.' },
   night: { n: 'Ночной рейд', d: 'За 3 ночных хода разгромить артиллерию и штаб Союза под Заречьем.' }
@@ -1136,6 +1153,26 @@ function playHTML() {
     <div class="macts"><button class="btn pri big" data-a="go"${err ? ' disabled' : ''}>${M.me ? 'В бой' : 'Смотреть'}</button></div></div>`;
 }
 
+/* ---------- кампания: перенос между операциями ----------
+   После победы в операции уцелевшие части с опытом или специалистом и очки за
+   досрочную победу запоминаются в браузере и уходят серверу при запуске следующей
+   операции. Сервер присланному не верит (Game.cleanCarry) и принимает перенос
+   только в партии против ботов. */
+const CAMP_ORDER = ['bridge', 'breakthrough', 'night'];
+const CARRY_KEY = 'ft.carry';
+function campCarryLoad() { try { const c = JSON.parse(localStorage.getItem(CARRY_KEY) || 'null'); return c && Array.isArray(c.vets) ? c : null } catch (e) { return null } }
+/** перенос, который относится к операции id (она следующая после той, где он добыт) */
+function campCarryFor(id) { const c = campCarryLoad(); return c && CAMP_ORDER.indexOf(id) === CAMP_ORDER.indexOf(c.from) + 1 && CAMP_ORDER.indexOf(c.from) >= 0 ? c : null }
+function campCarryOk(id) { const c = campCarryFor(id), T = TEAMS[M.team] || TEAMS['1x1']; return !!c && c.side === M.side && (T.a <= 1 || M.fill === 'bot') }
+/** победа в операции кампании — собрать перенос; возвращает его для экрана итога */
+function campCarrySave() {
+  if (!G.scen || G.spec || !G.over || G.over.w !== G.side || G.scen.tutorial || !CAMP_ORDER.includes(G.scen.id)) return null;
+  const vets = G.units.filter(u => u.side === G.side && !UT[u.k].cmd && !u.rem && ((u.xp || 0) >= .3 || u.att))
+    .sort((a, b) => (b.xp || 0) - (a.xp || 0)).slice(0, 24).map(u => ({ k: u.k, xp: +(u.xp || 0).toFixed(2), att: u.att || null, cs: u.cs || null }));
+  const c = { from: G.scen.id, side: G.side, bonus: Math.min(240, 40 + 25 * Math.max(0, G.scen.left || 0)), vets };
+  try { localStorage.setItem(CARRY_KEY, JSON.stringify(c)) } catch (e) { /* приватный режим */ }
+  return c;
+}
 function campHTML() {
   let done = {}; try { done = JSON.parse(localStorage.getItem('turn.camp') || '{}') } catch (e) { /* приватный режим */ }
   return `<div class="mbox">${backHTML('Красногорская операция')}
@@ -1148,9 +1185,14 @@ function campHTML() {
     <div class="mnote">${TEAMS[M.team].a > 1
       ? 'Операцию ведут ' + TEAMS[M.team].a + ' командира на одной стороне: бюджет и вылеты делятся, ход стороны закрывается, когда закончили все.'
       : 'Операцию ведёте вы один.'}</div>
-    <div class="mgrid">${['bridge', 'breakthrough', 'night'].map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
+    <div class="mgrid"><div class="mcard ${done.tutor ? 'done' : ''}">
+      <div class="mkick">Обучение${done.tutor ? ' · ✓ пройдено' : ''}</div>
+      <h2>${SCEN_TXT.tutor.n}</h2><p>${SCEN_TXT.tutor.d} Играете за Альянс, один.</p>
+      <div class="acts"><button class="btn pri sm" data-a="tutor">Начать</button></div></div>
+    ${CAMP_ORDER.map((id, i) => `<div class="mcard ${done[id] ? 'done' : ''}">
       <div class="mkick">Операция ${i + 1}${done[id] ? ' · ✓ выполнена' : ''}</div>
       <h2>${SCEN_TXT[id].n}</h2><p>${SCEN_TXT[id].d}</p>
+      ${campCarryFor(id) ? `<p class="lnote">Из прошлой операции: ветеранов — ${campCarryFor(id).vets.length}, очков — +${campCarryFor(id).bonus}.${campCarryOk(id) ? '' : ' Перейдут, если играть той же стороной и без живых союзников.'}</p>` : ''}
       <div class="acts"><button class="btn pri sm" data-a="scen" data-id="${id}">Начать</button>
       <button class="btn sm" data-a="watch" data-mode="${id}">Смотреть</button></div></div>`).join('')}</div></div>`;
 }
@@ -1303,6 +1345,7 @@ function drawPreviews() {
 function hideMenu() { $('#menu').classList.remove('on') }
 function leaveToMenu() {
   netSend({ t: 'leave' });
+  roomReset();
   G.roomId = null; G.units = []; G.sel = null; G.lobby = null; G.mySeat = null; G.lobbyHidden = false; G.lobbyOpen = false;
   $('#lc_log').innerHTML = '';
   renderLobby();   /* иначе оверлей лобби останется поверх меню */
@@ -1313,8 +1356,11 @@ function leaveToMenu() {
 /* ---------- ввод ---------- */
 function setSel(id) { G.sel = id; G.mode = null; G.spawn = null; hint(''); if (id) { G.tabR = 'unit'; syncTabs() } computeSel(); renderUI() }
 function clickHex(h, e) {
-  if (!G.roomId || h < 0 || animBusy()) return;
+  if (!G.roomId || h < 0 || animBusy() || G.rp) return;
   RECAP.on = false;
+  /* метка для своей команды: режим из вкладки чата или Alt+клик */
+  if (G.mode && G.mode.startsWith('mark:')) { netSend({ t: 'mark', hex: h, k: G.mode.slice(5) }); G.mode = null; hint(''); syncMarkBtns(); return }
+  if (e.altKey && !G.spec) { netSend({ t: 'mark', hex: h, k: e.shiftKey ? 'def' : 'atk' }); return }
   const u = selUnit(), there = G.units.find(x => x.hex === h);
   const m = G.mode;
   if (m && m.startsWith('buy:')) { act({ t: 'buy', k: m.slice(4), hex: h }); if (!e.shiftKey) { G.mode = null; G.spawn = null; hint('') } return }
@@ -1421,6 +1467,8 @@ function bind() {
   if (window.ResizeObserver) new ResizeObserver(resize).observe(cv);
   applyScreenFX();
   $('#btnEnd').onclick = endTurn;
+  $('#btnUndo').onclick = undoMove;
+  $('#layerBox').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (b) toggleLayer(b.dataset.l) });
   $('#btnHelp').onclick = showHelp;
   $('#btnMenu').onclick = () => { if (!G.roomId || G.over || confirm('Выйти в меню?')) leaveToMenu() };
   $('#btnSound').onclick = e => { if (e.shiftKey) Sound.toggle(); else { $('#mbox').innerHTML = Sound.panelHTML().replace('<p class="acts">', screenPanelHTML() + '<p class="acts">'); $('#modal').hidden = false } };
@@ -1444,6 +1492,7 @@ function bind() {
     if (e.target.id === 'btnSiteGo') { $('#modal').hidden = true; focusFob(); return }
     if (e.target.id === 'btnClose' || e.target.id === 'modal') hideModal();
     if (e.target.id === 'btnNew') leaveToMenu();
+    if (e.target.id === 'btnReplay') { hideModal(); replayStart() }
   });
   $('#lobby').addEventListener('click', e => {
     if (e.target.id === 'btnLobbyClose' || e.target.id === 'lobby') { G.lobbyHidden = true; G.lobbyOpen = false; renderLobby() }
@@ -1532,7 +1581,8 @@ function bind() {
       if (!M.me) netSend({ t: 'create', mode: M.mode, watch: true, map: G.mapPick, seats: plan });
       else netSend({ t: 'create', mode: M.mode, side: M.me.side, map: G.mapPick, seats: plan, name: myName });
     }
-    else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName });
+    else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName, carry: campCarryOk(el.dataset.id) ? campCarryFor(el.dataset.id) : undefined });
+    else if (a === 'tutor') netSend({ t: 'create', mode: 'tutor', side: N, vsBot: true, seats: { [N]: ['me'], [S]: ['bot'] }, name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'netRefresh') netPoll();
     else if (a === 'ldSave' || a === 'dlSave' || a === 'rmSave') {
@@ -1599,9 +1649,11 @@ function bind() {
     else if ((k === 'r' || k === 'к') && selUnit()) fireMode();
     else if ((k === 'e' || k === 'у') && selUnit()) probeMode();
     else if (k === 'v' || k === 'м') recapToggle();
-    else if (k === 's' || k === 'ы') { G.showSupply = !G.showSupply; renderUI() }
-    else if (k === 'h' || k === 'р') { G.showCmd = !G.showCmd; renderUI() }
-    else if (k === 't' || k === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }
+    else if (k === 's' || k === 'ы') toggleLayer('supply');
+    else if (k === 'h' || k === 'р') toggleLayer('cmd');
+    else if (k === 't' || k === 'е') toggleLayer('types');
+    else if (k === 'g' || k === 'п') toggleLayer('threat');
+    else if (k === 'z' || k === 'я') undoMove();
     else if (k === 'f' || k === 'а') camFit();
     else if (k === 'l' || k === 'д') setTrees(!SCREEN.trees);
     else if (k === 'w' || k === 'ц') setWeatherFX(!SCREEN.weather);
@@ -1718,3 +1770,148 @@ function setDock(open) {
   setTimeout(() => { clampTo(CAM); CAM.moving = true }, 230);
 }
 requestAnimationFrame(loop);
+
+/* ============================================================
+   УДОБСТВА: отмена хода, слои карты, чат и метки, подсказки
+   обучения, повтор партии.
+   ============================================================ */
+/** вернуть последний ход (сервер сам решает, можно ли: G.undo — номер части) */
+function undoMove() { if (G.isMyTurn && G.undo && !animBusy()) act({ t: 'undo' }) }
+
+/* ---------- слои карты ---------- */
+const LAYER_KEY = { supply: 'showSupply', cmd: 'showCmd', threat: 'showThreat', types: 'showTypes' };
+function toggleLayer(k) {
+  if (!LAYER_KEY[k]) return;
+  G[LAYER_KEY[k]] = !G[LAYER_KEY[k]];
+  if (k === 'threat' && G.showThreat) hint('Угроза: красным — клетки, которые видимые части противника могут атаковать за свой ход (чем гуще, тем больше частей); оранжевый пунктир — досягаемость его артиллерии.');
+  else if (k === 'threat') hint('');
+  renderUI();
+}
+function syncLayers() { for (const b of document.querySelectorAll('#layerBox [data-l]')) b.classList.toggle('on', !!G[LAYER_KEY[b.dataset.l]]) }
+
+/* ---------- чат и метки ---------- */
+const MARK_TXT = { atk: 'атакую здесь', def: 'держать здесь', look: 'смотри сюда' };
+const MARK_ICON = { atk: '⚔', def: '⛨', look: '◎' };
+/** новая партия или выход: чат, метки, повтор и подсказки — с чистого листа */
+function roomReset() {
+  G.chat = []; G.marks = []; G.chatNew = 0; G.replayFrames = null; G.lastSnap = null; G._tipN = 0;
+  if (G.rp) { clearInterval(G.rp.timer); G.rp = null }
+  const t = $('#tutor'); if (t) t.hidden = true;
+  const rb = $('#replayBar'); if (rb) rb.hidden = true;
+  chatRender();
+}
+function chatAdd(m) {
+  if (typeof m.text !== 'string') return;
+  (G.chat = G.chat || []).push({ to: m.to === 'team' ? 'team' : 'all', side: m.side, name: String(m.name || ''), text: m.text });
+  if (G.chat.length > 120) G.chat.shift();
+  if (!$('#chat').classList.contains('open') || G.chatTab !== (m.to === 'team' ? 'team' : 'all')) G.chatNew = (G.chatNew || 0) + 1;
+  chatRender();
+}
+/** метка союзника: значок на карте на минуту и строка в командном чате (клик — показать) */
+function markAdd(m) {
+  if (!(m.hex >= 0 && m.hex < H.NH) || !MARK_TXT[m.k]) return;
+  (G.marks = G.marks || []).push({ hex: m.hex, k: m.k, name: String(m.name || ''), t0: RT() });
+  if (G.marks.length > 12) G.marks.shift();
+  (G.chat = G.chat || []).push({ to: 'team', side: G.side, name: String(m.name || ''), text: MARK_ICON[m.k] + ' ' + MARK_TXT[m.k], hex: m.hex, sys: 1 });
+  if (!$('#chat').classList.contains('open')) G.chatNew = (G.chatNew || 0) + 1;
+  Sound.radio && Sound.radio('hq');
+  chatRender();
+}
+function chatRender() {
+  const box = $('#chatLog');
+  if (!box) return;
+  const tab = G.chatTab || 'all', list = (G.chat || []).filter(x => x.to === tab);
+  const col = sd => sd === N ? COL.n : sd === S ? COL.s : '#9aa7b1';
+  /* ник и текст приходят от других игроков — только через esc() */
+  box.innerHTML = list.length ? list.map((x, i) => `<div class="cm ${x.sys ? 'sys' : ''}" ${x.sys ? `data-hex="${x.hex}"` : ''}><b style="color:${col(x.side)}">${esc(x.name)}</b>: ${esc(x.text)}</div>`).join('')
+    : `<div class="none">${tab === 'team' ? 'Командный чат: его видят только командиры вашей стороны. Сюда же падают метки с карты.' : 'Общий чат: его видят все в партии, включая зрителей.'}</div>`;
+  box.scrollTop = box.scrollHeight;
+  for (const b of document.querySelectorAll('#chat [data-chat]')) b.classList.toggle('on', b.dataset.chat === tab);
+  const n = $('#chatNew'); n.hidden = !G.chatNew; n.textContent = G.chatNew > 9 ? '9+' : G.chatNew || '';
+  $('#chatMarks').style.display = G.spec || !G.roomId ? 'none' : '';
+  $('#chat').style.display = G.roomId ? '' : 'none';
+}
+function syncMarkBtns() { for (const b of document.querySelectorAll('#chatMarks [data-mark]')) b.classList.toggle('on', G.mode === 'mark:' + b.dataset.mark) }
+function chatInit() {
+  G.chatTab = 'all';
+  $('#chatTab').onclick = () => { const open = $('#chat').classList.toggle('open'); if (open) { G.chatNew = 0; chatRender(); if (innerWidth > 700) $('#chatIn').focus() } };
+  $('#chat').addEventListener('click', e => {
+    const t = e.target.closest('[data-chat]'); if (t) { G.chatTab = t.dataset.chat; G.chatNew = 0; chatRender(); return }
+    const mk = e.target.closest('[data-mark]');
+    if (mk) { G.mode = G.mode === 'mark:' + mk.dataset.mark ? null : 'mark:' + mk.dataset.mark; hint(G.mode ? 'Метка «' + MARK_TXT[mk.dataset.mark] + '»: кликните по клетке — её увидят командиры вашей стороны. ПКМ — отмена.' : ''); syncMarkBtns(); return }
+    const sys = e.target.closest('.cm.sys'); if (sys && sys.dataset.hex !== undefined) camTo(H.center(+sys.dataset.hex));
+  });
+  $('#chatForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const inp = $('#chatIn'), text = inp.value.trim();
+    if (!text || !G.roomId) return;
+    netSend({ t: 'chat', to: G.chatTab === 'team' && !G.spec ? 'team' : 'all', text });
+    inp.value = '';
+  });
+  chatRender();
+}
+
+/* ---------- обучение: подсказка хода ---------- */
+function showTip(e) {
+  const el = $('#tutor');
+  el.innerHTML = `<div class="tk">Обучение · урок ${e.n} из ${e.of}</div><div>${esc(e.text)}</div><p class="acts"><button class="btn sm pri" id="tutorOk">Понятно</button></p>`;
+  el.hidden = false;
+  $('#tutorOk').onclick = () => { el.hidden = true };
+}
+
+/* ---------- повтор партии ----------
+   Сервер после конца партии присылает кадры по ходам (части без тумана, территория,
+   владельцы точек, перевес). Повтор подменяет ими состояние карты; живой снимок
+   возвращается при закрытии. */
+function replayStart() {
+  if (!G.replayFrames || G.rp) return;
+  G.rp = { i: 0, timer: null, snap: G.lastSnap };
+  G.sel = null; G.mode = null; G.showThreat = false; RECAP.on = false; G.marks = []; $('#tutor').hidden = true;
+  const sl = $('#rpSlide'); sl.max = G.replayFrames.length - 1; sl.value = 0;
+  $('#replayBar').hidden = false;
+  replayShow(0);
+}
+function replayShow(i) {
+  const F = G.replayFrames, rp = G.rp;
+  if (!F || !rp) return;
+  rp.i = clamp(i, 0, F.length - 1);
+  const f = F[rp.i];
+  G.units = f.u.map(([id, k, side, hex, str, rem]) => ({ id, k, side, hex, str, rem, ent: 0, su: 0, enemy: side !== G.side ? 1 : 0 }));
+  G.ghosts = []; G.pockets = []; G.vis = null; G.reach = null; G.targets = [];
+  G.terrStr = f.terr; G.terr = Uint8Array.from(f.terr, c => c.charCodeAt(0) - 48);
+  G.pts = G.pts.map((p, j) => Object.assign({}, p, { owner: f.p[j] || null }));
+  G.visV++;
+  const mine = (G.spec || G.side === N ? 1 : -1) * f.s;
+  $('#rpSlide').value = rp.i;
+  $('#rpLbl').textContent = `Ход ${f.t + 1} · кадр ${rp.i + 1} из ${F.length} · перевес ${mine > 0 ? '+' : ''}${Math.round(mine)}`;
+  document.querySelector('#replayBar [data-rp=play]').textContent = rp.timer ? '❚❚' : '▶';
+}
+function replayPlay(on) {
+  const rp = G.rp; if (!rp) return;
+  clearInterval(rp.timer); rp.timer = null;
+  if (on) {
+    if (rp.i >= G.replayFrames.length - 1) rp.i = -1;
+    rp.timer = setInterval(() => { if (!G.rp) return; if (G.rp.i >= G.replayFrames.length - 1) return replayPlay(false); replayShow(G.rp.i + 1) }, 900);
+    replayShow(rp.i + 1);
+  } else replayShow(rp.i);
+}
+function replayStop() {
+  const rp = G.rp; if (!rp) return;
+  clearInterval(rp.timer);
+  G.rp = null;
+  $('#replayBar').hidden = true;
+  if (rp.snap) applySnapshot(rp.snap);
+}
+function replayInit() {
+  $('#replayBar').addEventListener('click', e => {
+    const b = e.target.closest('[data-rp]'); if (!b || !G.rp) return;
+    const k = b.dataset.rp;
+    if (k === 'close') return replayStop();
+    if (k === 'play') return replayPlay(!G.rp.timer);
+    replayPlay(false);
+    replayShow(k === 'first' ? 0 : G.rp.i + (k === 'prev' ? -1 : 1));
+  });
+  $('#rpSlide').addEventListener('input', e => { if (G.rp) { replayPlay(false); replayShow(+e.target.value) } });
+}
+chatInit();
+replayInit();

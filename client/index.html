@@ -28,6 +28,7 @@
   <div id="airBox" hidden><button class="btn sm" id="btnStrike">✈ Удар</button><button class="btn sm" id="btnRecon">👁 Разведка</button></div>
   <div id="paceBox" hidden class="seg"><button data-pace="0">II</button><button data-pace="1" class="on">×1</button><button data-pace="2">×2</button><button data-pace="4">×4</button></div>
   <b id="hdActive" class="ac"></b>
+  <button class="btn" id="btnUndo" title="Вернуть последний ход части, если он был без боя и ничего нового не открыл (Z)" hidden>↶ Отменить</button>
   <button class="btn pri" id="btnEnd">Конец хода</button>
   <button class="btn" id="btnTeams" title="Кто за какую команду; хозяин партии может добавить игроков и ботов">Состав</button>
   <button class="btn" id="btnSave" title="Сохранить партию (продолжить — Меню → Сохранения)" hidden>💾</button>
@@ -56,9 +57,32 @@
   <button data-z="out" title="Отдалить (−)">−</button>
   <button data-z="fit" title="Вся карта (F)">⤢</button>
   <button data-z="sel" title="К выбранной части (C)">◎</button>
-  <button data-z="types" title="Типы клеток на карте (T)">⬡</button>
   <button data-z="trees" title="Деревья при приближении (L)">♣</button>
   <button data-z="wx" title="Погода на карте: облака, туман, осадки (W)">☁</button>
+</div>
+<div id="layerBox" class="zbox" title="Слои карты">
+  <button data-l="supply" title="Снабжение: подвоз по клеткам и дорогам (S)">⛟</button>
+  <button data-l="cmd" title="Секторы командиров (H)">⚑</button>
+  <button data-l="threat" title="Угроза: куда противник дотянется за свой ход (G)">⚠</button>
+  <button data-l="types" title="Типы клеток (T)">⬡</button>
+</div>
+<aside id="chat">
+  <button type="button" id="chatTab" title="Чат и метки на карте">Чат<i id="chatNew" hidden></i></button>
+  <div id="chatBody">
+    <div class="tabs"><button class="on" data-chat="all">Общий</button><button data-chat="team">Команда</button></div>
+    <div id="chatLog"></div>
+    <div id="chatMarks" title="Метка на карте для своей команды: нажмите и кликните по клетке. Быстро — Alt+клик (атакую), Alt+Shift+клик (держать)">
+      <button class="btn sm" data-mark="atk">⚔ Атакую</button><button class="btn sm" data-mark="def">⛨ Держать</button><button class="btn sm" data-mark="look">◎ Смотри</button>
+    </div>
+    <form id="chatForm" autocomplete="off"><input id="chatIn" maxlength="200" placeholder="Сообщение…"><button class="btn sm pri" type="submit">➤</button></form>
+  </div>
+</aside>
+<div id="tutor" hidden></div>
+<div id="replayBar" hidden>
+  <button class="btn sm" data-rp="first" title="В начало">⏮</button><button class="btn sm" data-rp="prev" title="Ход назад">◀</button>
+  <button class="btn sm pri" data-rp="play" title="Пуск / пауза">▶</button><button class="btn sm" data-rp="next" title="Ход вперёд">▶▏</button>
+  <input type="range" id="rpSlide" min="0" max="1" value="0"><span id="rpLbl"></span>
+  <button class="btn sm" data-rp="close">Закрыть</button>
 </div>
 <div id="hexinfo" hidden></div>
 <div id="banner" hidden></div>

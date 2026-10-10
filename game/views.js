@@ -74,11 +74,21 @@ module.exports = {
       sv: spec ? null : String.fromCharCode(...this.sv[side].map((v, h) => this.svNet[side][h] ? 65 + v : v < 10 ? 48 + v : 97)),
       svSrc: spec ? null : (this.svSrc[side] || []).map(x => ({ hex: x.hex, v: x.v, n: x.n, k: x.k })),
       cp: spec ? this.cp : this.cp[seat], barrage: spec ? this.barrage : this.barrage[side], counter: spec ? this.counter : this.counter[side], smoke: [...this.smoke.keys()],
+      /* отмена: номер части, чей последний ход ещё можно вернуть (только своему месту) */
+      undo: !spec && this.undoRec && this.undoRec.seat === seat && this.undoRec.turn === this.turn ? this.undoRec.id : null,
+      hold: this.holdBias ? this.holdBias() * W.SCORE_RATE : 0,
       frontY: this.frontY, pockets: this.phase === 'battle' ? this.pockets(side) : [],
-      scen: this.scen ? { id: this.scenId, n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
+      scen: this.scen ? { id: this.scenId, tutorial: this.scen.tutorial ? 1 : 0, tip: this.tipFor(side), n: this.scen.n, brief: this.scen.brief, target: this.scen.target, left: this.limit - this.turn, deploy: this.scen.deploy && !spec ? this.scen.deploy[side] : null, raid: this.raidV ? this.raidLeft() : null } : null,
       stats: spec ? sv(N) : sv(side), enemyStats: spec || this.over ? sv(spec ? S : side === N ? S : N) : null,
       history: this.history
     };
+  },
+  /** подсказка учебной операции на текущий ход — только стороне ученика (Альянс) */
+  tipFor(side) {
+    const sc = this.scen;
+    if (!sc || !sc.tips || side !== N || this.over) return null;
+    const i = this.turn - sc.start;
+    return sc.tips[i] ? { n: i + 1, of: sc.tips.length, text: sc.tips[i] } : null;
   },
   /** свежи ли сведения разведки боем о части u у стороны side */
   hasIntel(side, u) {

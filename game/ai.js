@@ -120,7 +120,7 @@ module.exports = {
       const v = this.H.neighbors(u.hex).map(h => this.unitAt(h)).find(x => x && x.side === side && x.k === u.k && !x.rem && x.str < MAX_STR);
       if (v) this.act(seat, { t: 'merge', id: u.id, target: v.id });
     }
-    for (const u of mine()) if (u.str <= 6 && (u.sv || 0) >= 3 && !u.acted && !u.moved && this.budget[seat] > 30) this.act(seat, { t: 'replace', id: u.id });
+    for (const u of mine()) if (!UT[u.k].depot && u.str <= 6 && (u.sv || 0) >= 3 && !u.acted && !u.moved && this.budget[seat] > 30) this.act(seat, { t: 'replace', id: u.id });
     this.botBuy(seat);
     this.botSpecs(seat);
     this.botOrders(seat, 'early');
@@ -301,9 +301,38 @@ module.exports = {
     return true;
   },
 
+  /** Полевой склад: держаться в двух клетках за частями, которым не хватает подвоза.
+      Ездит неохотно — в ход переезда склад не работает; на месте, если есть подвоз и
+      лишние очки, расширяется. */
+  botDepot(u) {
+    const side = u.side, seat = u.seat || u.side, own = side === N ? 1 : 2;
+    const mates = this.units.filter(v => v.side === side && v.str > 0 && UT[v.k].cap && !v.rem);
+    if (!mates.length) return;
+    const known = this.units.filter(e => e.side !== side && e.str > 0 && this.seen(side, e));
+    const nearFoe = h => known.some(e => this.H.hexDist(e.hex, h) <= 2);
+    const need = mates.filter(v => (v.sv || 0) <= 3);
+    const front = mates.filter(v => known.some(e => this.H.hexDist(e.hex, v.hex) <= 4));
+    const grp = need.length >= 2 ? need : front.length ? front : mates;
+    /* «середина» группы — часть, от которой до остальных ближе всего */
+    const sum = c => grp.reduce((a, v) => a + this.H.hexDist(v.hex, c.hex), 0);
+    const c = grp.slice().sort((a, b) => sum(a) - sum(b))[0], d0 = this.H.hexDist(u.hex, c.hex);
+    if (d0 <= 3 || (need.length < 2 && d0 <= 6)) {
+      if (!u.acted && !u.moved && u.fed && (u.lvl || 1) < W.DEPOT.max && need.length >= 2 && this.budget[seat] >= W.DEPOT.up + 200) this.act(seat, { t: 'depot', id: u.id });
+      return;
+    }
+    const reach = Rules.reachable(this.ctxFor(side, false), u);
+    let best = u.hex, bs = d0;
+    for (const [h, r] of reach) {
+      if (r.through || this.terr[h] !== own || !this.sv[side][h] || nearFoe(h)) continue;
+      const d = Math.max(2, this.H.hexDist(h, c.hex));
+      if (d < bs - 1 || (d < bs && best !== u.hex)) { bs = d; best = h }
+    }
+    if (best !== u.hex) this.act(seat, { t: 'move', id: u.id, to: best });
+  },
   /** куда идти части, если не атакует */
   botMove(u, objective, dir) {
     const side = u.side, seat = u.seat || u.side, T = UT[u.k];
+    if (T.depot) return this.botDepot(u);
     /* гарнизон: пехота в своём городе (и в главной точке сценария) остаётся на месте */
     const here = this.ptAt(u.hex);
     if (here && here.owner === side && T.cap && (here.city || (this.scen && this.scen.target === here.id)) && u.str > 3 &&
@@ -409,6 +438,13 @@ module.exports = {
     if (!this.units.some(u => u.side === side && u.k === 'hq' && u.str > 0)) mix.hq = 30;
     const armor = this.units.filter(e => e.side !== side && e.str > 0 && UT[e.k].arm === 'hard' && this.seen(side, e)).length;
     if (armor >= 2) mix.at += 2;
+    /* полевой склад — один на командира, когда боевые части ушли от подвоза */
+    const mineU = this.units.filter(u => u.side === side && u.seat === seat && u.str > 0);
+    const hungry = mineU.filter(u => UT[u.k].cap && !u.rem && (u.sv || 0) <= 3);
+    if (this.phase === 'battle' && !(this.noDepot && this.noDepot[side]) && !mineU.some(u => UT[u.k].depot) && hungry.length >= 2 && this.budget[seat] >= UT.dep.price + 120) {
+      const near = h => Math.min(...hungry.map(u => this.H.hexDist(u.hex, h)));
+      for (const h of this.spawnHexes(side, 'dep').sort((a, b) => near(a) - near(b))) if (this.buy(seat, 'dep', h, false).ok) break;
+    }
     for (let i = 0; i < 3; i++) {
       if (this.budget[seat] < 60) return;
       const k = this.wantKind(seat, mix);

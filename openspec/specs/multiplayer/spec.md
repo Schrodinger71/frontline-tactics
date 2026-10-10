@@ -3,7 +3,7 @@
 ## Purpose
 Сервер партий: комнаты, места, вход по коду и из списка, зрители, боты, защита от недоверенного ввода.
 
-**Код:** `server/index.js` — протокол WebSocket (`create`, `join`, `list`, `leave`, `act`, `pace`, `seat`, `save`, `load`), `cleanName`, `tooOften`, `canCreate`; `server/room.js` — `Room`: `planFrom`, `seats`, `freeSeat`, `join`, `joinAs`, `leave`, `listed`, `info`, `seatOp`, `hostSeat`, `idle`, `close`. Клиент: `netSend`, `onMsg`, `netHTML`, `netListHTML`, `netPoll`, `renderLobby` в `client/js/main.js`.
+**Код:** `server/index.js` — протокол WebSocket (`create`, `join`, `list`, `leave`, `act`, `pace`, `seat`, `save`, `load`, `chat`, `mark`), `cleanName`, `tooOften`, `canCreate`; `server/room.js` — `Room`: `planFrom`, `seats`, `freeSeat`, `join`, `joinAs`, `leave`, `listed`, `info`, `seatOp`, `hostSeat`, `idle`, `close`. Клиент: `netSend`, `onMsg`, `netHTML`, `netListHTML`, `netPoll`, `renderLobby` в `client/js/main.js`.
 
 ## Requirements
 
@@ -51,6 +51,16 @@
 - GIVEN клиент шлёт не-JSON
 - WHEN сервер получает сообщение
 - THEN оно игнорируется, соединение и сервер живы
+
+### Requirement: Чат и метки
+Сообщение `chat` SHALL доходить всем в комнате (общий чат) либо только сидящим на той же стороне (командный; зритель пишет только в общий). Текст чистится на сервере: управляющие символы и знаки нулевой ширины вырезаются, длина — 200 знаков, пустое отбрасывается; клиент выводит ник и текст только экранированными. Последние сообщения комната хранит и отдаёт вошедшему — командные только своей стороне. Метка `mark` (клетка и вид: атакую, держать, смотри) уходит только командирам той же стороны; от зрителя и с неверной клеткой отбрасывается. Чат и метки ограничены по частоте (`tooOften`).
+
+**Код:** `server/room.js` — `chat`, `mark`, `sendReplay`; клиент — `chatAdd`, `markAdd`, `chatRender`, `drawMarks`.
+
+#### Scenario: Командный чат
+- GIVEN два командира Альянса, командир Союза и зритель
+- WHEN командир Альянса пишет в командный чат и ставит метку
+- THEN сообщение и метку получает только второй командир Альянса
 
 ### Requirement: Уборка комнат
 Пустая недоигранная комната SHALL храниться ограниченное время, чтобы игрок мог вернуться по коду; пустая доигранная — убирается быстрее. Закрытая комната отпускает партию и клиентов.

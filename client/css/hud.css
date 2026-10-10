@@ -383,3 +383,41 @@ p.mhint{margin:0 0 .75em}
 /* состав по ходу партии (хозяин) */
 .ladd{display:flex;align-items:center;gap:.4em;margin-top:.45em;font-size:.92em}
 .ltab td .btn.tiny{margin-left:.5em}
+
+/* слои карты — вторая колонка кнопок под масштабом */
+#layerBox{top:auto;bottom:64px}
+/* чат и метки: выезжающая вкладка справа */
+#chat{position:fixed;z-index:6;top:calc(var(--th) + 8px);bottom:8px;right:0;width:min(320px,88vw);transform:translateX(100%);transition:transform .18s ease;
+  background:var(--pn);border:1px solid var(--bd);border-right:0;border-radius:8px 0 0 8px;box-shadow:var(--sh);display:flex}
+#chat.open{transform:none}
+#chatTab{position:absolute;left:-30px;top:58%;width:30px;padding:.9em 0;writing-mode:vertical-rl;border:1px solid var(--bd);border-right:0;border-radius:8px 0 0 8px;
+  background:var(--pn);color:var(--ac);font:600 12px/1 system-ui;letter-spacing:.08em;cursor:pointer}
+#chatTab:hover{color:#fff;border-color:var(--ac)}
+#chatNew{position:absolute;top:-7px;left:-7px;min-width:17px;height:17px;border-radius:9px;background:var(--rd);color:#fff;font:700 10px/17px system-ui;text-align:center;writing-mode:horizontal-tb;font-style:normal}
+#chatBody{flex:1;min-width:0;display:flex;flex-direction:column}
+#chatLog{flex:1;overflow:auto;padding:.5em .6em;font-size:.95em;line-height:1.35}
+#chatLog .cm{margin:.18em 0;word-break:break-word}
+#chatLog .cm b{font-weight:700}
+#chatLog .cm.sys{color:var(--mu);cursor:pointer}
+#chatLog .cm.sys:hover{color:var(--ac)}
+#chatLog .cm .tg{font-size:.8em;color:var(--mu);margin-right:.3em}
+#chatLog .none{color:var(--mu);padding:1em .2em}
+#chatMarks{display:flex;gap:.3em;padding:.35em .5em;border-top:1px solid var(--bd)}
+#chatMarks .btn{flex:1;padding-left:.2em;padding-right:.2em}
+#chatMarks .btn.on{border-color:var(--ac);color:var(--ac)}
+#chatForm{display:flex;gap:.3em;padding:.4em .5em;border-top:1px solid var(--bd)}
+#chatForm input{flex:1;min-width:0;background:#0b1218;border:1px solid var(--bd2);border-radius:5px;color:var(--tx);padding:.4em .55em;font:inherit}
+#chatForm input:focus{outline:0;border-color:var(--ac)}
+body:has(#chat.open) .zbox{right:calc(min(320px,88vw) + 12px)}
+/* подсказка обучения */
+#tutor{position:fixed;z-index:8;top:calc(var(--th) + 10px);left:50%;transform:translateX(-50%);width:min(560px,calc(100vw - 120px));
+  background:linear-gradient(180deg,#14212b,#0d161d);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);padding:.7em .9em;color:var(--tx);line-height:1.4}
+#tutor .tk{color:var(--ac);font-weight:700;font-size:.85em;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3em}
+#tutor .acts{margin:.5em 0 0;text-align:right}
+/* повтор партии */
+#replayBar{position:fixed;z-index:9;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:.4em;
+  background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);padding:.45em .6em;max-width:calc(100vw - 24px)}
+#replayBar[hidden],#tutor[hidden]{display:none}
+#replayBar input{width:min(260px,30vw);accent-color:var(--ac)}
+#rpLbl{min-width:13em;font-weight:600;white-space:nowrap}
+@media (max-width:640px){#rpLbl{min-width:0;font-size:.85em}#layerBox{bottom:58px}}

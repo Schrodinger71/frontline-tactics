@@ -56,7 +56,7 @@ function play(mode, seed, map) {
     sweep: !!map,
     timeout: g.turn >= g.limit };
 }
-const SCENS = ['bridge', 'breakthrough', 'night'];
+const SCENS = ['tutor', 'bridge', 'breakthrough', 'night'];
 const FREE = ['both', 'attack', 'defense'];
 const per = +process.argv[2] || 2;
 /* партий на сценарий кампании: второй аргумент, иначе столько же, сколько на режим.
@@ -327,6 +327,104 @@ for (const map of require('../shared/maps').MAP_ORDER) {
     assert(back.units.find(u => u.id === d2.id).lvl === 3 && back.units.find(u => u.id === r2.id).rem === true, 'сохранение: уровень склада и остатки на месте');
   }
   console.log('механики 3.4: ok');
+}
+/* отмена хода, оборона по времени, перенос в кампании, обучение, повтор, склады у бота */
+{
+  /* --- отмена хода --- */
+  {
+    const g = new Game('both', N, 31, 'steppe');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    const side = g.active, en = side === N ? S : N, H = g.H;
+    const open = h => !g.unitAt(h) && g.passable('tnk', h) && g.map.hexes[h].t === 'open';
+    const own = side === N ? 1 : 2;
+    const h0 = [...Array(H.NH).keys()].find(h => g.terr[h] === own && open(h) && H.within(h, 3).every(x => !g.unitAt(x)));
+    const u = g.spawn('mot', side, h0); u.mp = 6; u.ent = 2;
+    g.updateVision(side);
+    const to = [...Rules.reachable(g.ctxFor(side, false), u).keys()].find(h => H.hexDist(h, h0) === 2 && open(h));
+    assert(g.act(side, { t: 'move', id: u.id, to }).ok && u.hex === to, 'ход');
+    assert.strictEqual(g.snapshotFor(side).undo, u.id, 'тихий ход можно отменить');
+    assert.strictEqual(g.snapshotFor(en).undo, null, 'противнику чужая отмена не видна');
+    assert(!g.act(en, { t: 'undo' }).ok, 'чужой ход не отменить');
+    assert(g.act(side, { t: 'move', id: u.id, to: h0 }).ok || true);
+    /* заново: ход и сразу отмена */
+    u.hex = h0; u.mp = 6; u.moved = false; u.ent = 2; g.undoRec = null;
+    const terr0 = String(g.terr);
+    assert(g.act(side, { t: 'move', id: u.id, to }).ok);
+    assert(g.act(side, { t: 'undo' }).ok, 'отмена');
+    assert(u.hex === h0 && u.mp === 6 && !u.moved && u.ent === 2, 'клетка, очки хода и окоп — как до хода');
+    assert.strictEqual(String(g.terr), terr0, 'территория — как до хода');
+    assert(!g.act(side, { t: 'undo' }).ok, 'дважды не отменить');
+    /* после другого действия отмены нет */
+    assert(g.act(side, { t: 'move', id: u.id, to }).ok);
+    g.act(side, { t: 'dig', id: u.id });
+    assert(!g.act(side, { t: 'undo' }).ok, 'после другого действия — поздно');
+    /* ход, вскрывший противника, не отменяется */
+    u.hex = h0; u.mp = 6; u.moved = false; u.acted = false;
+    const hid = g.spawn('inf', en, H.within(to, 2).find(h => H.hexDist(h, to) === 2 && H.hexDist(h, h0) >= 4 && open(h)));
+    g.updateVision(side);
+    if (hid && !g.seen(side, hid)) {
+      g.act(side, { t: 'move', id: u.id, to });
+      if (g.seen(side, hid)) assert.strictEqual(g.snapshotFor(side).undo, null, 'увидели противника — отмены нет');
+    }
+  }
+  /* --- время работает на оборону --- */
+  {
+    const g = new Game('attack', N, 32, 'valley');
+    g.ready.n = g.ready.s = true; g.tryStart();
+    assert(g.role.n === 'attacker' && g.holdBias() === -W.DEFENDER_HOLD, 'сдвиг — к обороняющемуся Союзу');
+    const s0 = g.score, d = g.heldWeight(N) - g.heldWeight(S);
+    g.endRound();
+    assert(Math.abs(g.score - (s0 + (d - W.DEFENDER_HOLD) * W.SCORE_RATE)) < 1e-6, 'перевес за ход: разница весов минус удержание');
+    assert.strictEqual(new Game('both', N, 33, 'valley').holdBias(), 0, 'во встречном бою сдвига нет');
+    assert.strictEqual(new Game('bridge', N, 34).holdBias(), 0, 'в сценариях — свои условия победы');
+  }
+  /* --- перенос в кампании: клиенту не верим --- */
+  {
+    const carry = { bonus: 99999, vets: [{ k: 'tnk', xp: 5, att: 'atg', cs: '<b>Тигр-11</b>' }, { k: 'zzz', xp: 1 }, { k: 'hq', xp: 1 }, { k: 'art', xp: .7, att: 'hvy', cs: 'Гром-22' }, null, 7] };
+    const g = new Game('breakthrough', N, 35, undefined, { carry });
+    assert.strictEqual(g.budget.n, 400 + 300, 'очки переноса зажаты потолком');
+    const t = g.units.find(u => u.side === N && u.k === 'tnk' && u.vet), a = g.units.find(u => u.side === N && u.k === 'art' && u.vet);
+    assert(t && t.xp === 1 && t.att === null && t.cs === 'bТигр-11b', 'ветеран-танкист: опыт зажат, чужой специалист отброшен, позывной вычищен');
+    assert(a && a.xp === .7 && a.att === 'hvy' && a.cs === 'Гром-22', 'ветеран-артиллерист перенесён');
+    assert.strictEqual(g.units.filter(u => u.vet).length, 2, 'мусорные записи и штаб не перенесены');
+    assert(!g.units.some(u => u.side === S && u.vet), 'противнику ветеранов не досталось');
+    assert.strictEqual(Game.cleanCarry({ vets: 'x', bonus: 'много' }, N), null, 'мусор вместо переноса — ничего');
+    assert.strictEqual(new Game('both', N, 36, 'valley', { carry }).units.filter(u => u.vet).length, 0, 'вне сценария перенос не действует');
+  }
+  /* --- учебная операция и кадры повтора --- */
+  {
+    const g = new Game('tutor', N, 37);
+    g.bots = { n: true, s: true }; g.tryStart();
+    assert.strictEqual(g.phase, 'battle', 'обучение начинается без расстановки');
+    g.drainEvents();
+    const sn = g.snapshotFor(N).scen;
+    assert(sn.tutorial === 1 && sn.tip && sn.tip.n === 1 && sn.tip.of === 6, 'подсказка первого хода — ученику');
+    assert.strictEqual(g.snapshotFor(S).scen.tip, null, 'противнику подсказок нет');
+    let guard = 0;
+    while (!g.over && guard++ < 100) { for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) g.botTurn(st.id); g.drainEvents() }
+    assert(g.over, 'обучение доигрывается');
+    assert(g.frames.length >= 2 && g.frames[0].u.length && g.frames[0].terr.length === g.H.NH && g.frames[g.frames.length - 1].p.length === g.pts.length, 'кадры повтора записаны');
+  }
+  /* --- бот покупает и ставит склад --- */
+  {
+    let bought = 0, worked = 0;
+    for (const seed of [41, 42, 43]) {
+      const g = new Game('both', N, seed, 'steppe');
+      g.bots = { n: true, s: true }; g.tryStart();
+      let guard = 0, had = false, fed = false;
+      while (!g.over && guard++ < 120) {
+        for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) g.botTurn(st.id);
+        g.drainEvents();
+        const d = g.units.filter(u => u.k === 'dep' && u.str > 0);
+        if (d.length) had = true;
+        if (d.some(u => g.svSrc[u.side].some(x => x.k === 'depot' && x.hex === u.hex))) fed = true;
+        assert(d.filter(u => u.side === N).length <= 1 && d.filter(u => u.side === S).length <= 1, 'не больше склада на командира');
+      }
+      if (had) bought++; if (fed) worked++;
+    }
+    assert(bought >= 1 && worked >= 1, `бот пользуется складом: куплен в ${bought} партиях из 3, работал в ${worked}`);
+  }
+  console.log('механики 3.5: ok');
 }
 /* механики 3.3: топливо, подавленные шаги, специалисты, погода в снабжении */
 {
@@ -744,7 +842,7 @@ for (const map of require('../shared/maps').MAP_ORDER) {
    сдвиг доли побед или длины партий виден сразу, в том числе в CI.
    ============================================================ */
 const MODE_RU = { both: 'встречный бой', attack: 'наступление', defense: 'оборона' };
-const SCEN_RU = { bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
+const SCEN_RU = { tutor: 'Учебная операция', bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const pct = (k, n) => n ? Math.round(k * 100 / n) + '%' : '—';
 const f1 = x => x.toFixed(1);

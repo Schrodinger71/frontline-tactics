@@ -48,7 +48,10 @@ class Room {
     } else {
       const plan = planFrom(side, vsBot, this.watch, rawPlan);
       const teams = { [N]: plan[N].map(x => ({ bot: x === 'bot' })), [S]: plan[S].map(x => ({ bot: x === 'bot' })) };
-      this.engine = new Game(mode, side, undefined, map, { teams });
+      /* перенос из прошлой операции — только когда все остальные места держат боты:
+         против людей присланные клиентом ветераны были бы нечестным преимуществом */
+      const solo = [].concat(plan[N], plan[S]).filter(x => x !== 'bot').length === 1;
+      this.engine = new Game(mode, side, undefined, map, { teams, carry: solo && pre && pre.carry ? pre.carry : null });
       for (const sd of [N, S]) this.engine.seatsOf(sd).forEach((st, i) => this.slot.set(st.id, plan[sd][i] || 'open'));
     }
     /* хозяин партии — первый севший человек: он может менять состав по ходу игры */
@@ -60,6 +63,8 @@ class Room {
     this.emptySince = Date.now();
     this.created = Date.now();
     this.pace = 1;            /* наблюдение: 1 — обычно, 2/4 — быстрее */
+    this.talk = [];           /* последние сообщения чата — показать вошедшему */
+    this.replayTo = new Set();   /* кому уже ушёл повтор партии */
     this.timer = null;
     this.engine.tryStart();
     this.flush();
@@ -123,11 +128,14 @@ class Room {
       bots: this.engine.bots, seats: this.seats(), host: this.hostSeat()
     });
     client.send({ t: 'snap', v: this.engine.snapshotFor(seat || 'spec') });
+    for (const m of this.talk) if (m.to === 'all' || (seat && m.side === side)) client.send(m);
+    this.sendReplay();
     this.note(client, seat ? `${SIDE_NAME[side]}: ${this.who(seat)} подключился` : null);
     return true;
   }
   leave(client) {
     if (!this.clients.delete(client)) return;
+    this.replayTo.delete(client);
     if (client.seat && this.taken.get(client.seat) === client) this.taken.delete(client.seat);
     if (this.host === client) this.host = [...this.clients].find(c => c.seat) || null;
     if (!this.clients.size) { this.emptySince = Date.now(); clearTimeout(this.timer); this.timer = null }
@@ -178,6 +186,31 @@ class Room {
     this.flush();
     this.kick();
   }
+  /** Чат: общий — всем в комнате, командный — только сидящим на той же стороне.
+      Текст от клиента чистим здесь: управляющие символы и «невидимки» вырезаются,
+      длина — 200 знаков; разметку клиент экранирует при выводе. */
+  chat(client, m) {
+    let text = typeof m.text === 'string' ? m.text.slice(0, 400) : '';
+    text = text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!text) return;
+    const team = m.to === 'team' && !!client.seat;
+    const msg = { t: 'chat', to: team ? 'team' : 'all', side: client.seat ? client.side : 'spec', name: client.seat ? this.who(client.seat) : client.name || 'Зритель', text };
+    this.talk.push(msg); if (this.talk.length > 60) this.talk.shift();
+    for (const c of this.clients) if (!team || (c.seat && c.side === client.side)) c.send(msg);
+  }
+  /** метка на карте — только своей команде */
+  mark(client, m) {
+    const g = this.engine, hex = +m.hex;
+    if (!client.seat || !g || !Number.isInteger(hex) || hex < 0 || hex >= g.H.NH) return;
+    const k = ['atk', 'def', 'look'].includes(m.k) ? m.k : 'look';
+    for (const c of this.clients) if (c.seat && c.side === client.side) c.send({ t: 'mark', hex, k, name: this.who(client.seat), seat: client.seat });
+  }
+  /** партия окончена — разослать кадры для перемотки (каждому один раз) */
+  sendReplay() {
+    const g = this.engine;
+    if (!g || !g.over || !g.frames.length) return;
+    for (const c of this.clients) if (!this.replayTo.has(c)) { this.replayTo.add(c); c.send({ t: 'replay', frames: g.frames }) }
+  }
   setPace(client, v) { if (client.side === 'spec' && this.watch && [1, 2, 4, 0].includes(+v)) { this.pace = +v; this.kick() } }
 
   /** если ходит бот — запустить его ход после паузы */
@@ -219,6 +252,7 @@ class Room {
       if (list.length) c.send({ t: 'ev', list });
       c.send({ t: 'snap', v: g.snapshotFor(c.seat || 'spec') });
     }
+    this.sendReplay();
   }
   eventFor(side, e) {
     const g = this.engine;

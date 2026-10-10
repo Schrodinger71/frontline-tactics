@@ -401,6 +401,68 @@ function drawPockets() {
   }
 }
 
+/* ---------- слой угрозы ----------
+   Куда видимые части противника дотянутся за свой ход: клетки, которые каждая из
+   них может атаковать (дойти по тем же правилам движения и ударить по соседней), —
+   красным, тем гуще, чем больше таких частей; досягаемость его артиллерии —
+   оранжевым пунктиром. Считается по известному игроку: невидимых частей в слое нет. */
+let THREAT = null, THREAT_KEY = '';
+function buildThreat() {
+  const key = G.visV + '|' + G.mapId + '|' + (G.units || []).map(u => u.id + ':' + u.hex).join(',');
+  if (key === THREAT_KEY) return THREAT;
+  THREAT_KEY = key;
+  const ctx = clientCtx(), cnt = new Map(), fire = new Set(), foe = u => G.spec ? u.side === S : u.side !== G.side;
+  for (const e of G.units) {
+    if (!foe(e) || e.rem) continue;
+    const T = utFor(e.side)[e.k];
+    if (!T) continue;
+    if (T.bomb) { for (const h of H.within(e.hex, T.bomb.rng)) fire.add(h); continue }
+    if (!(T.atk.soft > 0) || T.depot || T.cmd) continue;
+    const hit = new Set();
+    for (const [h, r] of Rules.reachable(ctx, { ...e, mp: T.mp, moved: 0 })) { if (r.through) continue; hit.add(h); for (const n of H.neighbors(h)) hit.add(n) }
+    for (const h of hit) cnt.set(h, (cnt.get(h) || 0) + 1);
+  }
+  return (THREAT = { cnt, fire });
+}
+function drawThreat() {
+  if (!G.showThreat || G.phase !== 'battle' || G.rp) return;
+  const T = buildThreat();
+  const by = [[], [], []];
+  for (const [h, n] of T.cnt) { const q = w2s(H.center(h)); if (onScreen(q, 40)) by[Math.min(3, n) - 1].push(h) }
+  by.forEach((list, i) => {
+    if (!list.length) return;
+    cx.beginPath(); for (const h of list) addHex(h, .97);
+    cx.fillStyle = `rgba(255,60,40,${[.1, .2, .32][i]})`; cx.fill();
+  });
+  if (T.fire.size) {
+    regionEdges(n => T.fire.has(n), T.fire);
+    cx.strokeStyle = 'rgba(255,170,90,.8)'; cx.lineWidth = 1.6; cx.setLineDash([5, 4]); cx.stroke(); cx.setLineDash([]);
+  }
+}
+/** метки союзников: значок, подпись и расходящееся кольцо; живут минуту */
+const MARK_COL = { atk: '#ff8a72', def: '#6cc3ff', look: '#ffd479' }, MARK_GL = { atk: '⚔', def: '⛨', look: '◎' }, MARK_SEC = 60;
+function drawMarks() {
+  if (!G.marks || !G.marks.length) return;
+  const now = RT(), s = G.view.s, R = Hex.R * s;
+  G.marks = G.marks.filter(m => now - m.t0 < MARK_SEC);
+  for (const m of G.marks) {
+    const q = w2s(H.center(m.hex));
+    if (!onScreen(q, 60)) continue;
+    const age = now - m.t0, a = clamp((MARK_SEC - age) / 6, 0, 1), col = MARK_COL[m.k], k = (age * .8) % 1;
+    cx.save(); cx.globalAlpha = a;
+    cx.beginPath(); cx.arc(q.x, q.y, R * (.5 + k * .7), 0, 7); cx.strokeStyle = col; cx.globalAlpha = a * (1 - k); cx.lineWidth = 3; cx.stroke();
+    cx.globalAlpha = a;
+    hexPath(m.hex, .92); cx.strokeStyle = col; cx.lineWidth = 2.6; cx.setLineDash([7, 4]); cx.stroke(); cx.setLineDash([]);
+    cx.font = `${Math.round(clamp(R * .9, 16, 30))}px system-ui`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    cx.lineWidth = 4; cx.strokeStyle = 'rgba(0,0,0,.8)'; cx.strokeText(MARK_GL[m.k], q.x, q.y); cx.fillStyle = col; cx.fillText(MARK_GL[m.k], q.x, q.y);
+    cx.textBaseline = 'alphabetic'; cx.font = '700 11px system-ui';
+    const w = cx.measureText(m.name).width + 10, y = q.y - R - 6;
+    cx.fillStyle = 'rgba(6,10,14,.9)'; rr(cx, q.x - w / 2, y - 13, w, 16, 4); cx.fill();
+    cx.fillStyle = col; cx.fillText(m.name, q.x, y - 1);
+    cx.restore();
+  }
+}
+
 /* ---------- понтоны, мины, укрепления, заграждения ---------- */
 function drawPontoons() {
   const s = G.view.s;
@@ -787,6 +849,7 @@ function startAnim(e) {
       done() { u.hex = e.path[e.path.length - 1]; ANIMS.pos.delete(e.id) }
     };
     if (e.retreat) floatText(pts[pts.length - 1], e.rem ? 'остатки отходят' : 'отход', '#ffd479', !!e.rem);
+    if (e.undo) floatText(pts[pts.length - 1], 'ход отменён', '#cfe0ea');
     Sound.gun({ ...pts[0], kind: 'mg' });
   } else if (e.e === 'fight') {
     const A = center(e.ah), D = center(e.dh), ka = unitKind(e.a), kd = unitKind(e.d);
@@ -939,6 +1002,7 @@ function draw(dt) {
   drawSupplyOverlay();
   drawCmdSectors();
   drawFront();
+  drawThreat();
   drawPontoons();
   drawMines();
   drawWorks();
@@ -954,6 +1018,7 @@ function draw(dt) {
   if (G.hover >= 0 && !animBusy()) { hexPath(G.hover, 1); cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 1.5; cx.stroke() }
   drawUnits();
   drawPlan();
+  drawMarks();
   drawRecap();
   /* дыма много — в половинном разрешении (render/fx.js), иначе прямо на экран */
   if (smokeBegin()) { try { drawPlumes(); drawSmokeScreens() } finally { smokeEnd() } }

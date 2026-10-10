@@ -319,6 +319,12 @@ function computeSel() {
     }
   } else if (T.atk.soft >= 2 && u.k !== 'hq' && u.org >= 20) {
     for (const e of foes) if (H.hexDist(u.hex, e.hex) === 1) {
+      /* режим «Обстрел»: те же цели, но расчёт огневого боя с места */
+      if (G.mode === 'fire') {
+        const f = Rules.fireOdds(ctx, u, e);
+        if (T.atk[UT[e.k].arm] > 0) G.targets.push({ hex: e.hex, id: e.id, lb: `−${f.loss[0]}…${f.loss[1]} · ⚡${f.supp[0]}…${f.supp[1]}`, col: '#ffb070', fire: f });
+        continue;
+      }
       const o = Rules.odds(ctx, u, e);
       G.targets.push({ hex: e.hex, id: e.id, lb: o.r.toFixed(1).replace('.', ',') + ' : 1', col: o.r >= 2 ? '#6fd18d' : o.r >= 1.2 ? '#ffd479' : '#ff6b55', odds: o });
     }
@@ -488,6 +494,7 @@ function unitCard(u) {
     canAttach = !u.acted && !u.moved && (u.sv || 0) >= SUPPLY.replaceMin;
     if (!u.acted && !u.moved) acts.push('<button class="btn sm" data-a="dig">Окопаться <kbd>D</kbd></button>');
     if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push('<button class="btn sm" data-a="ambush" title="Часть не действует, а в ход противника встречает огнём того, кто войдёт рядом">Засада <kbd>A</kbd></button>');
+    if (!u.acted && !T.bomb && T.atk.soft >= 2 && u.k !== 'hq') acts.push(`<button class="btn sm ${G.mode === 'fire' ? 'on' : ''}" data-a="fire" title="Огонь с места по соседней цели: прижимает, клетку не занимает, окоп сохраняется. Быстро — Shift+клик по цели">Обстрел <kbd>R</kbd></button>`);
     if (u.str < MAX_STR && !u.acted && !u.moved) {
       const near = inFobZone(u.hex), rc = Math.max(1, Math.round(T.price / 10 * (near ? 1 - FOB.replaceOff : 1)));
       acts.push(`<button class="btn sm" data-a="replace" title="${near ? 'Склады командного пункта: на треть дешевле' : ''}">Пополнить (${rc} за шаг)${near ? ' <i class="cheap">КП</i>' : ''}</button>`);
@@ -673,6 +680,17 @@ function renderTip(sp) {
       <div class="row"><span>Шанс отхода противника</span><b>${Math.round(o.retreat * 100)}%</b></div>
       <div class="bar sm"><div style="width:${Math.round(o.retreat * 100)}%;background:var(--ac)"></div></div>
       <p class="hint">Мораль и опыт противника неизвестны — расчёт по типичным.</p>`;
+  } else if (t.fire) {
+    const o = t.fire, a = selUnit(), e = G.units.find(x => x.id === t.id);
+    if (!a || !e) { tip.hidden = true; return }
+    h = `<b>Обстрел: ${esc(unitName(a.side, a.k))} → ${esc(unitName(e.side, e.k))}</b>
+      <div class="row"><span>Сила огня</span><b>${o.A.toFixed(1)}</b></div><div class="row"><span>Оборона</span><b>${o.D.toFixed(1)}</b></div>
+      ${o.mods.map(m => `<div class="row mod ${(m.who === 'a') === (m.v > 1) ? 'good' : 'bad'}"><span>${esc(m.t)}</span><b>${m.who === 'a' ? 'огонь' : 'оборона'} ×${m.v.toFixed(2).replace('.', ',')}</b></div>`).join('')}
+      <div class="lbl">Ожидаемо</div>
+      <div class="row"><span>Потери противника</span><b class="good">${o.loss[0]}…${o.loss[1]}</b></div>
+      <div class="row"><span>Подавлено шагов</span><b class="good">${o.supp[0]}…${o.supp[1]}</b></div>
+      <div class="row"><span>Наши потери</span><b class="bad">${o.lossA[0]}…${o.lossA[1]}</b></div>
+      <p class="hint">Часть бьёт с места: клетку не занимает, окоп сохраняет, противник не отходит. Прижатую цель легче взять штурмом другой частью.</p>`;
   } else if (t.air) {
     const o = t.air, e = G.units.find(x => x.id === t.id);
     h = `<b>Авиаудар${e ? ' → ' + esc(unitName(e.side, e.k)) : ''}</b>
@@ -697,6 +715,7 @@ function showHelp() {
     <p><b>Движение.</b> Лес и высоты дороже, дорога — дешевле. Реку без моста колёсные не переходят, остальные — только с полным запасом хода. Рядом с противником — его <b>зона контроля</b>: вошёл — встал.</p>
     <p><b>Бой.</b> Наведите на цель — увидите соотношение сил и всё, что на него влияет: местность, окоп, охват, удар с двух сторон, реку, ночь, снабжение, штаб. Новое: <b>рельеф</b> (в гору ×0,88…0,8, с высоты ×1,1) и <b>взаимодействие родов войск</b> — цель, по которой в этот ход уже били танки, пехота атакует ×1,15 (и наоборот). Отход в клетку под огнём двух частей противника стоит шага силы.</p>
     <p><b>Артиллерия.</b> Огонь слабее в непогоду (дождь, туман, снег). Батарея, не стрелявшая в свой ход, прикрывает соседей и ведёт <b>контрбатарейный огонь</b> по артиллерии противника, открывшей огонь в её дальности.</p>
+    <p><b>Обстрел.</b> Любая боевая часть может вместо штурма бить по соседу <b>огнём с места</b> (<kbd>R</kbd> или Shift+клик по цели): потерь меньше у обеих сторон, зато цель прижата, а часть остаётся в своих окопах и клетку не занимает. Через реку — без штрафа.</p>
     <p><b>Оборона.</b> <b>Засада</b> встречает огнём того, кто войдёт рядом. Сапёры строят <b>укрепления</b> и <b>заграждения</b>, ставят мины, наводят понтоны, взрывают и <b>восстанавливают мосты</b>. В режимах «Оборона» и «Наступление» обороняющийся начинает в окопах, его точки укреплены.</p>
     <p><b>Территория и фронт.</b> Каждая клетка чья-то. Часть, прошедшая через клетку, забирает её и соседние — если те не прикрыты противником (рядом нет его частей) и это не его город: город берут, только войдя в него. Пустой карман чужой земли, окружённый вашей, переходит к вам. Линия фронта — граница территорий.</p>
     <p><b>Снабжение</b> (клавиша <b>S</b>) идёт <b>по дорогам</b>, как в Unity of Command. Источники — тыловые станции у вашего края карты (10), свои города-склады (7–9) и командный пункт (8). По дорожной сети своей земли снабжение расходится почти без потерь (на карте — синие линии), а с дороги стекает в поле: минус 2 за клетку, по лесу, болоту и горам больше, через реку без моста ещё дороже — дальше 3–4 клеток от дороги подвоза нет. Линию рвут чужая земля, взорванный мост и <b>зона контроля противника</b>, если в ней не стоит ваша часть; обойти разрыв полем нельзя — из поля снабжение на дорогу не возвращается. Воюйте вдоль дорог и режьте чужие. В дождь и снег грунтовки раскисают: в поле снабжение тает быстрее (до −3,2 за клетку), по дорогам — как прежде. От снабжения зависят восстановление боеприпасов и топлива, морали и пополнение: 7–10 — быстро и до 3 шагов, 4–6 — медленнее, 1–3 — запас не выше 2, 0 — котёл: запас тает, потом потери и сдача. Высаживать подкрепления можно только туда, куда снабжение доходит.</p>
@@ -732,7 +751,7 @@ function showHelp() {
     а части бывшего сектора теряют управление и −20 морали. Держите при КП охрану, а чужой ищите в тылу — это дешёвый способ
     развалить целое направление.</p>
     <div class="lbl">Управление</div>
-    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
+    <p>ЛКМ — выбрать / идти / атаковать · ПКМ — снять · перетаскивание — карта · колесо, <kbd>+</kbd> <kbd>−</kbd> — масштаб (к курсору) · <kbd>F</kbd> — вся карта · <kbd>C</kbd> — к выбранной части · <kbd>T</kbd> — типы клеток · <kbd>L</kbd> — деревья вблизи · <kbd>W</kbd> — погода на карте (только картинка) · <kbd>S</kbd> — снабжение · <kbd>Tab</kbd> — следующая часть · <kbd>D</kbd> — окопаться · <kbd>A</kbd> — засада · <kbd>R</kbd> — обстрел · <kbd>Enter</kbd> — конец хода · мини-карта — клик и перетаскивание.<br>
     Сенсорный экран: палец — карта, два пальца — масштаб, касание — выбор, долгое касание — снять выбор.</p>
     <p class="acts"><button class="btn pri" id="btnClose">Понятно</button></p>`;
   $('#modal').hidden = false;
@@ -1260,10 +1279,19 @@ function clickHex(h, e) {
   }
   if (there && (myUnit(there) || allyUnit(there) || G.spec)) return setSel(there.id === G.sel && !G.spec ? null : there.id);
   const tg = (G.targets || []).find(t => t.hex === h);
+  if (u && tg && !UT[u.k].bomb && (tg.fire || e.shiftKey)) { act({ t: 'fire', id: u.id, target: tg.id }); G.mode = null; hint(''); return }
   if (u && tg) { act(UT[u.k].bomb ? { t: 'bombard', id: u.id, hex: h } : { t: 'attack', id: u.id, target: tg.id }); return }
   if (u && G.reach && G.reach.has(h) && !G.reach.get(h).through) { act({ t: 'move', id: u.id, to: h }); return }
   if (there) { G.sel = there.id; G.tabR = 'unit'; syncTabs(); computeSel(); renderUI(); return }
   setSel(null);
+}
+/** «Обстрел»: переключить прицел выбранной части с атаки на огонь с места */
+function fireMode() {
+  const u = selUnit(), T = u && UT[u.k];
+  if (!u || !myUnit(u) || !G.isMyTurn || u.acted || T.bomb || T.atk.soft < 2 || u.k === 'hq') return;
+  G.mode = G.mode === 'fire' ? null : 'fire';
+  hint(G.mode ? 'Обстрел: кликните по соседней части противника — огонь с места, без штурма. ПКМ — отмена.' : '');
+  computeSel(); renderUI();
 }
 function orderClick(k) {
   const O = ORDERS[k];
@@ -1394,6 +1422,7 @@ function bind() {
     else if (k === 'dig') act({ t: 'dig', id: u.id });
     else if (k === 'replace') act({ t: 'replace', id: u.id });
     else if (k === 'ambush') act({ t: 'ambush', id: u.id });
+    else if (k === 'fire') fireMode();
     else if (k.startsWith('eng:')) { G.mode = k; hint({ 'eng:fort': 'Укрепления: своя или соседняя клетка (до 2 уровней).', 'eng:obst': 'Заграждения: своя или соседняя клетка — технике вход стоит всего хода.', 'eng:bridge': 'Понтон: кликните по соседней клетке за рекой.', 'eng:blow': 'Кликните по соседней клетке за мостом.', 'eng:mine': 'Мины: своя или соседняя пустая клетка.', 'eng:clear': 'Кликните по соседней клетке с чужими минами.', 'eng:repair': 'Кликните по соседней клетке за взорванным мостом (противника рядом быть не должно).' }[k] + ' ПКМ — отмена.') }
   });
   $('#menu').addEventListener('change', e => { if (e.target && e.target.id === 'saveFile') uploadSave(e.target.files && e.target.files[0]) });
@@ -1505,6 +1534,7 @@ function bind() {
     else if (e.key === 'Escape') { G.mode = null; G.spawn = null; hint(''); setSel(null); hideModal() }
     else if ((k === 'd' || k === 'в') && selUnit()) act({ t: 'dig', id: G.sel });
     else if ((k === 'a' || k === 'ф') && selUnit()) act({ t: 'ambush', id: G.sel });
+    else if ((k === 'r' || k === 'к') && selUnit()) fireMode();
     else if (k === 's' || k === 'ы') { G.showSupply = !G.showSupply; renderUI() }
     else if (k === 'h' || k === 'р') { G.showCmd = !G.showCmd; renderUI() }
     else if (k === 't' || k === 'е') { G.showTypes = !G.showTypes; const b = document.querySelector('[data-z=types]'); if (b) b.classList.toggle('on', G.showTypes) }

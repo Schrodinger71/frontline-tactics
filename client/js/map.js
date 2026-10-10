@@ -519,12 +519,13 @@ function startAnim(e) {
     const A = center(e.ah), D = center(e.dh), ka = unitKind(e.a), kd = unitKind(e.d);
     const heavyA = ka && (UT[ka].arm === 'hard' || ka === 'at'), heavyD = kd && (UT[kd].arm === 'hard' || kd === 'at');
     fxAdd({ k: 'tracer', a: A, b: D, t0: now, d: .9 * k, heavy: heavyA, seed: Math.random() * 99 });
-    if (!e.amb) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
+    if (!e.amb && !(e.fire && !e.la)) fxAdd({ k: 'tracer', a: D, b: A, t0: now + .18 * k, d: .8 * k, heavy: heavyD, seed: Math.random() * 99, col: '255,190,120' });
+    if (e.fire) { fxAdd({ k: 'tracer', a: A, b: D, t0: now + .35 * k, d: .8 * k, heavy: heavyA, seed: Math.random() * 99 }); floatText({ x: A.x, y: A.y - 4 }, 'обстрел', '#ffb070') }
     if (e.amb) floatText({ x: D.x, y: D.y - 4 }, 'засада!', '#ffd479', 1);
     const hits = 2 + Math.min(3, e.ld || 0);
     for (let i = 0; i < hits; i++) fxBoom(ringPt(D, 1.6, 4.2), heavyA ? .85 : .6, (.25 + i * .13) * k, { noMark: i > 2 });
     if (e.la) fxBoom(ringPt(A, 1.6, 4), heavyD ? .75 : .55, .5 * k, {});
-    ANIMS.cur = { end: now + 1.05 * k, done() { floatText(D, e.ld ? '−' + e.ld : 'без потерь', e.ld ? '#ff8f80' : '#cfe0ea', e.ld >= 3); if (e.la) floatText({ x: A.x, y: A.y - 2 }, '−' + e.la, '#ffb070'); upd(e.d, -e.ld); upd(e.a, -e.la) } };
+    ANIMS.cur = { end: now + 1.05 * k, done() { floatText(D, (e.ld ? '−' + e.ld : e.su ? '' : 'без потерь') + (e.su ? (e.ld ? ' ' : '') + '⚡' + e.su : ''), e.ld ? '#ff8f80' : e.su ? '#ffb070' : '#cfe0ea', e.ld >= 3); if (e.la) floatText({ x: A.x, y: A.y - 2 }, '−' + e.la, '#ffb070'); upd(e.d, -e.ld); upd(e.a, -e.la) } };
     Sound.gun({ ...D, kind: heavyA ? 'tank' : 'mg' }); setTimeout(() => Sound.boom({ ...D, w: 40 }, true), 300 * k);
   } else if (e.e === 'shell') {
     const D = center(e.hex), A = e.from !== null && e.from !== undefined ? center(e.from) : null;

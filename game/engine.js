@@ -320,6 +320,7 @@ class Game {
     if (t === 'move') return this.move(u, +a.to);
     if (t === 'attack') return this.attack(u, this.byId(+a.target));
     if (t === 'bombard') return this.bombard(u, +a.hex);
+    if (t === 'fire') return this.fire(u, this.byId(+a.target));
     if (t === 'replace') return this.replace(u);
     if (t === 'attach') return this.attachSpec(seat, u, a.k, false);
     if (t === 'eng') return this.engAct(u, a.task, +a.hex);
@@ -873,6 +874,40 @@ class Game {
     this.advanceAfterFight(u, T, fresh);
     this.updateVision(u.side); this.updateVision(oppOf(u.side));
     return { ok: true, la, ld };
+  }
+  /** обстрел: огневой бой с места по соседней цели — прижать, не штурмуя. Клетку не занимаем,
+      окоп не теряем, цель не отходит; ответный огонь слабее, чем в атаке (W.FIREFIGHT) */
+  fire(u, e) {
+    const T = UT[u.k];
+    if (!e || e.side === u.side) return { ok: false, error: 'нет цели' };
+    if (u.acted) return { ok: false, error: 'часть уже действовала' };
+    if (T.bomb) return { ok: false, error: 'артиллерия бьёт огнём — «Огонь»' };
+    if (this.H.hexDist(u.hex, e.hex) !== 1) return { ok: false, error: 'цель не рядом' };
+    if (!this.seen(u.side, e)) return { ok: false, error: 'цель не видна' };
+    if (!(T.atk[UT[e.k].arm] > 0)) return { ok: false, error: 'по этой цели бить нечем' };
+    if (u.org < 20) return { ok: false, error: 'часть дезорганизована' };
+    if (u.sp <= 0) return { ok: false, error: 'нет боеприпасов — запасы кончились' };
+    if (Rules.effStr(u) <= 0) return { ok: false, error: 'все шаги подавлены — ждите своего хода' };
+    const o = Rules.fireOdds(this.ctxFor(u.side, true), u, e);
+    const ld = Math.min(e.str, Math.round(o.kill * this.R(.5, 1.5)));
+    const la = Math.min(u.str, Math.round(o.back * this.R(.5, 1.5)));
+    const sp = Math.round(o.sup * this.R(.6, 1.4));
+    u.acted = true; u.mp = 0; u.revealed = this.turn;
+    e.revealed = this.turn; e.hitThisTurn = true; e.hb = (e.hb || 0) | Rules.ARMBIT[T.arm];
+    this.ev({ e: 'fight', to: '*', a: u.id, d: e.id, ah: u.hex, dh: e.hex, la, ld, r: +o.r.toFixed(2), fire: 1, su: sp });
+    this.say(u, 'firefight', { lb: W.lc(W.unitName(e.side, e.k)) });
+    this.loss(e, ld, u);
+    this.loss(u, la, e);
+    if (e.str > 0) {
+      if (sp) { e.su = Math.min(e.str, (e.su || 0) + sp); e.sup = true }
+      e.org = Math.max(0, e.org - 4 - ld * 3 - sp); this.gainXp(e, .02);
+      this.say(e, 'pinned', {}, 'w');
+    }
+    if (u.str > 0) { u.org = Math.max(0, u.org - la * 4); this.gainXp(u, .03) }
+    /* уничтоженную огнём цель не преследуем: клетка остаётся пустой */
+    this.lastVacated = null;
+    this.updateVision(u.side); this.updateVision(oppOf(u.side));
+    return { ok: true, la, ld, su: sp };
   }
   /** занять освободившуюся клетку после боя (отход, гибель или захват ставки) */
   advanceAfterFight(u, T, fresh) {

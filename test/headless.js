@@ -143,6 +143,33 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(!g.act(N, { t: 'bombard', id: m.id, hex: e.hex }).ok, 'на следующий ход РСЗО ещё перезаряжается');
   console.log('механики 3.2: ok');
 }
+/* обстрел: огонь с места — клетку не занимаем, окоп не теряем, цель не отходит */
+{
+  const g = new Game('both', N, 11, 'steppe');
+  g.ready.n = g.ready.s = true; g.tryStart();
+  const side = g.active, en = side === N ? S : N, H = g.H;
+  g.updateSupply(side);
+  const h0 = [...Array(H.NH).keys()].find(h => g.sv[side][h] >= 7 && !g.unitAt(h) && g.passable('inf', h) && H.neighbors(h).some(n => !g.unitAt(n) && g.passable('inf', n)));
+  const a = g.spawn('inf', side, h0), b = g.spawn('inf', en, H.neighbors(h0).find(n => !g.unitAt(n) && g.passable('inf', n)));
+  a.ent = 2; g.updateVision(side);
+  const ctx = g.ctxFor(side, true), f = Rules.fireOdds(ctx, a, b), o = Rules.odds(ctx, a, b);
+  assert(f.sup > f.kill, 'обстрел больше прижимает, чем убивает');
+  assert(f.kill + f.sup / 2 < o.expD && f.back < o.expA, 'обстрел слабее штурма и дешевле для стреляющего');
+  const ha = a.hex, hb = b.hex;
+  assert(g.act(side, { t: 'fire', id: a.id, target: b.id }).ok, 'обстрел соседней цели');
+  assert(a.hex === ha && a.ent === 2 && a.acted, 'стреляющий на месте и в окопе');
+  assert(b.str <= 0 || b.hex === hb, 'цель под обстрелом не отходит');
+  assert(!g.act(side, { t: 'fire', id: a.id, target: b.id }).ok, 'второй раз за ход — нельзя');
+  /* уничтоженную огнём цель не преследуем */
+  const c = g.spawn('tnk', side, H.neighbors(hb).find(n => n !== ha && !g.unitAt(n) && g.passable('tnk', n)));
+  if (b.str > 0) { b.str = 1; b.su = 0; const hc = c.hex; g.updateVision(side);
+    for (let i = 0; i < 40 && b.str > 0; i++) { c.acted = false; g.act(side, { t: 'fire', id: c.id, target: b.id }) }
+    assert(c.hex === hc, 'после обстрела клетку не занимают'); }
+  const art = g.spawn('art', side, H.neighbors(ha).find(n => !g.unitAt(n) && g.passable('art', n)));
+  const d = g.spawn('inf', en, H.neighbors(art.hex).find(n => !g.unitAt(n) && g.passable('inf', n))); g.updateVision(side);
+  assert(!g.act(side, { t: 'fire', id: art.id, target: d.id }).ok, 'артиллерия обстрелом в упор не бьёт — у неё «Огонь»');
+  console.log('обстрел: ok');
+}
 /* механики 3.3: топливо, подавленные шаги, специалисты, погода в снабжении */
 {
   const Hex = require('../shared/hex'), W = require('../shared/world');

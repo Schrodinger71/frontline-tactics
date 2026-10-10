@@ -258,12 +258,16 @@ module.exports = {
     }
     if (!plan) return false;
     for (const c of plan.group) if (c.u.hex !== c.h) this.act(seat, { t: 'move', id: c.u.id, to: c.h });
-    for (const c of plan.group) {
+    /* кому штурмовать рано — прижимают цель огнём с места, и только потом идут остальные */
+    const weak = (c, e) => Rules.odds(this.ctxFor(side, false), c.u, e).r < Math.max(1, thr * .7);
+    for (const pass of ['fire', 'attack']) for (const c of plan.group) {
       const e = this.byId(plan.e.id);
-      if (!e || c.u.str <= 0 || c.u.acted || this.H.hexDist(c.u.hex, e.hex) !== 1) continue;
-      const o = Rules.odds(this.ctxFor(side, false), c.u, e);
-      if (o.r < Math.max(1, thr * .7)) continue;
-      this.act(seat, { t: 'attack', id: c.u.id, target: e.id });
+      if (!e || e.str <= 0 || c.u.str <= 0 || c.u.acted || this.H.hexDist(c.u.hex, e.hex) !== 1) continue;
+      if (pass === 'fire') {
+        if (!weak(c, e)) continue;
+        const f = Rules.fireOdds(this.ctxFor(side, false), c.u, e);
+        if (f.sup >= 1 && f.back < 1) this.act(seat, { t: 'fire', id: c.u.id, target: e.id });
+      } else if (!weak(c, e)) this.act(seat, { t: 'attack', id: c.u.id, target: e.id });
     }
     return true;
   },

@@ -234,6 +234,9 @@
      дешёвое пополнение и командный ресурс. Всё это выключается, пока
      рядом с пунктом стоит противник (пункт блокирован). */
   const FOB = { replaceOff: .3, orderOff: 1 };
+  /* обстрел — огневой бой с места по соседней цели, без штурма: dmg — доля эффекта обычной атаки,
+     kill — сколько из него потерь (остальное — подавленные шаги), back — доля ответных потерь */
+  const FIREFIGHT = { dmg: .55, kill: .35, back: .35 };
   const ORDERS = {
     barrage: { n: 'Артподготовка', cp: 2, tgt: 'none', d: 'В этот ход вся артиллерия бьёт в полтора раза сильнее.' },
     march:   { n: 'Форсированный марш', cp: 1, tgt: 'unit', d: 'Части +3 очка хода, мораль −10.' },
@@ -276,7 +279,7 @@
   const api = {
     GAME_VERSION, WW, WH, N, S, COL, SIDE_NAME, SIDE_GEN, UT, UT_ORDER, MAX_STR,
     FACTIONS, SIDE_FACTION, utFor, unitName, unitsFor, factionOf, MAX_SEATS, HQ_CAPTURE_CP, ROLE_TXT, CS_N, CS_S, POINT_DEF, ROAD_LINKS,
-    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, ORDERS, ORDER_LIST,
+    START_BUDGET, BASE_INCOME, INCOME_PER_WEIGHT, ROLE_BUDGET_MUL, ROLE_INCOME_MUL, SCORE_RATE, TURN_LIMIT, MAX_UNITS, DEPLOY_X, AIR, SUPPLY, supTier, SPECS, SPEC_ORDER, usesFuel, CP, FOB, FIREFIGHT, ORDERS, ORDER_LIST,
     TRAITS, GEN_FIRST, GEN_LAST,
     clamp, dist, lerp, mulberry, pick, hourOfTurn, isNight, turnClock, dayOfTurn, lc, sq, elCount
   };

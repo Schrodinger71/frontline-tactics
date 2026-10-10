@@ -3,7 +3,7 @@
 ## Purpose
 Ближний бой соседних частей, огонь с закрытых позиций, авиация и ПВО, подавленные шаги, отход и сдача.
 
-**Код:** `shared/rules.js` — `odds`, `bombardOdds`, `firePow`, `effStr`, `airCover`, `airOdds`, `aaZone`, `ambushHit`, `terrainDef`; `game/engine.js` — `attack`, `advanceAfterFight`, `retreat`, `loss`, `bombard`, `counterBattery`, `hitByFire`, `airAct`, `setAmbush`; значения — `shared/world.js` `UT`, `AIR`, `SUPPLY.att/def`.
+**Код:** `shared/rules.js` — `odds`, `fireOdds`, `bombardOdds`, `firePow`, `effStr`, `airCover`, `airOdds`, `aaZone`, `ambushHit`, `terrainDef`; `game/engine.js` — `attack`, `fire`, `advanceAfterFight`, `retreat`, `loss`, `bombard`, `counterBattery`, `hitByFire`, `airAct`, `setAmbush`; значения — `shared/world.js` `UT`, `AIR`, `FIREFIGHT`, `SUPPLY.att/def`.
 
 ## Requirements
 
@@ -30,6 +30,16 @@
 - GIVEN у обороняющегося подавлено 4 шага из 10
 - WHEN считается атака по нему
 - THEN соотношение выше, в множителях строка «подавлено 4 из 10»
+
+### Requirement: Обстрел с места
+Любая часть, кроме артиллерии и РСЗО, SHALL вместо атаки бить огнём по видимой соседней цели, по классу брони которой у неё есть атака (действие `fire`). Расчёт — `Rules.fireOdds`: силы и множители атаки, но без реки, заграждений, мин и огня поддержки; эффект — доля `FIREFIGHT.dmg` от атаки, из него `FIREFIGHT.kill` — потери, остальное — подавленные шаги; ответные потери — доля `FIREFIGHT.back`. Стреляющий MUST NOT менять клетку и терять окоп, цель MUST NOT отходить; освободившуюся клетку не занимают. Обстрел тратит действие и очки хода части. В клиенте — кнопка «Обстрел», клавиша R или Shift+клик по цели.
+
+**Код:** `shared/rules.js` — `fireOdds`; `game/engine.js` — `fire`; `client/js/main.js` — `fireMode`, `computeSel`.
+
+#### Scenario: Огонь из окопа
+- GIVEN пехота в окопе 2, рядом видна часть противника
+- WHEN пехота выполняет обстрел
+- THEN цель получает потери и подавленные шаги и остаётся на месте, пехота стоит на своей клетке в окопе 2 и больше в этот ход не действует
 
 ### Requirement: Огонь с закрытых позиций
 Артиллерия и РСЗО SHALL бить по видимой цели в дальности `UT[k].bomb.rng` без ответа; эффект делится на потери и подавление (доля потерь `FIRE_KILL`), РСЗО задевает соседей цели долей `bomb.area`. После залпа часть не действует; при `bomb.reload` > 0 пропускает столько своих ходов.

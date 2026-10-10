@@ -832,7 +832,7 @@ function showBrief() {
   $('#modal').hidden = false;
 }
 function showEnd() {
-  if (G.scen && !G.spec && G.over.w === G.side) { try { if (G.scen.tutorial) localStorage.setItem('turn.learn', '1'); else { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } } catch (e) { /* приватный режим */ } }
+  if (G.scen && !G.spec && G.over.w === G.side) { try { if (G.scen.tutorial) learnMark(G.scen.id); else { const d = JSON.parse(localStorage.getItem('turn.camp') || '{}'); d[G.scen.id] = 1; localStorage.setItem('turn.camp', JSON.stringify(d)) } } catch (e) { /* приватный режим */ } }
   const carry = campCarrySave();
   const title = G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
   const st = G.stats || {}, en = G.enemyStats || {};
@@ -1589,7 +1589,7 @@ function bind() {
       else netSend({ t: 'create', mode: M.mode, side: M.me.side, map: G.mapPick, seats: plan, name: myName });
     }
     else if (a === 'scen') netSend({ t: 'create', mode: el.dataset.id, side: M.side, vsBot: true, seats: scenPlan(el.dataset.id), name: myName, carry: campCarryOk(el.dataset.id) ? campCarryFor(el.dataset.id) : undefined });
-    else if (a === 'tutor') netSend({ t: 'create', mode: 'tutor', side: N, vsBot: true, seats: { [N]: ['me'], [S]: ['bot'] }, name: myName });
+    else if (a === 'lab') netSend({ t: 'create', mode: el.dataset.id, side: N, vsBot: true, seats: { [N]: ['me'], [S]: ['bot'] }, name: myName });
     else if (a === 'watch') netSend({ t: 'create', mode: el.dataset.mode, watch: true, map: G.mapPick });
     else if (a === 'netRefresh') netPoll();
     else if (a === 'ldSave' || a === 'dlSave' || a === 'rmSave') {

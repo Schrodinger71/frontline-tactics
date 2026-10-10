@@ -641,6 +641,8 @@ class Game {
     this.barrage[side] = false; this.counter[side] = false;
     for (const [h, s] of this.smoke) if (s === side) this.smoke.delete(h);
     const cmd = this.cmdHexes(side);
+    /* видимость — раньше признака подготовленной атаки: иначе соседство с противником в начале сцены не видно */
+    this.updateVision(side);
     for (const u of this.units) if (u.side !== side) u.hb = 0;   /* «связан боем» — только в чужой ход */
     for (const u of this.units) {
       if (u.side !== side || u.str <= 0) continue;

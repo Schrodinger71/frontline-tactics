@@ -56,7 +56,7 @@ function play(mode, seed, map) {
     sweep: !!map,
     timeout: g.turn >= g.limit };
 }
-const SCENS = ['tutor', 'bridge', 'breakthrough', 'night'];
+const SCENS = ['bridge', 'breakthrough', 'night'];
 const FREE = ['both', 'attack', 'defense'];
 const per = +process.argv[2] || 2;
 /* партий на сценарий кампании: второй аргумент, иначе столько же, сколько на режим.
@@ -391,18 +391,28 @@ for (const map of require('../shared/maps').MAP_ORDER) {
     assert.strictEqual(Game.cleanCarry({ vets: 'x', bonus: 'много' }, N), null, 'мусор вместо переноса — ничего');
     assert.strictEqual(new Game('both', N, 36, 'valley', { carry }).units.filter(u => u.vet).length, 0, 'вне сценария перенос не действует');
   }
-  /* --- учебная операция и кадры повтора --- */
-  {
-    const g = new Game('tutor', N, 37);
-    g.bots = { n: true, s: true }; g.tryStart();
-    assert.strictEqual(g.phase, 'battle', 'обучение начинается без расстановки');
+  /* --- учебные сцены: каждая начинается без расстановки, никого не бьёт бот и доигрывается --- */
+  for (const id of ['lab_recon', 'lab_fire', 'lab_attack', 'lab_flank', 'lab_remnant', 'lab_supply', 'lab_air', 'lab_order', 'lab_ui']) {
+    const g = new Game(id, N, 37);
+    g.bots = { s: true }; g.tryStart();
+    assert.strictEqual(g.phase, 'battle', id + ': сцена начинается без расстановки');
     g.drainEvents();
     const sn = g.snapshotFor(N).scen;
-    assert(sn.tutorial === 1 && sn.tip && sn.tip.n === 1 && sn.tip.of === 6, 'подсказка первого хода — ученику');
-    assert.strictEqual(g.snapshotFor(S).scen.tip, null, 'противнику подсказок нет');
+    assert(sn.tutorial === 1 && sn.id === id, id + ': сцена помечена учебной');
+    const mine0 = g.units.filter(u => u.side === N).reduce((s, u) => s + u.str, 0);
+    /* ученик только заканчивает ход; за противника играет бот */
+    let guard = 0;
+    while (!g.over && guard++ < 100) { for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) { if (g.bots[st.id]) g.botTurn(st.id); else g.act(st.id, { t: 'end' }) } g.drainEvents() }
+    assert(g.over && g.over.w === N, id + ': сцена доигрывается и засчитывается');
+    const mine1 = g.units.filter(u => u.side === N).reduce((s, u) => s + u.str, 0);
+    assert.strictEqual(mine1, mine0, id + ': ход противника ничего не отнял у ученика');
+  }
+  /* --- кадры повтора --- */
+  {
+    const g = new Game('lab_attack', N, 38);
+    g.bots = { n: true, s: true }; g.tryStart();
     let guard = 0;
     while (!g.over && guard++ < 100) { for (const st of g.seatsOf(g.active)) if (!g.done[st.id]) g.botTurn(st.id); g.drainEvents() }
-    assert(g.over, 'обучение доигрывается');
     assert(g.frames.length >= 2 && g.frames[0].u.length && g.frames[0].terr.length === g.H.NH && g.frames[g.frames.length - 1].p.length === g.pts.length, 'кадры повтора записаны');
   }
   /* --- бот покупает и ставит склад --- */
@@ -842,7 +852,7 @@ for (const map of require('../shared/maps').MAP_ORDER) {
    сдвиг доли побед или длины партий виден сразу, в том числе в CI.
    ============================================================ */
 const MODE_RU = { both: 'встречный бой', attack: 'наступление', defense: 'оборона' };
-const SCEN_RU = { tutor: 'Учебная операция', bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
+const SCEN_RU = { lab_recon: 'Разведка боем', lab_fire: 'Огонь с места', lab_attack: 'Штурм и готовая позиция', lab_flank: 'Обход', lab_remnant: 'Остатки и арьергард', lab_supply: 'Снабжение и склад', lab_air: 'Авиаудар и ПВО', lab_order: 'Приказы штаба', lab_ui: 'Инструменты', bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const pct = (k, n) => n ? Math.round(k * 100 / n) + '%' : '—';
 const f1 = x => x.toFixed(1);

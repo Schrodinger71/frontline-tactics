@@ -410,9 +410,11 @@ function renderTop() {
   }
   $('#hdIncome').textContent = G.spec ? `+${G.income.n} · +${G.income.s}` : '+' + G.income;
   $('#hdCp').textContent = G.spec ? `${(G.cp || {}).n || 0} · ${(G.cp || {}).s || 0}` : `${G.cp || 0} из ${CP.max}`;
-  const who = G.phase === 'deploy' ? 'Расстановка' : G.over ? 'Итог' : G.spec ? 'Ходит ' + SIDE_GEN[G.active] : G.isMyTurn ? 'Ваш ход' : 'Ход противника…';
+  const who = G.phase === 'deploy' ? 'Расстановка' : G.over ? 'Итог ▸' : G.spec ? 'Ходит ' + SIDE_GEN[G.active] : G.isMyTurn ? 'Ваш ход' : 'Ход противника…';
   $('#hdActive').textContent = who;
-  $('#hdActive').className = G.isMyTurn || G.phase === 'deploy' ? 'ac' : 'mu';
+  /* после конца партии надпись — кнопка: вернуть экран итога (и повтор), если его закрыли */
+  $('#hdActive').className = G.over ? 'ac lnk' : G.isMyTurn || G.phase === 'deploy' ? 'ac' : 'mu';
+  $('#hdActive').title = G.over ? 'Показать итог партии и повтор' : '';
   $('#btnUndo').hidden = !(G.isMyTurn && G.undo && !G.rp);
   syncLayers();
   const btn = $('#btnEnd');
@@ -702,6 +704,8 @@ function renderUI(force) {
   /* подсказка с расчётом — под курсором: сменили прицел клавишей (обстрел, разведка боем),
      выбрали другую часть или пришёл снимок — она пересчитывается сразу, без движения мыши */
   if (G.mouse && G.mouse.inside) renderTip(G.mouse);
+  /* режим метки могли снять правой кнопкой или Esc — кнопка во вкладке связи гаснет вместе с ним */
+  syncMarkBtns();
 }
 function syncTabs() { document.querySelectorAll('#right .tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === G.tabR)) }
 function histSVG(h) {
@@ -1472,6 +1476,7 @@ function bind() {
   applyScreenFX();
   $('#btnEnd').onclick = endTurn;
   $('#btnUndo').onclick = undoMove;
+  $('#hdActive').onclick = () => { if (G.over && !G.rp && G.roomId) showEnd() };
   $('#layerBox').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (b) toggleLayer(b.dataset.l) });
   $('#btnHelp').onclick = showHelp;
   $('#btnMenu').onclick = () => { if (!G.roomId || G.over || confirm('Выйти в меню?')) leaveToMenu() };
@@ -1812,11 +1817,12 @@ function chatAdd(m) {
   if (!$('#chat').classList.contains('open') || G.chatTab !== (m.to === 'team' ? 'team' : 'all')) G.chatNew = (G.chatNew || 0) + 1;
   chatRender();
 }
-/** метка союзника: значок на карте на минуту и строка в командном чате (клик — показать) */
+/** метка союзника: значок на карте на десять секунд и строка в командном чате (клик — показать).
+    У каждого командира на карте одна метка: новая заменяет его прежнюю — так карту не заспамить. */
 function markAdd(m) {
   if (!(m.hex >= 0 && m.hex < H.NH) || !MARK_TXT[m.k]) return;
-  (G.marks = G.marks || []).push({ hex: m.hex, k: m.k, name: String(m.name || ''), t0: RT() });
-  if (G.marks.length > 12) G.marks.shift();
+  G.marks = (G.marks || []).filter(x => x.seat !== m.seat);
+  G.marks.push({ hex: m.hex, k: m.k, name: String(m.name || ''), seat: m.seat, t0: RT() });
   (G.chat = G.chat || []).push({ to: 'team', side: G.side, name: String(m.name || ''), text: MARK_ICON[m.k] + ' ' + MARK_TXT[m.k], hex: m.hex, sys: 1 });
   if (!$('#chat').classList.contains('open')) G.chatNew = (G.chatNew || 0) + 1;
   Sound.radio && Sound.radio('hq');
@@ -1888,6 +1894,7 @@ function replayShow(i) {
   G.visV++;
   const mine = (G.spec || G.side === N ? 1 : -1) * f.s;
   $('#rpSlide').value = rp.i;
+  $('#hdTurn').textContent = (f.t + 1) + ' из ' + G.limit;
   $('#rpLbl').textContent = `Ход ${f.t + 1} · кадр ${rp.i + 1} из ${F.length} · перевес ${mine > 0 ? '+' : ''}${Math.round(mine)}`;
   document.querySelector('#replayBar [data-rp=play]').textContent = rp.timer ? '❚❚' : '▶';
 }

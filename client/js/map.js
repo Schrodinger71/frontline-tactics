@@ -439,8 +439,8 @@ function drawThreat() {
     cx.strokeStyle = 'rgba(255,170,90,.8)'; cx.lineWidth = 1.6; cx.setLineDash([5, 4]); cx.stroke(); cx.setLineDash([]);
   }
 }
-/** метки союзников: значок, подпись и расходящееся кольцо; живут минуту */
-const MARK_COL = { atk: '#ff8a72', def: '#6cc3ff', look: '#ffd479' }, MARK_GL = { atk: '⚔', def: '⛨', look: '◎' }, MARK_SEC = 60;
+/** метки союзников: значок, подпись и расходящееся кольцо; живут MARK_SEC секунд */
+const MARK_COL = { atk: '#ff8a72', def: '#6cc3ff', look: '#ffd479' }, MARK_GL = { atk: '⚔', def: '⛨', look: '◎' }, MARK_SEC = 10;
 function drawMarks() {
   if (!G.marks || !G.marks.length) return;
   const now = RT(), s = G.view.s, R = Hex.R * s;
@@ -448,7 +448,7 @@ function drawMarks() {
   for (const m of G.marks) {
     const q = w2s(H.center(m.hex));
     if (!onScreen(q, 60)) continue;
-    const age = now - m.t0, a = clamp((MARK_SEC - age) / 6, 0, 1), col = MARK_COL[m.k], k = (age * .8) % 1;
+    const age = now - m.t0, a = clamp((MARK_SEC - age) / 2, 0, 1), col = MARK_COL[m.k], k = (age * .8) % 1;
     cx.save(); cx.globalAlpha = a;
     cx.beginPath(); cx.arc(q.x, q.y, R * (.5 + k * .7), 0, 7); cx.strokeStyle = col; cx.globalAlpha = a * (1 - k); cx.lineWidth = 3; cx.stroke();
     cx.globalAlpha = a;
@@ -800,7 +800,9 @@ function drawRecap() {
     const cur = lines[lines.length - 1], next = cur ? cur + '  ·  ' + p : p;
     if (cur && cx.measureText(next).width > maxW) lines.push(p); else lines[lines.length - 1] = next;
   }
-  const w = Math.max(...lines.map(l => cx.measureText(l).width)) + 24, hgt = lines.length * 17 + 12, x0 = xl, y0 = a.t + 10;
+  /* подсказка обучения занимает верх карты — сводка встаёт под неё */
+  const tut = document.getElementById('tutor'), tutH = tut && !tut.hidden ? tut.offsetHeight + 8 : 0;
+  const w = Math.max(...lines.map(l => cx.measureText(l).width)) + 24, hgt = lines.length * 17 + 12, x0 = xl, y0 = a.t + 10 + tutH;
   cx.fillStyle = 'rgba(8,13,18,.93)'; rr(cx, x0, y0, w, hgt, 6); cx.fill();
   cx.strokeStyle = 'rgba(255,107,85,.7)'; cx.lineWidth = 1.2; rr(cx, x0 + .5, y0 + .5, w - 1, hgt - 1, 6); cx.stroke();
   lines.forEach((l, i) => { cx.fillStyle = i ? '#f1c9bf' : '#ffd9cf'; cx.fillText(l, x0 + 12, y0 + 19 + i * 17) });

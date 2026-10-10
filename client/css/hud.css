@@ -421,3 +421,20 @@ body:has(#chat.open) .zbox{right:calc(min(320px,88vw) + 12px)}
 #replayBar input{width:min(260px,30vw);accent-color:var(--ac)}
 #rpLbl{min-width:13em;font-weight:600;white-space:nowrap}
 @media (max-width:640px){#rpLbl{min-width:0;font-size:.85em}#layerBox{bottom:58px}}
+#hdActive.lnk{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+#hdActive.lnk:hover{color:#fff}
+/* низкий экран (телефон боком): слои — второй колонкой рядом с масштабом, вкладка связи — в нижний угол */
+@media (max-height:520px){
+  #layerBox{top:calc(var(--th) + 12px);bottom:auto;right:58px}
+  body:has(#chat.open) #layerBox{right:calc(min(320px,88vw) + 58px)}
+  #chatTab{top:auto;bottom:6px;transform:none;padding:.7em 0}
+}
+/* средняя ширина (планшет, телефон боком, узкое окно): в бою шапка не помещалась и «Меню» с «?» уезжали
+   за край. Убираем второстепенное и даём шапке прокрутку, если всё равно тесно. */
+@media (max-width:1100px){
+  #top{gap:.5em;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  #top::-webkit-scrollbar{display:none}
+  #top .brand{display:none}
+  #top .kv:not(.keep){display:none}
+  #top .btn{flex:none}
+}

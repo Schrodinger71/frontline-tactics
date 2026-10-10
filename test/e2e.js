@@ -238,6 +238,7 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
     const tm = await mate.wait(m => m.t === 'chat' && m.to === 'team');
     assert.strictEqual(tm.text, 'атакую мост');
     host.send({ t: 'mark', hex: 100, k: 'atk' }); host.send({ t: 'mark', hex: -5, k: 'atk' }); host.send({ t: 'mark', hex: 101, k: 'zzz' });
+    for (let i = 0; i < 6; i++) host.send({ t: 'mark', hex: 110 + i, k: 'def' });   /* спам: сверх трёх за шесть секунд — отброшено */
     const mk = await mate.wait(m => m.t === 'mark');
     assert(mk.hex === 100 && mk.k === 'atk' && mk.name === 'Первый', 'метка дошла союзнику');
     await mate.wait(m => m.t === 'mark' && m.hex === 101 && m.k === 'look');
@@ -245,7 +246,7 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
     await sleep(200);
     assert(!foe.msgs.some(m => m.t === 'mark') && !view.msgs.some(m => m.t === 'mark'), 'метки противнику и зрителю не уходят');
     assert(!foe.msgs.some(m => m.t === 'chat' && m.to === 'team') && !view.msgs.some(m => m.t === 'chat' && m.to === 'team'), 'командный чат — только своим');
-    assert.strictEqual(mate.msgs.filter(m => m.t === 'mark').length, 2, 'мусорная метка и метка зрителя отброшены');
+    assert.strictEqual(mate.msgs.filter(m => m.t === 'mark').length, 2, 'мусорная метка, метка зрителя и спам отброшены');
     assert.strictEqual(foe.msgs.filter(m => m.t === 'chat').length, 1, 'пустые и нестроковые сообщения отброшены');
     /* вошедший позже видит общий чат, но не чужой командный */
     const late = client(port); await late.open;

@@ -127,7 +127,7 @@ class Room {
       t: 'joined', room: this.id, mode: this.mode, side, seat, vsBot: this.vsBot, watch: this.watch,
       bots: this.engine.bots, seats: this.seats(), host: this.hostSeat()
     });
-    client.send({ t: 'snap', v: this.engine.snapshotFor(seat || 'spec') });
+    this.flush();
     for (const m of this.talk) if (m.to === 'all' || (seat && m.side === side)) client.send(m);
     this.sendReplay();
     this.note(client, seat ? `${SIDE_NAME[side]}: ${this.who(seat)} подключился` : null);
@@ -245,6 +245,9 @@ class Room {
 
   /** разослать события (с туманом войны) и снимки */
   flush() {
+    /* пока в комнате никого — события копятся: первый вошедший получит журнал с начала
+       (условия операции, подсказки расстановки), а не пустую ленту */
+    if (!this.clients.size) return;
     const g = this.engine, evs = g.drainEvents();
     this.lastEvN = evs.filter(e => e.e !== 'log').length;
     for (const c of this.clients) {

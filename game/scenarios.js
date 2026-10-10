@@ -107,6 +107,8 @@ module.exports = {
     for (const [side, x, y] of sc.mines || []) { const h = this.H.hexAt(x, y); if (h >= 0) this.mines.set(h, { side, str: 1, known: { [side]: true } }) }
     this.raidV = this.units.filter(u => u.raid).reduce((s, u) => s + UT[u.k].price, 0);
     if (this.carry) this.applyCarry();
+    /* в учебной операции расставлять нечего: бой начинается сразу, без кнопки «Готов» */
+    if (sc.tutorial) for (const st of this.seats) this.ready[st.id] = true;
     this.events = [];
     this.log('*', `${sc.n}. ${sc.brief}`, 'hq');
     if (this.carryNote) this.log(this.carry.side, this.carryNote, 'g');

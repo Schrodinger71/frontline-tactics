@@ -136,7 +136,7 @@ function createServer() {
       } else if (m.t === 'pace') { if (client.room) client.room.setPace(client, m.value) }
       else if (m.t === 'seat') { if (client.room) client.room.seatOp(client, m) }
       else if (m.t === 'chat') { if (client.room && !tooOften(client, '_chat', 6, 5000)) client.room.chat(client, m) }
-      else if (m.t === 'mark') { if (client.room && !tooOften(client, '_mark', 8, 5000)) client.room.mark(client, m) }
+      else if (m.t === 'mark') { if (client.room && !tooOften(client, '_mark', 3, 6000)) client.room.mark(client, m) }
       else if (m.t === 'save') {
         const room = client.room;
         if (!room || !room.engine || !client.seat || room.watch) return client.send({ t: 'error', msg: 'Сохранять может только игрок за столом' });

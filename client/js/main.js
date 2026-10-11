@@ -830,6 +830,13 @@ function showHelp() {
   $('#modal').hidden = false;
 }
 function showBrief() {
+  /* учебная сцена: вводный текст — полными предложениями и без служебной строки про роли */
+  if (G.scen.tutorial || G.scen.exam) {
+    const n = G.scen.left, turns = n === 1 ? 'один ход' : n + (n < 5 ? ' хода' : ' ходов');
+    $('#mbox').innerHTML = `<h2>${esc(G.scen.n)}</h2><p>${esc(G.scen.brief)}</p><p class="mu">Вы играете за Альянс, и на эту ${G.scen.exam ? 'задачу' : 'сцену'} у вас есть ${turns}.${G.scen.tutorial ? ' Подсказка вверху экрана покажет, что нужно сделать.' : ''}</p><p class="acts"><button class="btn pri" id="btnClose">${G.scen.exam ? 'Начать бой' : 'Начать сцену'}</button></p>`;
+    $('#modal').hidden = false;
+    return;
+  }
   $('#mbox').innerHTML = `<h2>${esc(G.scen.n)}</h2><p>${esc(G.scen.brief)}</p><p class="mu">Вы — ${SIDE_NAME[G.side]} (${ROLE_LABEL[G.role[G.side]] || ''}). На задачу — ${G.scen.left} ход(ов).</p><p class="acts"><button class="btn pri" id="btnClose">К делу</button></p>`;
   $('#modal').hidden = false;
 }
@@ -847,14 +854,21 @@ function showEnd() {
   const carry = campCarrySave();
   /* учебная сцена: не «победа», а «пройдена», и сразу кнопка следующей */
   const lab = !G.spec && G.scen && (G.scen.tutorial || G.scen.exam) ? G.scen : null, nextLab = lab ? labNext(lab.id) : null;
-  const title = lab && lab.tutorial ? 'Сцена пройдена' : G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
+  const title = lab && lab.tutorial ? 'Вы прошли сцену' : G.spec ? (G.over.w ? 'Победа: ' + SIDE_NAME[G.over.w] : 'Ничья') : G.over.w === null ? 'Ничья' : G.over.w === G.side ? 'Победа' : 'Поражение';
   const st = G.stats || {}, en = G.enemyStats || {};
+  /* учебная сцена кончается без графика и счёта потерь: в ней никто не воевал всерьёз */
+  if (lab && lab.tutorial) {
+    $('#mbox').innerHTML = `<h2>${title}</h2><p>${nextLab ? 'Вы выполнили все шаги этой сцены и можете перейти к следующей.' : 'Вы выполнили все шаги этой сцены.'}</p>
+      <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button><button class="btn" id="btnLabs">Вернуться к списку сцен</button>${nextLab ? '<button class="btn pri" id="btnNextLab">Перейти к следующей сцене</button>' : ''}</p>`;
+    $('#modal').hidden = false;
+    return;
+  }
   $('#mbox').innerHTML = `<h2>${title}</h2><p>${esc(G.over.t)}</p><p class="mu">Операция длилась ${G.turn} ход(ов).</p>
     ${histSVG(G.history)}
     <div class="cols"><div><div class="lbl">${G.spec ? SIDE_NAME.n : 'Мы'}</div><div class="row"><span>Потеряно</span><b class="bad">${st.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${st.caps || 0}</b></div></div>
     <div><div class="lbl">${G.spec ? SIDE_NAME.s : 'Противник'}</div><div class="row"><span>Потеряно</span><b class="bad">${en.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${en.caps || 0}</b></div></div></div>
     ${carry ? `<p class="lnote">В следующую операцию кампании перейдут ветераны (${carry.vets.length}) — с опытом, специалистами и позывными — и ${carry.bonus} очков за досрочную победу.</p>` : ''}
-    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames && !lab ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}${lab ? `<button class="btn" id="btnLabs">К списку сцен</button>${lab.exam && G.over.w !== G.side ? '<button class="btn pri" id="btnLabAgain">Ещё раз</button>' : nextLab ? `<button class="btn pri" id="btnNextLab">Дальше: ${esc(nextLab.n)}</button>` : ''}` : '<button class="btn pri" id="btnNew">В меню</button>'}</p>`;
+    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames && !lab ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}${lab ? `<button class="btn" id="btnLabs">Вернуться к списку сцен</button>${lab.exam && G.over.w !== G.side ? '<button class="btn pri" id="btnLabAgain">Попробовать ещё раз</button>' : nextLab ? `<button class="btn pri" id="btnNextLab">Перейти к следующей сцене</button>` : ''}` : '<button class="btn pri" id="btnNew">В меню</button>'}</p>`;
   $('#modal').hidden = false;
 }
 function hideModal() { $('#modal').hidden = true; maybeSitePrompt() }

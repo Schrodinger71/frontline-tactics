@@ -16,137 +16,137 @@ const SCEN = {
      и учебный бой в конце (exam: противник воюет). В сценах с grid части расставлены по
      клеткам — [тип, колонка, ряд]: шагам подсказок (client/js/tutor.js) нужна точная геометрия. */
   lab_move: {
-    n: 'Первые шаги',
-    brief: 'Как выбрать часть, куда она может пойти и как закончить ход.',
+    n: 'Как ходить частями',
+    brief: 'В этой сцене вы научитесь выбирать часть, переводить её по карте, заканчивать ход и окапываться.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['inf', 11, 26], ['mot', 10, 28]],
       s: [['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_attack: {
-    n: 'Атака',
-    brief: 'Подойти к противнику, прочитать расчёт боя и ударить.',
+    n: 'Как атаковать противника',
+    brief: 'В этой сцене вы подведёте танки к противнику, прочитаете расчёт боя и нанесёте удар.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['tnk', 11, 26]],
       s: [['inf', 14, 26, {str: 6}], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_points: {
-    n: 'Точки и победа',
-    brief: 'За что идёт бой: города и узлы дают перевес и доход. Взятая точка закрепляется три хода.',
+    n: 'За что идёт бой',
+    brief: 'В этой сцене вы возьмёте город и узнаете, как точки приносят перевес и доход и почему взятую точку нужно удержать три хода.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true, owner: { pyl: S },
     forces: {
       n: [['hq', 13, 27], ['mot', 12, 26]],
       s: [['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_fire: {
-    n: 'Обстрел и охват',
-    brief: 'Прижать противника огнём с места и ударить другой частью с фланга.',
+    n: 'Как обстрелять и охватить противника',
+    brief: 'В этой сцене вы прижмёте противника огнём с места, а потом ударите по нему второй частью с другой стороны.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['inf', 13, 26, {ent: 2}], ['tnk', 12, 28]],
       s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_recon: {
-    n: 'Разведка боем и артиллерия',
-    brief: 'Вскрыть оборону малой кровью и накрыть её огнём с закрытых позиций.',
+    n: 'Как вскрыть оборону разведкой и артиллерией',
+    brief: 'В этой сцене вы узнаете состояние противника разведкой боем и накроете его огнём артиллерии.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['rec', 11, 25], ['art', 11, 27]],
       s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_flank: {
-    n: 'Зона контроля и остатки',
-    brief: 'Рядом с противником часть останавливается. Разбитая часть уходит остатками — их берут в плен.',
+    n: 'Что такое зона контроля и остатки',
+    brief: 'В этой сцене вы увидите, где часть останавливается рядом с противником и что происходит с разбитой частью.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['tnk', 12, 26], ['mot', 12, 28]],
       s: [['inf', 14, 26, {str: 3}], ['dep', 16, 25], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_supply: {
-    n: 'Снабжение и склад',
-    brief: 'Подвоз идёт по дорогам и недалеко от них. Полевой склад кормит части там, куда дороги не дотянулись.',
+    n: 'Как снабжать части',
+    brief: 'В этой сцене вы посмотрите, как подвоз идёт по дорогам, и поможете отрезанной пехоте полевым складом.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 2, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['inf', 17, 27], ['dep', 13, 27]],
       s: [['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_buy: {
-    n: 'Подкрепления и пополнение',
-    brief: 'Потрёпанную часть пополняют, новые покупают — только в своих исходных точках и у командного пункта.',
+    n: 'Как пополнять части и покупать новые',
+    brief: 'В этой сцене вы пополните потрёпанную часть и купите новую, чтобы понять, откуда приходят резервы.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 200, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['inf', 11, 27, {str: 5}]],
       s: [['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_air: {
-    n: 'Авиация и приказы штаба',
-    brief: 'Авиаудар по видимой части и приказ «Стоять насмерть» за командные очки.',
+    n: 'Как пользоваться авиацией и приказами',
+    brief: 'В этой сцене вы нанесёте авиаудар и отдадите приказ «Стоять насмерть» за командные очки.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['tnk', 12, 26], ['inf', 12, 27]],
       s: [['inf', 14, 26, {ent: 2}], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_defense: {
-    n: 'Оборона',
-    brief: 'Окоп, засада и арьергард: как держать рубеж и отходить без разгрома.',
+    n: 'Как держать оборону',
+    brief: 'В этой сцене вы окопаете одну часть, посадите другую в засаду и прикроете её отход арьергардом.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['inf', 13, 25], ['inf', 13, 27]],
       s: [['tnk', 15, 26], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   lab_ui: {
-    n: 'Инструменты',
-    brief: 'Отмена хода, слой угрозы и связь с союзниками.',
+    n: 'Какие инструменты помогают в бою',
+    brief: 'В этой сцене вы отмените ход, включите слой угрозы и откроете связь с союзниками.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 1, weather: 'clear', budget: { n: 0, s: 0 }, target: 'pyl', noDeploy: true, tutorial: true, grid: true,
     forces: {
       n: [['hq', 9, 27], ['mot', 12, 26]],
       s: [['inf', 14, 26, {ent: 1}], ['inf', 17, 22, {ent: 1}]]
     },
     win() { return null },
-    timeout() { return { w: N, t: 'Сцена пройдена.' } }
+    timeout() { return { w: N, t: 'Вы прошли эту сцену.' } }
   },
   /* учебный бой: противник воюет по-настоящему — проверка всего пройденного */
   lab_exam: {
     n: 'Учебный бой',
-    brief: 'Настоящий бой с живым противником: за восемь ходов взять Песчаный. Разведка, огонь, охват, склад — всё пригодится. Песчаный за рекой: по мосту идут свободно, вброд — только с места и на весь ход.',
+    brief: 'Это настоящий бой с противником, который воюет всерьёз. За восемь ходов вам нужно взять город Песчаный. Город стоит за рекой: по мосту части проходят свободно, а вброд реку можно перейти только с места, и это занимает весь ход. Перед атакой разведайте оборону и прижмите её огнём, а потом ударьте с двух сторон.',
     map: 'steppe', roles: { n: 'attacker', s: 'defender' }, start: 0, turns: 8, weather: 'clear', budget: { n: 120, s: 0 }, target: 'pesch', noDeploy: true, exam: true,
     forces: {
       n: [['hq', 118, 168], ['rec', 146, 150], ['inf', 142, 162], ['inf', 140, 176], ['tnk', 134, 156], ['tnk', 130, 148], ['mot', 132, 172], ['art', 122, 160], ['dep', 124, 178]],
       s: [['inf', 172, 150, { ent: 2 }], ['inf', 156, 160, { ent: 2 }], ['inf', 164, 146, { ent: 1 }]]
     },
-    win(g) { return g.pts.find(p => p.id === 'pesch').owner === N ? { w: N, t: 'Песчаный взят — учебный бой выигран.' } : null },
-    timeout() { return { w: S, t: 'Срок вышел, Песчаный не взят. Попробуйте ещё раз: сначала разведать и прижать огнём, потом бить с двух сторон.' } }
+    win(g) { return g.pts.find(p => p.id === 'pesch').owner === N ? { w: N, t: 'Вы взяли Песчаный и выиграли учебный бой.' } : null },
+    timeout() { return { w: S, t: 'Срок операции истёк, а Песчаный остался у противника. Попробуйте ещё раз: сначала разведайте оборону и прижмите её огнём, а потом атакуйте с двух сторон.' } }
   },
   bridge: {
     n: 'Мост через Тихую',

@@ -891,7 +891,7 @@ for (const map of require('../shared/maps').MAP_ORDER) {
    сдвиг доли побед или длины партий виден сразу, в том числе в CI.
    ============================================================ */
 const MODE_RU = { both: 'встречный бой', attack: 'наступление', defense: 'оборона' };
-const SCEN_RU = { lab_recon: 'Разведка боем', lab_fire: 'Огонь с места', lab_attack: 'Штурм и готовая позиция', lab_flank: 'Обход', lab_remnant: 'Остатки и арьергард', lab_supply: 'Снабжение и склад', lab_air: 'Авиаудар и ПВО', lab_order: 'Приказы штаба', lab_ui: 'Инструменты', bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
+const SCEN_RU = { bridge: 'Мост через Тихую', breakthrough: 'Прорыв к Красногору', night: 'Ночной рейд' };
 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const pct = (k, n) => n ? Math.round(k * 100 / n) + '%' : '—';
 const f1 = x => x.toFixed(1);

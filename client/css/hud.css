@@ -417,7 +417,9 @@ body:has(#chat.open) .zbox{right:calc(min(320px,88vw) + 12px)}
 /* повтор партии */
 #replayBar{position:fixed;z-index:9;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:.4em;
   background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);padding:.45em .6em;max-width:calc(100vw - 24px)}
-#replayBar[hidden],#tutor[hidden]{display:none}
+#replayBar[hidden],#tutor[hidden],#rpEv[hidden]{display:none}
+#rpEv{position:fixed;z-index:9;bottom:66px;left:50%;transform:translateX(-50%);max-width:min(560px,calc(100vw - 24px));
+  background:var(--pn);border:1px solid var(--bd2);border-radius:8px;box-shadow:var(--sh);padding:.35em .7em;font-size:.85em;line-height:1.45}
 #replayBar input{width:min(260px,30vw);accent-color:var(--ac)}
 #rpLbl{min-width:13em;font-weight:600;white-space:nowrap}
 @media (max-width:640px){#rpLbl{min-width:0;font-size:.85em}#layerBox{bottom:58px}}

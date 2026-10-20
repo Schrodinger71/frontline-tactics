@@ -848,6 +848,39 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(!/[<>]/.test(JSON.stringify(g3.snapshotFor('spec'))), 'разметка не проходит');
   console.log(`сохранение и загрузка: ok (снимок ${packed.length} байт)`);
 }
+/* ---------- повтор после загрузки ----------
+   Сохранение середины партии несёт кадры и хронику прошлых кругов: загруженная
+   и доигранная партия даёт повтор с первого хода, тот же, что без сохранения. */
+{
+  const Save = require('../game/save');
+  const run = (g, until) => { for (let guard = 0; !g.over && g.turn < until && guard < 2000; guard++) { g.botTurn(g.active); g.drainEvents() } };
+  const g = new Game('both', N, 33, 'corridor');
+  g.bots = { n: true, s: true }; g.tryStart();
+  run(g, 20);
+  g.botTurn(g.active); g.drainEvents();   /* сохраняем посреди круга: часть хроники ещё не легла в кадр */
+  assert(!g.over && g.turn === 20 && g.frames.length === 21, 'партия дошла до 20-го хода');
+  const st = g.saveState(), packed = Save.pack(st);
+  const g2 = Game.fromState(Save.unpack(packed));
+  assert.deepStrictEqual(g2.frames, g.frames, 'кадры после загрузки те же');
+  assert.deepStrictEqual(g2.chron, g.chron, 'хроника незакрытого круга сохранена');
+  assert(g.frames.some(f => f.ev.some(e => e[0] === 'dead')), 'в хронике есть потери');
+  g2.bots = { n: true, s: true };
+  run(g2, 400);
+  assert(g2.over, 'загруженная партия доиграна');
+  assert.deepStrictEqual(g2.frames.slice(0, 21), g.frames, 'повтор начинается с первого хода');
+  assert.deepStrictEqual(g2.frames.map(f => f.t), [...Array(g2.frames.length - 1).keys()].concat(g2.turn), 'кадр на каждый круг');
+  /* подмена кадров: чужое отбрасывается, а не ломает загрузку */
+  const bad = JSON.parse(JSON.stringify(st));
+  bad.frames = [null, 5, { t: 1, s: 1e9, u: [[1, 'zzz', N, 0, 5, 0], [2, 'inf', N, 1e9, 5, 0], [3, 'inf', 'x', 0, 5, 0], [4, 'inf', S, 0, 1e9, 1]], terr: '0'.repeat(g.H.NH), p: [], ev: [['cap', N, 'nope', 'x'], ['dead', S, 'zzz', 'x', ''], ['cut', S, 'inf', '<b>', 7]] },
+    { t: 1, u: [], terr: '9'.repeat(g.H.NH), p: [] }, { t: 1, u: [], terr: '0', p: [] }].concat(Array(500).fill(st.frames[0]));
+  const g3 = Game.fromState(bad);
+  assert(g3.frames.length <= Game.MAX_FRAMES, 'не больше MAX_FRAMES кадров');
+  const f0 = g3.frames[0];
+  assert(f0.s === 100 && f0.u.length === 1 && f0.u[0][4] === 10 && f0.p.length === g.pts.length && f0.p.every(o => o === ''), 'кадр очищен');
+  assert(f0.ev.length === 1 && f0.ev[0][0] === 'cut' && !/[<>]/.test(f0.ev[0][3]), 'хроника очищена');
+  assert(g3.frames.every(f => f.terr.length === g.H.NH && /^[0-2]+$/.test(f.terr)), 'территория кадров проверена');
+  console.log(`повтор после загрузки: ok (${g2.frames.length} кадров, снимок на 20-м ходу ${packed.length} байт)`);
+}
 /* ---------- состав по ходу партии ----------
    Новый командир при расстановке и в бою: свой штаб, бюджет стороны
    делится заново (сумма та же), больше MAX_SEATS — нельзя. */

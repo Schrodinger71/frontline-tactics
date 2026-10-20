@@ -4,7 +4,9 @@
    ------------------------------------------------------------
    saveState()  — снимок всей партии (без тумана войны): части,
                   территория, снабжение, экономика мест, погода,
-                  статистика, состояние сценария.
+                  статистика, состояние сценария, кадры повтора
+                  с хроникой по кругам (партию можно разобрать
+                  с первого хода и после загрузки доиграть повтор).
    Game.fromState(st) — партия из снимка.
 
    Снимок приходит от клиента, поэтому ему не верим: партия строится
@@ -74,6 +76,7 @@ function saveState() {
     air: per(id => g.air[id] || { strike: 0, recon: 0 }), airLost: per(id => g.airLost[id] || 0),
     sideIncome: g.sideIncome || {}, barrage: g.barrage, counter: g.counter,
     stats: g.stats, history: g.history,
+    frames: g.frames, chron: g.chron,
     raidV: g.raidV || 0, reinfDone: g.reinfDone ? [...g.reinfDone] : []
   };
 }
@@ -237,6 +240,32 @@ function fromState(raw) {
   g.stats = { n: stat(raw.stats && raw.stats.n), s: stat(raw.stats && raw.stats.s) };
   g.history = arr(raw.history, 500).filter(h => h && typeof h === 'object')
     .map(h => ({ turn: int(h.turn, 0, 400, 0), s: num(h.s, -100, 100, 0), n: int(h.n, 0, 1e6, 0), e: int(h.e, 0, 1e6, 0) }));
+
+  /* кадры повтора и хроника: без них повтор после загрузки начался бы с этого хода */
+  const terrOk = s => typeof s === 'string' && s.length === NH && /^[0-2]*$/.test(s);
+  const notes = a => arr(a, Game.MAX_NOTES).map(e => {
+    if (!Array.isArray(e) || !SIDES.includes(e[1])) return null;
+    const cs = str(e[3], 24, '');
+    if (e[0] === 'cap') return ptIds.has(e[2]) ? ['cap', e[1], e[2], cs] : null;
+    if (!['dead', 'rout', 'cut'].includes(e[0]) || !own(UT, e[2])) return null;
+    return e[0] === 'dead' ? ['dead', e[1], e[2], cs, ['', 'surrender', 'captured'].includes(e[4]) ? e[4] : ''] : [e[0], e[1], e[2], cs];
+  }).filter(Boolean);
+  g.frames = [];
+  for (const f of arr(raw.frames, Game.MAX_FRAMES)) {
+    if (!f || typeof f !== 'object' || !terrOk(f.terr) || !Array.isArray(f.u) || !Array.isArray(f.p)) continue;
+    const seen = new Set(), u = [];
+    for (const x of f.u.slice(0, 200)) {
+      if (!Array.isArray(x) || !Number.isInteger(x[0]) || x[0] < 1 || x[0] >= 1e7 || seen.has(x[0])) continue;
+      if (!own(UT, x[1]) || !SIDES.includes(x[2]) || !hexOk(x[3])) continue;
+      seen.add(x[0]);
+      u.push([x[0], x[1], x[2], x[3], int(x[4], 1, MAX_STR, MAX_STR), bool(x[5]) ? 1 : 0]);
+    }
+    g.frames.push({
+      t: int(f.t, 0, 400, 0), s: num(f.s, -100, 100, 0), u, terr: f.terr,
+      p: g.pts.map((_, j) => SIDES.includes(f.p[j]) ? f.p[j] : ''), ev: notes(f.ev)
+    });
+  }
+  g.chron = notes(raw.chron);
 
   /* сценарий */
   if (g.scen) {

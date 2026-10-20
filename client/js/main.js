@@ -868,7 +868,7 @@ function showEnd() {
     <div class="cols"><div><div class="lbl">${G.spec ? SIDE_NAME.n : 'Мы'}</div><div class="row"><span>Потеряно</span><b class="bad">${st.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${st.caps || 0}</b></div></div>
     <div><div class="lbl">${G.spec ? SIDE_NAME.s : 'Противник'}</div><div class="row"><span>Потеряно</span><b class="bad">${en.lostV || 0}</b></div><div class="row"><span>Взято точек</span><b>${en.caps || 0}</b></div></div></div>
     ${carry ? `<p class="lnote">В следующую операцию кампании перейдут ветераны (${carry.vets.length}) — с опытом, специалистами и позывными — и ${carry.bonus} очков за досрочную победу.</p>` : ''}
-    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames && !lab ? '<button class="btn" id="btnReplay">Повтор партии</button>' : ''}${lab ? `<button class="btn" id="btnLabs">Вернуться к списку сцен</button>${lab.exam && G.over.w !== G.side ? '<button class="btn pri" id="btnLabAgain">Попробовать ещё раз</button>' : nextLab ? `<button class="btn pri" id="btnNextLab">Перейти к следующей сцене</button>` : ''}` : '<button class="btn pri" id="btnNew">В меню</button>'}</p>`;
+    <p class="acts"><button class="btn" id="btnClose">Осмотреть карту</button>${G.replayFrames && !lab ? '<button class="btn" id="btnReplay">Повтор партии</button><button class="btn" id="btnRpFile" title="Скачать повтор файлом — открыть: Меню → Сохранения → Загрузить из файла">Повтор файлом</button>' : ''}${lab ? `<button class="btn" id="btnLabs">Вернуться к списку сцен</button>${lab.exam && G.over.w !== G.side ? '<button class="btn pri" id="btnLabAgain">Попробовать ещё раз</button>' : nextLab ? `<button class="btn pri" id="btnNextLab">Перейти к следующей сцене</button>` : ''}` : '<button class="btn pri" id="btnNew">В меню</button>'}</p>`;
   $('#modal').hidden = false;
 }
 function hideModal() { $('#modal').hidden = true; maybeSitePrompt() }
@@ -1051,6 +1051,9 @@ function saveTitle(meta) {
 function onSaved(m) {
   if (typeof m.data !== 'string' || !m.meta) return;
   const e = { id: m.auto ? 'auto' : 's' + Date.now().toString(36), auto: !!m.auto, at: m.meta.at || Date.now(), meta: m.meta, data: m.data };
+  /* ручное сохранение сразу скачивается файлом; доигранная партия — это файл повтора, в список её не кладём */
+  if (!m.auto) downloadSave(e);
+  if (m.meta.over) return toast(`Повтор скачан файлом. Открыть — Меню → Сохранения → Загрузить из файла.`);
   let list = savesList().filter(x => x.id !== e.id);
   if (e.auto) list.unshift(e);
   else {
@@ -1058,7 +1061,7 @@ function onSaved(m) {
     list = auto.concat([e], rest.slice(0, SAVES_MAX - 1));
   }
   const ok = savesPut(list);
-  if (!m.auto) toast(ok ? `Партия сохранена: ход ${m.meta.turn + 1}. Продолжить — Меню → Сохранения.` : 'Сохранено, но место в браузере кончилось — старые сохранения удалены.');
+  if (!m.auto) toast(ok ? `Партия сохранена файлом: ход ${m.meta.turn + 1}. Копия — в Меню → Сохранения.` : 'Файл скачан, но место в браузере кончилось — старые сохранения удалены.');
 }
 function savesHTML() {
   const list = savesList();
@@ -1067,7 +1070,7 @@ function savesHTML() {
       <canvas data-prev="${esc(x.meta.map)}" width="96" height="96"></canvas>
       <div class="sbody"><b>${x.auto ? '<i class="lb open">авто</i> ' : ''}${esc(saveTitle(x.meta))}</b>
         <span class="mu">${x.meta.phase === 'deploy' ? 'расстановка' : 'ход ' + (x.meta.turn + 1)} · за ${esc(SIDE_NAME[x.meta.side] || '')}${x.meta.seats > 2 ? ` · командиров: ${x.meta.seats}` : ''}${x.meta.over ? ' · окончена' : ''} · ${esc(when(x.at))}</span></div>
-      <div class="sact"><button class="btn pri sm" data-a="ldSave" data-id="${esc(x.id)}">Продолжить</button>
+      <div class="sact"><button class="btn pri sm" data-a="ldSave" data-id="${esc(x.id)}">${x.meta.over ? 'Открыть' : 'Продолжить'}</button>
         <button class="btn sm" data-a="dlSave" data-id="${esc(x.id)}" title="Скачать файлом — загрузить на другом устройстве">Файл</button>
         <button class="btn sm" data-a="rmSave" data-id="${esc(x.id)}" title="Удалить">✕</button></div></article>`).join('');
   return `<div class="mbox wide">${backHTML('Сохранения')}
@@ -1083,7 +1086,7 @@ function downloadSave(x) {
   const body = JSON.stringify({ fmt: 'frontline-tactics-save', meta: x.meta, data: x.data });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
-  a.download = `frontline-${x.meta.map}-hod${x.meta.turn + 1}.json`;
+  a.download = `frontline-${x.meta.map}-${x.meta.over ? 'povtor' : 'hod' + (x.meta.turn + 1)}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
@@ -1530,6 +1533,7 @@ function bind() {
     if (e.target.id === 'btnNextLab' && G.scen && labNext(G.scen.id)) { hideModal(); labStart(labNext(G.scen.id).id) }
     if (e.target.id === 'btnLabAgain' && G.scen) { hideModal(); labStart(G.scen.id) }
     if (e.target.id === 'btnReplay') { hideModal(); replayStart() }
+    if (e.target.id === 'btnRpFile') netSend({ t: 'save' });
   });
   $('#lobby').addEventListener('click', e => {
     if (e.target.id === 'btnLobbyClose' || e.target.id === 'lobby') { G.lobbyHidden = true; G.lobbyOpen = false; renderLobby() }
@@ -1917,7 +1921,23 @@ function replayShow(i) {
   $('#rpSlide').value = rp.i;
   $('#hdTurn').textContent = (f.t + 1) + ' из ' + G.limit;
   $('#rpLbl').textContent = `Ход ${f.t + 1} · кадр ${rp.i + 1} из ${F.length} · перевес ${mine > 0 ? '+' : ''}${Math.round(mine)}`;
+  replayChron(f.ev);
   document.querySelector('#replayBar [data-rp=play]').textContent = rp.timer ? '❚❚' : '▶';
+}
+/** хроника круга под повтором: взятые точки, погибшие, разбитые и окружённые части */
+function replayChron(ev) {
+  const el = $('#rpEv'), list = Array.isArray(ev) ? ev : [];
+  el.hidden = !list.length;
+  if (!list.length) return;
+  const ptN = id => (G.pts.find(p => p.id === id) || {}).n || id;
+  const what = { '': 'уничтожен', surrender: 'сложил оружие в окружении', captured: 'захвачен' };
+  const line = ([e, sd, k, cs, how]) => {
+    if (e === 'cap') return `<span class="${sd === N ? 'sdn' : 'sds'}">⚑ ${esc(SIDE_NAME[sd])}</span>: ${esc(ptN(k))} — взят${cs ? ' («' + esc(cs) + '»)' : ''}`;
+    const who = `<span class="${sd === N ? 'sdn' : 'sds'}">${cs ? '«' + esc(cs) + '» ' : ''}(${esc(lc(unitName(sd, k)))})</span>`;
+    return e === 'dead' ? `✖ ${who} ${what[how] || what['']}` : e === 'rout' ? `↶ ${who} разбит, остатки отходят` : `◌ ${who} в окружении`;
+  };
+  const MAX = 6;
+  el.innerHTML = list.slice(0, MAX).map(line).join('<br>') + (list.length > MAX ? `<br><span class="mu">и ещё ${list.length - MAX}</span>` : '');
 }
 function replayPlay(on) {
   const rp = G.rp; if (!rp) return;
@@ -1932,7 +1952,7 @@ function replayStop() {
   const rp = G.rp; if (!rp) return;
   clearInterval(rp.timer);
   G.rp = null;
-  $('#replayBar').hidden = true;
+  $('#replayBar').hidden = true; $('#rpEv').hidden = true;
   if (rp.snap) applySnapshot(rp.snap);
 }
 function replayInit() {
@@ -1940,6 +1960,7 @@ function replayInit() {
     const b = e.target.closest('[data-rp]'); if (!b || !G.rp) return;
     const k = b.dataset.rp;
     if (k === 'close') return replayStop();
+    if (k === 'file') return netSend({ t: 'save' });
     if (k === 'play') return replayPlay(!G.rp.timer);
     replayPlay(false);
     replayShow(k === 'first' ? 0 : G.rp.i + (k === 'prev' ? -1 : 1));

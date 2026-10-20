@@ -216,6 +216,17 @@ const act = (c, a) => { const id = ++seq; c.send({ t: 'act', id, a }); return c.
     other.ws.send(JSON.stringify({ t: 'list', pad: 'x'.repeat(20000) }));   /* длинное — только загрузке */
     await sleep(150);
     assert(!other.msgs.some(m => m.t === 'rooms'), 'длинное сообщение не-загрузки отброшено');
+    /* файл доигранной партии: повтор приходит сразу и с первого хода, скачать его снова может и зритель */
+    const { Game } = require('../game/engine'), Save = require('../game/save');
+    const fin = new Game('both', 'n', 5, 'valley');
+    fin.bots = { n: true, s: true }; fin.tryStart();
+    for (let i = 0; !fin.over && i < 400; i++) { fin.botTurn(fin.active); fin.drainEvents() }
+    other.send({ t: 'load', data: Save.pack(fin.saveState()), name: 'Зритель' });
+    const rp = await other.wait(m => m.t === 'replay', 15000);
+    assert(rp.frames.length === fin.frames.length && rp.frames[0].t === 0, 'повтор из файла — с первого хода');
+    other.send({ t: 'save' });
+    const sv2 = await other.wait(m => m.t === 'saved');
+    assert(sv2.meta.over && Save.unpack(sv2.data).frames.length === fin.frames.length, 'повтор скачивается файлом');
     for (const c of [host, guest, other]) c.ws.close();
     console.log('сохранение и состав: ok');
   }

@@ -129,6 +129,7 @@ class Game {
     this.history = [];
     this.limit = W.TURN_LIMIT;
     this.frames = [];                 /* кадры для повтора партии: по одному на ход (replayFrame) */
+    this.chron = [];                  /* хроника круга: ключевые события до следующего кадра (note) */
     this.undoRec = null;              /* последнее «тихое» движение, которое ещё можно отменить */
     this.carry = Game.cleanCarry(opts && opts.carry, creatorSide);
     /* штаб каждой стороне — бесплатно, в глубине */
@@ -604,14 +605,21 @@ class Game {
   /** кадр для повтора партии: части, территория, владельцы точек, перевес — без тумана,
       показывается только после конца партии */
   replayFrame() {
-    if (this.frames.length > 400) return;
+    const ev = this.chron;
+    this.chron = [];
+    if (this.frames.length >= Game.MAX_FRAMES) return;
     this.frames.push({
       t: this.turn, s: +this.score.toFixed(1),
       u: this.units.filter(u => u.str > 0).map(u => [u.id, u.k, u.side, u.hex, u.str, u.rem ? 1 : 0]),
       terr: String.fromCharCode(...this.terr.map(v => 48 + v)),
-      p: this.pts.map(p => p.owner || '')
+      p: this.pts.map(p => p.owner || ''),
+      ev
     });
   }
+  /** запись в хронику круга — ляжет в следующий кадр повтора и в сохранение.
+      Только то, что меняет ход партии: взятие точек, гибель, разгром и окружение частей;
+      числом ограничено, чтобы снимок не распух. */
+  note(...e) { if (this.chron.length < Game.MAX_NOTES) this.chron.push(e) }
 
   /* ---------- ход стороны ---------- */
   startSide(side) {
@@ -739,7 +747,7 @@ class Game {
         if (u.fu === 0 && !u.dryF) { u.dryF = true; this.log(side, `«${u.cs}»: кончилось топливо — техника встала.`, 'crit') }
       }
       u.org = Math.max(0, u.org - (u.sp === 0 ? 20 : 8));
-      if (u.cut === 1) this.say(u, 'cut', {}, 'crit');
+      if (u.cut === 1) { this.say(u, 'cut', {}, 'crit'); this.note('cut', u.side, u.k, u.cs) }
       if (u.sp === 0) {
         if (!u.dry) { this.say(u, 'exhausted', {}, 'crit'); u.dry = true }
         this.loss(u, u.cut >= 4 ? 2 : 1, null);
@@ -860,6 +868,7 @@ class Game {
     /* закрепление: чужая или ничейная точка заработает через W.POINT_HOLD ходов; своя исходная — сразу */
     p.since = p.home === u.side ? undefined : this.turn;
     this.stats[u.side].caps++;
+    this.note('cap', u.side, p.id, u.cs);
     this.log(u.side, p.since === undefined ? `${p.n} — снова наши!` : `${p.n} — наши! Перевес и доход точка даст через ${W.POINT_HOLD} хода удержания.`, 'g');
     if (was && p.city && !this.looted.has(p.id)) {
       this.looted.add(p.id);
@@ -910,6 +919,7 @@ class Game {
   captureDepot(e, u) {
     const lvl = e.lvl || 1, mySeat = u.seat || u.side, loot = W.DEPOT.loot * lvl;
     this.ev({ e: 'dead', to: '*', id: e.id, hex: e.hex, k: e.k, side: e.side, how: 'captured' });
+    this.note('dead', e.side, e.k, e.cs, 'captured');
     e.str = 0;
     const st = this.stats[e.side], price = UT[e.k].price;
     st.lost[e.k] = (st.lost[e.k] || 0) + 1; st.lostV += price;
@@ -931,6 +941,7 @@ class Game {
   captureHQ(e, u) {
     const seat = e.seat || e.side, zone = this.H.within(e.hex, UT[e.k].cmd);
     this.ev({ e: 'dead', to: '*', id: e.id, hex: e.hex, k: e.k, side: e.side, how: 'captured' });
+    this.note('dead', e.side, e.k, e.cs, 'captured');
     e.str = 0;
     const st = this.stats[e.side], price = UT[e.k].price;
     st.lost[e.k] = (st.lost[e.k] || 0) + 1; st.lostV += price;
@@ -1160,6 +1171,7 @@ class Game {
     u.acted = true; u.mp = 0; u.hex = best;
     this.lastVacated = from;
     this.stats[u.side].routs++;
+    this.note('rout', u.side, u.k, u.cs);
     this.ev({ e: 'move', to: '*', id: u.id, side: u.side, path: [from, best], k: u.k, retreat: 1, rem: 1 });
     this.say(u, 'remnant', {}, 'crit');
     this.log(by.side, `«${u.cs}» (${W.lc(W.unitName(u.side, u.k))}) разбит — остатки отходят.`, 'g');
@@ -1215,6 +1227,7 @@ class Game {
     if (by && by.side !== u.side) { const ks = this.stats[by.side]; ks.killed[u.k] = (ks.killed[u.k] || 0) + 1; ks.killedV += price; if (how === 'surrender') ks.prisoners++ }
     this.lastVacated = u.hex;
     this.ev({ e: 'dead', to: '*', id: u.id, hex: u.hex, k: u.k, side: u.side, how: how || '' });
+    this.note('dead', u.side, u.k, u.cs, how || '');
     const un = W.lc(W.unitName(u.side, u.k));
     this.log(u.side, how === 'surrender' ? `«${u.cs}» (${un}) в окружении сложил оружие.` : `«${u.cs}» (${un}) уничтожен.`, 'crit');
     if (by && by.str > 0 && by.side !== u.side) this.say(by, how === 'surrender' ? 'prisoners' : 'kill', { lb: un }, 'g');
@@ -1685,6 +1698,9 @@ class Game {
 }
 
 for (const m of ['./scenarios', './ai', './views']) Object.assign(Game.prototype, require(m));
+/* пределы повтора: кадров на партию и записей хроники на кадр (save.js проверяет по ним же) */
+Game.MAX_FRAMES = 400;
+Game.MAX_NOTES = 60;
 /* сохранение партии и загрузка из снимка (с проверкой всего, что пришло) — game/save.js */
 Game.prototype.saveState = require('./save').saveState;
 Game.fromState = st => require('./save').fromState(st);

@@ -11,7 +11,8 @@
      { t:'act', id, a:{ t, … } }                 действие: move · attack · bombard · air · eng · dig ·
                                                  ambush · buy · replace · sell · place · ready · end
      { t:'pace', value }                         скорость наблюдения: 0 (пауза) · 1 · 2 · 4
-     { t:'save' }                                сохранить партию (игроку за столом) → { t:'saved', data, meta }
+     { t:'save' }                                сохранить партию (игроку за столом; после конца — любому в комнате,
+                                                 это файл повтора) → { t:'saved', data, meta }
      { t:'load', data, seat?, side? }            новая партия из сохранения (data — сжатый снимок)
      { t:'seat', op:'add', side, who }           хозяин: новое место на стороне — 'bot' | 'open'
      { t:'seat', op:'who', id, who }             хозяин: свободное место — боту или открыть для игрока
@@ -139,7 +140,8 @@ function createServer() {
       else if (m.t === 'mark') { if (client.room && !tooOften(client, '_mark', 3, 6000)) client.room.mark(client, m) }
       else if (m.t === 'save') {
         const room = client.room;
-        if (!room || !room.engine || !client.seat || room.watch) return client.send({ t: 'error', msg: 'Сохранять может только игрок за столом' });
+        /* после конца партии тумана нет — повтор файлом может взять и зритель */
+        if (!room || !room.engine || (!room.engine.over && (!client.seat || room.watch))) return client.send({ t: 'error', msg: 'Сохранять может только игрок за столом' });
         if (tooOften(client, '_save', 4, 5000)) return client.send({ t: 'error', msg: 'Слишком часто — подождите пару секунд' });
         try {
           const g = room.engine, st = g.saveState();

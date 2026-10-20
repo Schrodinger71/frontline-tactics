@@ -1092,7 +1092,7 @@ function downloadSave(x) {
 }
 function uploadSave(file) {
   if (!file) return;
-  if (file.size > 600000) return toast('Файл слишком большой для сохранения');
+  if (file.size > 1200000) return toast('Файл слишком большой для сохранения');
   const r = new FileReader();
   r.onload = () => {
     let o = null;
@@ -1920,24 +1920,66 @@ function replayShow(i) {
   const mine = (G.spec || G.side === N ? 1 : -1) * f.s;
   $('#rpSlide').value = rp.i;
   $('#hdTurn').textContent = (f.t + 1) + ' из ' + G.limit;
-  $('#rpLbl').textContent = `Ход ${f.t + 1} · кадр ${rp.i + 1} из ${F.length} · перевес ${mine > 0 ? '+' : ''}${Math.round(mine)}`;
+  $('#rpLbl').textContent = `Ход ${f.t + 1}${f.a ? ' · после хода: ' + SIDE_NAME[f.a] : rp.i === 0 ? ' · начало' : ' · итог'} · кадр ${rp.i + 1} из ${F.length} · перевес ${mine > 0 ? '+' : ''}${Math.round(mine)}`;
   replayChron(f.ev);
   document.querySelector('#replayBar [data-rp=play]').textContent = rp.timer ? '❚❚' : '▶';
 }
-/** хроника круга под повтором: взятые точки, погибшие, разбитые и окружённые части */
+/** хроника кадра под повтором: сверху ключевое (взятые точки, погибшие, разбитые и
+    окружённые части), ниже сводка действий и по кнопке — все действия по порядку;
+    строка с клеткой по клику наводит камеру */
+const RP_ENG = { dig: 'окапывается', ambush: 'встал в засаду', mine: 'ставит мины', clear: 'снимает мины', bridge: 'наводит переправу', blow: 'взрывает мост', repair: 'чинит мост', fort: 'строит укрепление', obst: 'ставит заграждение' };
+function replayNames() {
+  /* позывные и типы по номеру части — из всех кадров: погибшая часть есть в кадре до гибели */
+  const m = new Map();
+  for (const f of G.replayFrames || []) {
+    for (const u of f.u) if (!m.has(u[0])) m.set(u[0], { k: u[1], side: u[2], cs: u[6] || '' });
+    for (const e of f.ev || []) if (e[0] === 'new' && !m.has(e[1])) m.set(e[1], { k: e[2], side: e[3], cs: e[6] || '' });
+  }
+  return m;
+}
 function replayChron(ev) {
-  const el = $('#rpEv'), list = Array.isArray(ev) ? ev : [];
+  const el = $('#rpEv'), list = Array.isArray(ev) ? ev : [], rp = G.rp;
   el.hidden = !list.length;
-  if (!list.length) return;
+  if (!list.length || !rp) return;
+  const names = rp.names || (rp.names = replayNames());
+  const sc = sd => sd === N ? 'sdn' : 'sds';
   const ptN = id => (G.pts.find(p => p.id === id) || {}).n || id;
-  const what = { '': 'уничтожен', surrender: 'сложил оружие в окружении', captured: 'захвачен' };
-  const line = ([e, sd, k, cs, how]) => {
-    if (e === 'cap') return `<span class="${sd === N ? 'sdn' : 'sds'}">⚑ ${esc(SIDE_NAME[sd])}</span>: ${esc(ptN(k))} — взят${cs ? ' («' + esc(cs) + '»)' : ''}`;
-    const who = `<span class="${sd === N ? 'sdn' : 'sds'}">${cs ? '«' + esc(cs) + '» ' : ''}(${esc(lc(unitName(sd, k)))})</span>`;
-    return e === 'dead' ? `✖ ${who} ${what[how] || what['']}` : e === 'rout' ? `↶ ${who} разбит, остатки отходят` : `◌ ${who} в окружении`;
+  const unit = (sd, k, cs) => `<span class="${sc(sd)}">${cs ? '«' + esc(cs) + '» ' : ''}(${esc(lc(unitName(sd, k)))})</span>`;
+  const byId = id => { const x = names.get(id); return x ? unit(x.side, x.k, x.cs) : 'часть №' + id };
+  const ln = (txt, hex) => `<div${hex >= 0 ? ` data-go="${hex}"` : ''}>${txt}</div>`;
+  const dead = { '': 'уничтожен', surrender: 'сложил оружие в окружении', captured: 'захвачен' };
+  const key = e => {
+    const [c, sd, k, cs, how] = e;
+    if (c === 'cap') return ln(`<span class="${sc(sd)}">⚑ ${esc(SIDE_NAME[sd])}</span>: ${esc(ptN(k))} — взят${cs ? ' («' + esc(cs) + '»)' : ''}`, (G.pts.find(p => p.id === k) || {}).hex);
+    if (c === 'dead') return ln(`✖ ${unit(sd, k, cs)} ${dead[how] || dead['']}`);
+    if (c === 'rout') return ln(`↶ ${unit(sd, k, cs)} разбит, остатки отходят`);
+    if (c === 'cut') return ln(`◌ ${unit(sd, k, cs)} в окружении`);
+    return '';
   };
+  const act = e => {
+    const c = e[0];
+    if (c === 'mv') { const p = e[2], how = { ret: 'отходит', rout: 'остатки отходят', adv: 'занимает клетку', undo: 'ход отменён' }[e[3]] || 'идёт'; return ln(`→ ${byId(e[1])} ${how}${p.length > 1 ? ', клеток: ' + (p.length - 1) : ''}`, p[p.length - 1]) }
+    if (c === 'hit') { const kind = { fire: 'обстрел', probe: 'разведка боем', amb: 'засада' }[e[8]] || 'атака'; return ln(`⚔ ${byId(e[1])} → ${byId(e[2])}: ${kind}${e[7] ? ', соотношение ' + (+e[7]).toFixed(1).replace('.', ',') : ''}, потери ${e[5]} / ${e[6]}`, e[4]) }
+    if (c === 'sh') return ln(`✸ огонь: ${esc(lc(UT[e[3]] ? UT[e[3]].n : e[3]))}`, e[2]);
+    if (c === 'bl') return ln(e[4] === 'bridge' ? '✸ мост взорван' : `✸ ${e[3] ? byId(e[3]) : 'разрыв'}${e[4] === 'mine' ? ' подорвался на мине' : ''}${e[2] ? ': потери ' + e[2] : ''}`, e[1]);
+    if (c === 'air') return ln(`✈ <span class="${sc(e[1])}">${esc(SIDE_NAME[e[1]])}</span>: ${{ strike: 'авиаудар', recon: 'авиаразведка', drop: 'сброс снабжения' }[e[2]]}`, e[3]);
+    if (c === 'aa') return ln(e[3] ? '⌖ ПВО сбило штурмовик' : '⌖ ПВО ведёт огонь по штурмовику', e[2]);
+    if (c === 'new') return ln(`+ ${unit(e[3], e[2], e[6])} ${e[5] === 'mil' ? '— ополчение' : 'прибыл'}`, e[4]);
+    if (c === 'ord') return ln(`☰ <span class="${sc(e[1])}">${esc(SIDE_NAME[e[1]])}</span>: приказ «${esc(ORDERS[e[2]] ? ORDERS[e[2]].n : e[2])}»${e[3] ? ' — ' + byId(e[3]) : ''}`, e[4]);
+    if (c === 'eng') return ln(`⚒ ${byId(e[1])} ${esc(RP_ENG[e[2]] || e[2])}`, e[3]);
+    if (c === 'rep') return ln(`✚ ${byId(e[1])} пополнен: +${e[2]}`);
+    return key(e);
+  };
+  const keys = list.filter(e => ['cap', 'dead', 'rout', 'cut'].includes(e[0]));
+  const cnt = c => list.filter(e => e[0] === c).length;
+  const sum = [['mv', 'ходов'], ['hit', 'боёв'], ['sh', 'залпов'], ['air', 'вылетов'], ['ord', 'приказов'], ['new', 'прибыло']].map(([c, w]) => cnt(c) ? `${w} ${cnt(c)}` : '').filter(Boolean).join(' · ');
   const MAX = 6;
-  el.innerHTML = list.slice(0, MAX).map(line).join('<br>') + (list.length > MAX ? `<br><span class="mu">и ещё ${list.length - MAX}</span>` : '');
+  el.innerHTML = (rp.full
+    ? `<div class="rpList">${list.map(act).join('')}</div>`
+    : keys.slice(0, MAX).map(key).join('') + (keys.length > MAX ? `<div class="mu">и ещё ${keys.length - MAX}</div>` : ''))
+    + `<div class="rpSum mu">${sum || 'действий нет'} <button class="btn sm" data-rpfull>${rp.full ? 'кратко' : 'все действия'}</button></div>`;
+  /* над полосой перемотки: на узком экране подпись переносится и полоса выше */
+  el.style.bottom = Math.round(innerHeight - $('#replayBar').getBoundingClientRect().top + 8) + 'px';
 }
 function replayPlay(on) {
   const rp = G.rp; if (!rp) return;
@@ -1966,6 +2008,11 @@ function replayInit() {
     replayShow(k === 'first' ? 0 : G.rp.i + (k === 'prev' ? -1 : 1));
   });
   $('#rpSlide').addEventListener('input', e => { if (G.rp) { replayPlay(false); replayShow(+e.target.value) } });
+  $('#rpEv').addEventListener('click', e => {
+    if (!G.rp) return;
+    if (e.target.closest('[data-rpfull]')) { G.rp.full = !G.rp.full; return replayChron(G.replayFrames[G.rp.i].ev) }
+    const r = e.target.closest('[data-go]'); if (r) camTo(H.center(+r.dataset.go), Math.max(G.view.s, S_WORK()));
+  });
 }
 chatInit();
 replayInit();

@@ -840,7 +840,7 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   assert(g2.over, 'загруженная партия доиграна');
   for (const bad of [null, {}, { fmt: 1 }, { fmt: 1, mode: 'zzz' }, { fmt: 1, mode: 'both', map: 'valley', units: [] }, { fmt: 1, mode: 'both', map: 'valley', units: [{ k: 'tnk', side: 'n', id: 1, hex: 1e9 }] }])
     assert.throws(() => Game.fromState(bad), 'мусор не загружается: ' + JSON.stringify(bad));
-  for (const bad of ['', '!!!', 'QUJD', 42, 'A'.repeat(500001)]) assert.throws(() => Save.unpack(bad), 'мусор не распаковывается');
+  for (const bad of ['', '!!!', 'QUJD', 42, 'A'.repeat(Save.MAX_PACKED + 1)]) assert.throws(() => Save.unpack(bad), 'мусор не распаковывается');
   const st2 = g.saveState();
   st2.units[0].str = 1e9; st2.units[0].cs = '<script>'; st2.budget.n = -1e9; st2.score = 1e9; st2.commanders.n.name = '<b>x</b>';
   const g3 = Game.fromState(st2);
@@ -857,26 +857,38 @@ for (const map of require('../shared/maps').MAP_ORDER) {
   const g = new Game('both', N, 33, 'corridor');
   g.bots = { n: true, s: true }; g.tryStart();
   run(g, 20);
-  g.botTurn(g.active); g.drainEvents();   /* сохраняем посреди круга: часть хроники ещё не легла в кадр */
-  assert(!g.over && g.turn === 20 && g.frames.length === 21, 'партия дошла до 20-го хода');
+  g.botTurn(g.active); g.drainEvents();   /* сохраняем посреди круга: кадр после хода первой стороны уже есть */
+  assert(!g.over && g.turn === 20 && g.frames.length === 42, 'партия дошла до 20-го хода, по кадру на ход стороны');
+  /* хроника ещё не закрытого хода стороны тоже сохраняется */
+  const someId = g.units.find(u => u.str > 0).id;
+  g.chron.push(['rep', someId, 1]);
   const st = g.saveState(), packed = Save.pack(st);
   const g2 = Game.fromState(Save.unpack(packed));
   assert.deepStrictEqual(g2.frames, g.frames, 'кадры после загрузки те же');
-  assert.deepStrictEqual(g2.chron, g.chron, 'хроника незакрытого круга сохранена');
-  assert(g.frames.some(f => f.ev.some(e => e[0] === 'dead')), 'в хронике есть потери');
+  assert.deepStrictEqual(g2.chron, g.chron, 'хроника незакрытого хода сохранена');
+  const kinds = new Set([].concat(...g.frames.map(f => f.ev.map(e => e[0]))));
+  for (const k of ['mv', 'hit', 'dead', 'new']) assert(kinds.has(k), 'в хронике есть ' + k);
+  const f1 = g.frames[1];
+  assert(f1.a === g.first && f1.t === 0 && f1.u[0].length === 13 && typeof f1.u[0][6] === 'string', 'кадр после хода стороны: состояние частей и позывные');
+  const hit = [].concat(...g.frames.map(f => f.ev)).find(e => e[0] === 'hit');
+  assert(hit[7] > 0 && hit[5] >= 0 && hit[6] >= 0, 'бой: соотношение и потери сторон');
   g2.bots = { n: true, s: true };
   run(g2, 400);
   assert(g2.over, 'загруженная партия доиграна');
-  assert.deepStrictEqual(g2.frames.slice(0, 21), g.frames, 'повтор начинается с первого хода');
-  assert.deepStrictEqual(g2.frames.map(f => f.t), [...Array(g2.frames.length - 1).keys()].concat(g2.turn), 'кадр на каждый круг');
+  assert.deepStrictEqual(g2.frames.slice(0, 42), g.frames, 'повтор начинается с первого хода');
+  const second = g.first === N ? S : N;
+  for (let t = 0; t < g2.turn; t++) {
+    assert(g2.frames.some(f => f.t === t && f.a === g.first), `кадр после хода первой стороны, круг ${t + 1}`);
+    assert(g2.frames.some(f => f.t === t && f.a === second), `кадр после хода второй стороны, круг ${t + 1}`);
+  }
   /* подмена кадров: чужое отбрасывается, а не ломает загрузку */
   const bad = JSON.parse(JSON.stringify(st));
-  bad.frames = [null, 5, { t: 1, s: 1e9, u: [[1, 'zzz', N, 0, 5, 0], [2, 'inf', N, 1e9, 5, 0], [3, 'inf', 'x', 0, 5, 0], [4, 'inf', S, 0, 1e9, 1]], terr: '0'.repeat(g.H.NH), p: [], ev: [['cap', N, 'nope', 'x'], ['dead', S, 'zzz', 'x', ''], ['cut', S, 'inf', '<b>', 7]] },
+  bad.frames = [null, 5, { t: 1, s: 1e9, u: [[1, 'zzz', N, 0, 5, 0], [2, 'inf', N, 1e9, 5, 0], [3, 'inf', 'x', 0, 5, 0], [4, 'inf', S, 0, 1e9, 1]], terr: '0'.repeat(g.H.NH), p: [], ev: [['cap', N, 'nope', 'x'], ['dead', S, 'zzz', 'x', ''], ['cut', S, 'inf', '<b>', 7], ['mv', 1, [1e9], ''], ['hit', 1, 2, 0, 1, 99, 1, 1, ''], ['zzz'], ['ord', N, 'nope', 0, -1]] },
     { t: 1, u: [], terr: '9'.repeat(g.H.NH), p: [] }, { t: 1, u: [], terr: '0', p: [] }].concat(Array(500).fill(st.frames[0]));
   const g3 = Game.fromState(bad);
   assert(g3.frames.length <= Game.MAX_FRAMES, 'не больше MAX_FRAMES кадров');
   const f0 = g3.frames[0];
-  assert(f0.s === 100 && f0.u.length === 1 && f0.u[0][4] === 10 && f0.p.length === g.pts.length && f0.p.every(o => o === ''), 'кадр очищен');
+  assert(f0.s === 100 && f0.u.length === 1 && f0.u[0][4] === 10 && f0.u[0].length === 13 && f0.p.length === g.pts.length && f0.p.every(o => o === ''), 'кадр очищен');
   assert(f0.ev.length === 1 && f0.ev[0][0] === 'cut' && !/[<>]/.test(f0.ev[0][3]), 'хроника очищена');
   assert(g3.frames.every(f => f.terr.length === g.H.NH && /^[0-2]+$/.test(f.terr)), 'территория кадров проверена');
   console.log(`повтор после загрузки: ok (${g2.frames.length} кадров, снимок на 20-м ходу ${packed.length} байт)`);

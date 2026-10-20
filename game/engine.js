@@ -172,7 +172,22 @@ class Game {
   /* ---------- события ---------- */
   log(to, text, cls, cs) { if (text) this.events.push({ e: 'log', to, turn: this.turn, text, cls: cls || '', cs: cs || null }) }
   say(u, key, args, cls) { this.log(u.side, phr(key, args || {}, u), cls || '', u.cs) }
-  ev(o) { this.events.push(o) }
+  ev(o) { this.events.push(o); this.noteEv(o) }
+  /** то, что клиенты видят анимацией (ходы, бои, огонь, вылеты, высадки, приказы), —
+      и в хронику повтора, коротко: по ней партию можно разобрать действие за действием */
+  noteEv(o) {
+    const e = o.e, u = o.id ? this.byId(o.id) : null;
+    if (e === 'move') this.note('mv', o.id, o.path.slice(0, 40), o.retreat ? (o.rem ? 'rout' : 'ret') : o.adv ? 'adv' : o.undo ? 'undo' : '');
+    else if (e === 'fight') this.note('hit', o.a, o.d, o.ah, o.dh, o.la || 0, o.ld || 0, Math.min(99, o.r || 0), o.fire ? 'fire' : o.probe ? 'probe' : o.amb ? 'amb' : '');
+    else if (e === 'shell') this.note('sh', o.from, o.hex, o.k);
+    else if (e === 'blast') this.note('bl', o.hex, o.ld || 0, o.id || 0, o.mine ? 'mine' : o.bridge ? 'bridge' : '');
+    else if (e === 'air') this.note('air', o.side || o.to, o.kind, o.hex);
+    else if (e === 'aa') this.note('aa', o.hex, o.target, o.down ? 1 : 0);
+    else if (e === 'spawn' && u) this.note('new', u.id, u.k, u.side, o.hex, o.militia ? 'mil' : '', u.cs);
+    else if (e === 'order') this.note('ord', o.to, o.k, o.uid || 0, o.hex >= 0 ? o.hex : -1);
+    else if (e === 'eng') this.note('eng', o.id, o.task, o.hex);
+    else if (e === 'replace') this.note('rep', o.id, o.n);
+  }
   drainEvents() { const e = this.events; this.events = []; return e }
 
   /* ---------- части ---------- */
@@ -553,7 +568,7 @@ class Game {
       this.ev({ e: 'spawn', to: side, id: v.id, hex });
     }
     this.cp[seat] -= cp;
-    this.ev({ e: 'order', to: side, k });
+    this.ev({ e: 'order', to: side, k, uid: u ? u.id : 0, hex: O.tgt === 'hex' ? hex : -1 });
     return { ok: true };
   }
 
@@ -599,18 +614,23 @@ class Game {
     /* фронт — по тому, как встали: зоны расстановки, точки и части */
     this.initTerritory();
     this.updateSupply(N); this.updateSupply(S);
+    this.chron = [];   /* покупки и расстановка — не ход: в повтор идёт уже готовое положение */
     this.replayFrame();
     this.startSide(this.active);
   }
-  /** кадр для повтора партии: части, территория, владельцы точек, перевес — без тумана,
-      показывается только после конца партии */
-  replayFrame() {
+  /** кадр для повтора партии — без тумана, показывается только после конца партии:
+      части (с позывным, моралью, боеприпасами, топливом, снабжением, окопом и подавленными
+      шагами), территория, владельцы точек, перевес, погода, чей ход закончился (a) и
+      хроника того, что случилось с прошлого кадра; t — ход, к которому кадр относится
+      (в конце круга счётчик уже ушёл вперёд — его передают явно) */
+  replayFrame(a, t) {
     const ev = this.chron;
     this.chron = [];
     if (this.frames.length >= Game.MAX_FRAMES) return;
     this.frames.push({
-      t: this.turn, s: +this.score.toFixed(1),
-      u: this.units.filter(u => u.str > 0).map(u => [u.id, u.k, u.side, u.hex, u.str, u.rem ? 1 : 0]),
+      t: t === undefined ? this.turn : t, a: a || '', s: +this.score.toFixed(1), w: this.weather.id,
+      u: this.units.filter(u => u.str > 0).map(u => [u.id, u.k, u.side, u.hex, u.str, u.rem ? 1 : 0,
+        u.cs, Math.round(u.org), u.sp || 0, u.fu || 0, u.sv || 0, u.ent || 0, u.su || 0]),
       terr: String.fromCharCode(...this.terr.map(v => 48 + v)),
       p: this.pts.map(p => p.owner || ''),
       ev
@@ -619,7 +639,7 @@ class Game {
   /** запись в хронику круга — ляжет в следующий кадр повтора и в сохранение.
       Только то, что меняет ход партии: взятие точек, гибель, разгром и окружение частей;
       числом ограничено, чтобы снимок не распух. */
-  note(...e) { if (this.chron.length < Game.MAX_NOTES) this.chron.push(e) }
+  note(...e) { if (this.chron && this.chron.length < Game.MAX_NOTES) this.chron.push(e) }
 
   /* ---------- ход стороны ---------- */
   startSide(side) {
@@ -760,12 +780,13 @@ class Game {
     }
     this.ev({ e: 'endside', to: '*', side });
     const next = oppOf(side), first = this.first || N;
-    if (next === first) this.endRound();
+    if (next === first) this.endRound(side);
+    else this.replayFrame(side);
     if (this.over) return { ok: true };
     this.startSide(next);
     return { ok: true };
   }
-  endRound() {
+  endRound(side) {
     const d = this.heldWeight(N) - this.heldWeight(S) + this.holdBias();
     this.score = clamp(this.score + d * W.SCORE_RATE, -100, 100);
     this.history.push({ turn: this.turn, s: +this.score.toFixed(1), n: this.forceValue(N), e: this.forceValue(S) });
@@ -779,7 +800,7 @@ class Game {
     }
     this.scenarioRound();
     this.rebuildFront();
-    this.replayFrame();
+    this.replayFrame(side, this.turn - 1);
     this.checkEnd();
   }
   /** время работает на обороняющегося: добавка к разнице весов за ход (со знаком стороны N) */
@@ -1700,7 +1721,7 @@ class Game {
 for (const m of ['./scenarios', './ai', './views']) Object.assign(Game.prototype, require(m));
 /* пределы повтора: кадров на партию и записей хроники на кадр (save.js проверяет по ним же) */
 Game.MAX_FRAMES = 400;
-Game.MAX_NOTES = 60;
+Game.MAX_NOTES = 400;
 /* сохранение партии и загрузка из снимка (с проверкой всего, что пришло) — game/save.js */
 Game.prototype.saveState = require('./save').saveState;
 Game.fromState = st => require('./save').fromState(st);

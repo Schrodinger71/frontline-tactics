@@ -27,6 +27,14 @@ const { wxById, WEATHER } = require('../shared/weather');
 const { N, S, UT, MAX_STR, TRAITS, MAX_SEATS } = W;
 
 const FMT = 1;
+/** поля записей хроники повтора по видам (Game.note): что взято, кто погиб, разбит,
+    окружён; ходы с путём, бои, огонь, разрывы, вылеты, ПВО, высадки, приказы, сапёры, пополнения */
+const NOTE_FIELDS = {
+  cap: ['side', 'pt', 'cs'], dead: ['side', 'k', 'cs', 'how'], rout: ['side', 'k', 'cs'], cut: ['side', 'k', 'cs'],
+  mv: ['id', 'path', 'how'], hit: ['id', 'id', 'hex', 'hex', 'n', 'n', 'r', 'how'], sh: ['hex', 'hex', 'k'],
+  bl: ['hex', 'n', 'id0', 'how'], air: ['side', 'air', 'hex'], aa: ['hex', 'hex', 'b'],
+  new: ['id', 'k', 'side', 'hex', 'how', 'cs'], ord: ['side', 'ord', 'id0', 'hex0'], eng: ['id', 'how', 'hex'], rep: ['id', 'n']
+};
 const SIDES = [N, S];
 const own = (o, k) => o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 const num = (v, lo, hi, def) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def);
@@ -241,14 +249,29 @@ function fromState(raw) {
   g.history = arr(raw.history, 500).filter(h => h && typeof h === 'object')
     .map(h => ({ turn: int(h.turn, 0, 400, 0), s: num(h.s, -100, 100, 0), n: int(h.n, 0, 1e6, 0), e: int(h.e, 0, 1e6, 0) }));
 
-  /* кадры повтора и хроника: без них повтор после загрузки начался бы с этого хода */
+  /* кадры повтора и хроника: без них повтор после загрузки начался бы с этого хода.
+     Запись хроники — [вид, ...поля]; у каждого вида свой список полей (NOTE_FIELDS),
+     запись с неизвестным видом или хоть одним негодным полем отбрасывается */
   const terrOk = s => typeof s === 'string' && s.length === NH && /^[0-2]*$/.test(s);
+  const hex0 = v => v === -1 || hexOk(v);
+  const word = v => typeof v === 'string' && /^[a-z]{0,10}$/.test(v);
+  const field = {
+    side: v => SIDES.includes(v), pt: v => ptIds.has(v), k: v => own(UT, v), ord: v => own(W.ORDERS, v),
+    id: v => Number.isInteger(v) && v >= 1 && v < 1e7, id0: v => v === 0 || Number.isInteger(v) && v >= 1 && v < 1e7,
+    hex: hexOk, hex0, n: v => Number.isInteger(v) && v >= 0 && v <= MAX_STR, r: v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100,
+    b: v => v === 0 || v === 1, how: word, air: v => ['strike', 'recon', 'drop'].includes(v),
+    path: v => Array.isArray(v) && v.length >= 1 && v.length <= 40 && v.every(hexOk)
+  };
   const notes = a => arr(a, Game.MAX_NOTES).map(e => {
-    if (!Array.isArray(e) || !SIDES.includes(e[1])) return null;
-    const cs = str(e[3], 24, '');
-    if (e[0] === 'cap') return ptIds.has(e[2]) ? ['cap', e[1], e[2], cs] : null;
-    if (!['dead', 'rout', 'cut'].includes(e[0]) || !own(UT, e[2])) return null;
-    return e[0] === 'dead' ? ['dead', e[1], e[2], cs, ['', 'surrender', 'captured'].includes(e[4]) ? e[4] : ''] : [e[0], e[1], e[2], cs];
+    if (!Array.isArray(e) || typeof e[0] !== 'string' || !own(NOTE_FIELDS, e[0])) return null;
+    const fs = NOTE_FIELDS[e[0]], out = [e[0]];
+    for (let i = 0; i < fs.length; i++) {
+      const v = e[i + 1];
+      if (fs[i] === 'cs') { out.push(str(v, 24, '')); continue }
+      if (!field[fs[i]](v)) return null;
+      out.push(fs[i] === 'path' ? v.slice() : v);
+    }
+    return out;
   }).filter(Boolean);
   g.frames = [];
   for (const f of arr(raw.frames, Game.MAX_FRAMES)) {
@@ -258,10 +281,13 @@ function fromState(raw) {
       if (!Array.isArray(x) || !Number.isInteger(x[0]) || x[0] < 1 || x[0] >= 1e7 || seen.has(x[0])) continue;
       if (!own(UT, x[1]) || !SIDES.includes(x[2]) || !hexOk(x[3])) continue;
       seen.add(x[0]);
-      u.push([x[0], x[1], x[2], x[3], int(x[4], 1, MAX_STR, MAX_STR), bool(x[5]) ? 1 : 0]);
+      u.push([x[0], x[1], x[2], x[3], int(x[4], 1, MAX_STR, MAX_STR), bool(x[5]) ? 1 : 0,
+        str(x[6], 24, ''), int(x[7], 0, 100, 100), int(x[8], 0, W.SUPPLY.max, 0), int(x[9], 0, W.SUPPLY.max, 0),
+        int(x[10], 0, W.SUPPLY.top, 0), int(x[11], 0, 3, 0), int(x[12], 0, MAX_STR, 0)]);
     }
     g.frames.push({
-      t: int(f.t, 0, 400, 0), s: num(f.s, -100, 100, 0), u, terr: f.terr,
+      t: int(f.t, 0, 400, 0), a: SIDES.includes(f.a) ? f.a : '', s: num(f.s, -100, 100, 0),
+      w: typeof f.w === 'string' && WEATHER.some(x => x.id === f.w) ? f.w : g.weather.id, u, terr: f.terr,
       p: g.pts.map((_, j) => SIDES.includes(f.p[j]) ? f.p[j] : ''), ev: notes(f.ev)
     });
   }
@@ -283,7 +309,8 @@ function fromState(raw) {
 }
 
 /* ---------- упаковка для провода ---------- */
-const MAX_PACKED = 400000, MAX_JSON = 4 << 20;
+/* предел — с запасом на партию в MAX_FRAMES кадров с хроникой: 30 ходов — около 50 КБ */
+const MAX_PACKED = 800000, MAX_JSON = 6 << 20;
 function pack(state) { return zlib.deflateRawSync(Buffer.from(JSON.stringify(state)), { level: 9 }).toString('base64') }
 function unpack(s) {
   if (typeof s !== 'string' || !s.length || s.length > MAX_PACKED || !/^[A-Za-z0-9+/=]+$/.test(s)) throw new Error('повреждённое сохранение');

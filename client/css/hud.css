@@ -420,9 +420,12 @@ body:has(#chat.open) .zbox{right:calc(min(320px,88vw) + 12px)}
 #replayBar[hidden],#tutor[hidden],#rpEv[hidden]{display:none}
 #rpEv{position:fixed;z-index:9;bottom:66px;left:50%;transform:translateX(-50%);max-width:min(560px,calc(100vw - 24px));
   background:var(--pn);border:1px solid var(--bd2);border-radius:8px;box-shadow:var(--sh);padding:.35em .7em;font-size:.85em;line-height:1.45}
+#rpEv [data-go]{cursor:pointer}#rpEv [data-go]:hover{color:var(--ac)}
+#rpEv .rpList{max-height:min(40vh,320px);overflow-y:auto;padding-right:.3em}
+#rpEv .rpSum{display:flex;align-items:center;justify-content:space-between;gap:.6em;margin-top:.25em}
 #replayBar input{width:min(260px,30vw);accent-color:var(--ac)}
 #rpLbl{min-width:13em;font-weight:600;white-space:nowrap}
-@media (max-width:640px){#rpLbl{min-width:0;font-size:.85em}#layerBox{bottom:58px}}
+@media (max-width:640px){#replayBar{flex-wrap:wrap;justify-content:center;left:12px;right:12px;transform:none}#rpEv{left:12px;right:12px;transform:none;max-width:none}#rpLbl{min-width:0;font-size:.85em;white-space:normal;order:-1;flex-basis:100%;text-align:center}#replayBar input{width:24vw}#layerBox{bottom:58px}}
 #hdActive.lnk{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
 #hdActive.lnk:hover{color:#fff}
 /* низкий экран (телефон боком): слои — второй колонкой рядом с масштабом, вкладка связи — в нижний угол */
